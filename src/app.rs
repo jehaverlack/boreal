@@ -1,7 +1,10 @@
 use std::{
     collections::HashSet,
     path::PathBuf,
-    sync::{Arc, Mutex, RwLock},
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Instant,
 };
 
@@ -42,6 +45,8 @@ pub struct AppState {
     remote_setup_active: Mutex<bool>,
 
     update_check_active: Mutex<bool>,
+
+    job_cancellation: Arc<AtomicBool>,
 
     rclone_gui: Mutex<Option<Child>>,
 
@@ -232,6 +237,8 @@ impl AppState {
             remote_setup_active: Mutex::new(false),
 
             update_check_active: Mutex::new(false),
+
+            job_cancellation: Arc::new(AtomicBool::new(false)),
 
             rclone_gui: Mutex::new(None),
 
@@ -1323,10 +1330,11 @@ impl AppState {
                         worker_state.set_metadata_state(MetadataState::Updating(MetadataProgress { selection, phase:"Scanning local files".to_string(), files_scanned:0, folders_scanned:0, permissions_scanned:0, bytes_discovered:0, errors:0 }));
                         let roots=crate::local_files::parse_roots(&inventory_settings.local_file_roots);
                         crate::local_files::validate_roots(&roots).map_err(|e| -> crate::database::DatabaseError { e.into() })?;
-                        let options=crate::local_files::ScanOptions{roots,exclude_hidden:inventory_settings.local_exclude_hidden,exclude_caches:inventory_settings.local_exclude_caches,exclude_temporary:inventory_settings.local_exclude_temporary,exclude_patterns:inventory_settings.local_exclude_patterns.lines().map(str::trim).filter(|v|!v.is_empty()).map(str::to_string).collect(),boreal_home:worker_state.runtime.boreal_home.clone()};
+                        let options=crate::local_files::ScanOptions{roots,exclude_hidden:inventory_settings.local_exclude_hidden,exclude_caches:inventory_settings.local_exclude_caches,exclude_temporary:inventory_settings.local_exclude_temporary,exclude_patterns:inventory_settings.local_exclude_patterns.lines().map(str::trim).filter(|v|!v.is_empty()).map(str::to_string).collect(),boreal_home:worker_state.runtime.boreal_home.clone(),cancellation:Some(Arc::clone(&worker_state.job_cancellation))};
                         let cache=crate::database::local_files::checksum_cache(&database)?;
                         let scan=crate::local_files::scan(&options,&cache);
-                        crate::database::local_files::synchronize(&database,&scan.items)?;
+                        if scan.cancelled { return Err("Local Files metadata update cancelled".into()); }
+                        crate::database::local_files::synchronize_cancellable(&database,&scan.items,&worker_state.job_cancellation)?;
                         let _ = database.record_metadata_timing("local-files", timing_started.elapsed().as_secs());
                         log::info!("Local Files metadata updated: items={}, skipped={}, errors={}",scan.items.len(),scan.skipped,scan.errors.len());
                     }
@@ -1582,8 +1590,52 @@ impl AppState {
     }
 
     pub fn request_shutdown(&self) {
+        self.job_cancellation.store(true, Ordering::Release);
+        self.stop_active_job_processes();
         let _ = self.shutdown_tx.send(true);
     }
+
+    #[cfg(unix)]
+    fn stop_active_job_processes(&self) {
+        let Ok(output) = std::process::Command::new("ps")
+            .args(["-axo", "pid=,ppid="])
+            .output()
+        else {
+            return;
+        };
+        let relationships = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.split_whitespace();
+                Some((
+                    fields.next()?.parse::<u32>().ok()?,
+                    fields.next()?.parse::<u32>().ok()?,
+                ))
+            })
+            .collect::<Vec<_>>();
+        let mut parents = vec![std::process::id()];
+        let mut descendants = Vec::new();
+        let mut index = 0;
+        while index < parents.len() {
+            let parent = parents[index];
+            index += 1;
+            let children = relationships
+                .iter()
+                .filter_map(|(pid, ppid)| (*ppid == parent).then_some(*pid))
+                .collect::<Vec<_>>();
+            parents.extend(children.iter().copied());
+            descendants.extend(children);
+        }
+        for pid in descendants.into_iter().rev() {
+            // The process list contains only descendants of this BOREAL process.
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGTERM);
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn stop_active_job_processes(&self) {}
 
     pub fn shutdown_receiver(&self) -> watch::Receiver<bool> {
         self.shutdown_tx.subscribe()

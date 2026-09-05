@@ -2,10 +2,15 @@ use sha2::{Digest, Sha256};
 #[cfg(unix)]
 use std::ffi::CStr;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fs,
     io::{self, Read},
     path::{Path, PathBuf},
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
     time::UNIX_EPOCH,
 };
 
@@ -35,6 +40,7 @@ pub struct ScanOptions {
     pub exclude_temporary: bool,
     pub exclude_patterns: Vec<String>,
     pub boreal_home: PathBuf,
+    pub cancellation: Option<Arc<AtomicBool>>,
 }
 
 #[derive(Debug, Default)]
@@ -42,25 +48,18 @@ pub struct ScanResult {
     pub items: Vec<Item>,
     pub skipped: u64,
     pub errors: Vec<String>,
+    pub cancelled: bool,
 }
 
 pub fn scan(
     options: &ScanOptions,
     cached: &HashMap<(String, String), (u64, i64, String)>,
 ) -> ScanResult {
-    let mut result = ScanResult::default();
-    let mut ownership = OwnershipCache::default();
-    for root in &options.roots {
-        let mut visited = HashSet::new();
-        walk(
-            root,
-            root,
-            options,
-            &mut ownership,
-            &mut visited,
-            &mut result,
-        );
+    let mut result = parallel_walk(options);
+    if result.cancelled {
+        return result;
     }
+    accumulate_folder_sizes(&mut result.items);
     let mut sizes = HashMap::<u64, usize>::new();
     for item in &result.items {
         if !item.is_directory && item.size_bytes > 0 {
@@ -68,6 +67,10 @@ pub fn scan(
         }
     }
     for item in &mut result.items {
+        if cancellation_requested(options) {
+            result.cancelled = true;
+            break;
+        }
         if item.is_directory
             || item.size_bytes == 0
             || sizes.get(&item.size_bytes).copied().unwrap_or(0) < 2
@@ -93,66 +96,159 @@ pub fn scan(
     result
 }
 
+#[derive(Debug)]
+struct DirectoryTask {
+    root: PathBuf,
+    directory: PathBuf,
+}
+
+struct WalkState {
+    queue: VecDeque<DirectoryTask>,
+    pending: usize,
+    result: ScanResult,
+}
+
+fn parallel_walk(options: &ScanOptions) -> ScanResult {
+    let queue = options
+        .roots
+        .iter()
+        .map(|root| DirectoryTask {
+            root: root.clone(),
+            directory: root.clone(),
+        })
+        .collect::<VecDeque<_>>();
+    if queue.is_empty() {
+        return ScanResult::default();
+    }
+    let state = Arc::new((
+        Mutex::new(WalkState {
+            pending: queue.len(),
+            queue,
+            result: ScanResult::default(),
+        }),
+        Condvar::new(),
+    ));
+    thread::scope(|scope| {
+        for _ in 0..scan_worker_count() {
+            let state = Arc::clone(&state);
+            scope.spawn(move || {
+                let mut ownership = OwnershipCache::default();
+                loop {
+                    let task = {
+                        let (lock, ready) = &*state;
+                        let mut state = lock.lock().unwrap_or_else(|error| error.into_inner());
+                        loop {
+                            if let Some(task) = state.queue.pop_front() {
+                                break task;
+                            }
+                            if state.pending == 0 {
+                                return;
+                            }
+                            state = ready.wait(state).unwrap_or_else(|error| error.into_inner());
+                        }
+                    };
+                    let mut batch = read_directory(&task, options, &mut ownership);
+                    let (lock, ready) = &*state;
+                    let mut state = lock.lock().unwrap_or_else(|error| error.into_inner());
+                    state.pending -= 1;
+                    if batch.cancelled || cancellation_requested(options) {
+                        batch.cancelled = true;
+                        let abandoned = state.queue.len();
+                        state.queue.clear();
+                        state.pending = state.pending.saturating_sub(abandoned);
+                    } else {
+                        state.pending += batch.directories.len();
+                        state.queue.extend(batch.directories.drain(..));
+                    }
+                    state.result.items.append(&mut batch.items);
+                    state.result.skipped += batch.skipped;
+                    state.result.errors.append(&mut batch.errors);
+                    state.result.cancelled |= batch.cancelled;
+                    ready.notify_all();
+                }
+            });
+        }
+    });
+    let (lock, _) = &*state;
+    let mut state = lock.lock().unwrap_or_else(|error| error.into_inner());
+    std::mem::take(&mut state.result)
+}
+
+fn scan_worker_count() -> usize {
+    let available = thread::available_parallelism().map_or(1, usize::from);
+    workers_for_available_cores(available)
+}
+
+fn workers_for_available_cores(available: usize) -> usize {
+    (available.saturating_mul(3) / 4).max(1)
+}
+
+#[derive(Default)]
+struct DirectoryBatch {
+    directories: Vec<DirectoryTask>,
+    items: Vec<Item>,
+    skipped: u64,
+    errors: Vec<String>,
+    cancelled: bool,
+}
+
 #[derive(Default)]
 struct OwnershipCache {
     users: HashMap<u32, String>,
     groups: HashMap<u32, String>,
 }
 
-fn walk(
-    root: &Path,
-    directory: &Path,
+fn read_directory(
+    task: &DirectoryTask,
     options: &ScanOptions,
     ownership: &mut OwnershipCache,
-    visited: &mut HashSet<PathBuf>,
-    result: &mut ScanResult,
-) {
-    let canonical_directory = directory.canonicalize().ok();
-    if let Some(canonical) = &canonical_directory {
-        if canonical.starts_with(&options.boreal_home) || !visited.insert(canonical.clone()) {
-            return;
-        }
+) -> DirectoryBatch {
+    let mut batch = DirectoryBatch::default();
+    if cancellation_requested(options) {
+        batch.cancelled = true;
+        return batch;
     }
-    let entries = match fs::read_dir(directory) {
+    let entries = match fs::read_dir(&task.directory) {
         Ok(v) => v,
         Err(e) => {
-            result.skipped += 1;
-            result.errors.push(format!("{}: {e}", directory.display()));
-            if let Some(canonical) = &canonical_directory {
-                visited.remove(canonical);
-            }
-            return;
+            batch.skipped += 1;
+            batch
+                .errors
+                .push(format!("{}: {e}", task.directory.display()));
+            return batch;
         }
     };
     for entry in entries.flatten() {
+        if cancellation_requested(options) {
+            batch.cancelled = true;
+            break;
+        }
         let path = entry.path();
-        let relative = path.strip_prefix(root).unwrap_or(&path);
+        let relative = path.strip_prefix(&task.root).unwrap_or(&path);
         let rel = relative.to_string_lossy().replace('\\', "/");
         let name = entry.file_name().to_string_lossy().into_owned();
         if excluded(&path, &rel, &name, options) {
-            result.skipped += 1;
+            batch.skipped += 1;
             continue;
         }
-        let link_metadata = match fs::symlink_metadata(&path) {
+        let metadata = match fs::symlink_metadata(&path) {
             Ok(v) => v,
             Err(e) => {
-                result.skipped += 1;
-                result.errors.push(format!("{}: {e}", path.display()));
+                batch.skipped += 1;
+                batch.errors.push(format!("{}: {e}", path.display()));
                 continue;
             }
         };
-        let is_symlink = link_metadata.file_type().is_symlink();
+        let is_symlink = metadata.file_type().is_symlink();
         let symlink_target = if is_symlink {
             symlink_target(&path)
         } else {
             String::new()
         };
-        let metadata = if is_symlink {
-            fs::metadata(&path).unwrap_or(link_metadata)
-        } else {
-            link_metadata
-        };
-        let is_directory = metadata.is_dir();
+        // Preserve the link itself, but never stat or traverse its target. Besides
+        // avoiding cycles, this prevents local scans from unexpectedly walking a
+        // large or unavailable network tree.
+        let is_directory = !is_symlink && metadata.is_dir();
         let modified_unix = metadata
             .modified()
             .ok()
@@ -161,8 +257,8 @@ fn walk(
             .unwrap_or(0);
         let (owner_username, owner_identifier, group_name, group_identifier) =
             file_ownership(&metadata, ownership);
-        result.items.push(Item {
-            root_path: root.to_string_lossy().into_owned(),
+        batch.items.push(Item {
+            root_path: task.root.to_string_lossy().into_owned(),
             relative_path: rel.clone(),
             name: name.clone(),
             extension: path
@@ -171,7 +267,11 @@ fn walk(
                 .unwrap_or("")
                 .to_string(),
             is_directory,
-            size_bytes: if is_directory { 0 } else { metadata.len() },
+            size_bytes: if is_directory || is_symlink {
+                0
+            } else {
+                metadata.len()
+            },
             modified_unix,
             checksum_sha256: String::new(),
             is_symlink,
@@ -182,11 +282,42 @@ fn walk(
             group_identifier,
         });
         if is_directory {
-            walk(root, &path, options, ownership, visited, result);
+            batch.directories.push(DirectoryTask {
+                root: task.root.clone(),
+                directory: path,
+            });
         }
     }
-    if let Some(canonical) = &canonical_directory {
-        visited.remove(canonical);
+    batch
+}
+
+fn cancellation_requested(options: &ScanOptions) -> bool {
+    options
+        .cancellation
+        .as_ref()
+        .is_some_and(|cancellation| cancellation.load(Ordering::Acquire))
+}
+
+fn accumulate_folder_sizes(items: &mut [Item]) {
+    let mut totals = HashMap::<(String, String), u64>::new();
+    for item in items.iter().filter(|item| !item.is_directory) {
+        let mut parent = item
+            .relative_path
+            .rsplit_once('/')
+            .map(|(parent, _)| parent);
+        while let Some(relative_path) = parent {
+            let total = totals
+                .entry((item.root_path.clone(), relative_path.to_string()))
+                .or_default();
+            *total = total.saturating_add(item.size_bytes);
+            parent = relative_path.rsplit_once('/').map(|(parent, _)| parent);
+        }
+    }
+    for item in items.iter_mut().filter(|item| item.is_directory) {
+        item.size_bytes = totals
+            .get(&(item.root_path.clone(), item.relative_path.clone()))
+            .copied()
+            .unwrap_or(0);
     }
 }
 
@@ -199,11 +330,7 @@ fn symlink_target(path: &Path) -> String {
     } else {
         path.parent().unwrap_or_else(|| Path::new("")).join(target)
     };
-    resolved
-        .canonicalize()
-        .unwrap_or(resolved)
-        .to_string_lossy()
-        .into_owned()
+    resolved.to_string_lossy().into_owned()
 }
 
 #[cfg(unix)]
@@ -428,7 +555,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn inventories_and_follows_directory_symlinks_without_cycles() {
+    fn inventories_symlinks_without_following_their_targets() {
         use std::os::unix::fs::symlink;
 
         let parent = std::env::temp_dir().join(format!(
@@ -455,6 +582,7 @@ mod tests {
                 exclude_temporary: false,
                 exclude_patterns: Vec::new(),
                 boreal_home: parent.join("boreal-home"),
+                cancellation: None,
             },
             &HashMap::new(),
         );
@@ -464,14 +592,84 @@ mod tests {
             .find(|item| item.relative_path == "linked")
             .expect("symlink should be inventoried");
         assert!(link.is_symlink);
-        assert!(link.is_directory);
+        assert!(!link.is_directory);
+        assert_eq!(link.size_bytes, 0);
         assert_eq!(link.symlink_target, target.to_string_lossy());
         assert!(
-            result
+            !result
                 .items
                 .iter()
                 .any(|item| item.relative_path == "linked/note.txt")
         );
         fs::remove_dir_all(parent).expect("test directory should be removable");
+    }
+
+    #[test]
+    fn accumulates_folder_sizes_during_the_scan() {
+        let parent = std::env::temp_dir().join(format!(
+            "boreal-folder-size-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be valid")
+                .as_nanos()
+        ));
+        let nested = parent.join("reports").join("annual");
+        fs::create_dir_all(&nested).expect("nested folders should be created");
+        fs::write(parent.join("reports").join("summary.txt"), b"1234")
+            .expect("summary should be written");
+        fs::write(nested.join("detail.txt"), b"123456").expect("detail should be written");
+
+        let result = scan(
+            &ScanOptions {
+                roots: vec![parent.clone()],
+                exclude_hidden: false,
+                exclude_caches: false,
+                exclude_temporary: false,
+                exclude_patterns: Vec::new(),
+                boreal_home: parent.join("boreal-home"),
+                cancellation: None,
+            },
+            &HashMap::new(),
+        );
+        let size = |path: &str| {
+            result
+                .items
+                .iter()
+                .find(|item| item.relative_path == path)
+                .map(|item| item.size_bytes)
+                .expect("folder should be inventoried")
+        };
+        assert_eq!(size("reports/annual"), 6);
+        assert_eq!(size("reports"), 10);
+        fs::remove_dir_all(parent).expect("test directory should be removable");
+    }
+
+    #[test]
+    fn scanner_workers_are_capped_at_seventy_five_percent() {
+        assert_eq!(workers_for_available_cores(1), 1);
+        assert_eq!(workers_for_available_cores(2), 1);
+        assert_eq!(workers_for_available_cores(3), 2);
+        assert_eq!(workers_for_available_cores(4), 3);
+        assert_eq!(workers_for_available_cores(8), 6);
+    }
+
+    #[test]
+    fn scanner_honors_shutdown_cancellation() {
+        let cancellation = Arc::new(AtomicBool::new(true));
+        let result = scan(
+            &ScanOptions {
+                roots: vec![std::env::temp_dir()],
+                exclude_hidden: false,
+                exclude_caches: false,
+                exclude_temporary: false,
+                exclude_patterns: Vec::new(),
+                boreal_home: PathBuf::new(),
+                cancellation: Some(cancellation),
+            },
+            &HashMap::new(),
+        );
+        assert!(result.cancelled);
+        assert!(result.items.is_empty());
     }
 }

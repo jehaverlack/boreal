@@ -888,7 +888,7 @@ mod tests {
                     name: "nested".to_string(),
                     extension: String::new(),
                     is_directory: true,
-                    size_bytes: 0,
+                    size_bytes: 42,
                     modified_unix: 1,
                     checksum_sha256: String::new(),
                     is_symlink: false,

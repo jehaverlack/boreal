@@ -1,11 +1,4 @@
-<div
-    id="boreal-drive-summaries"
-    {% if metadata.poll %}
-    hx-get="/ui/drive-summaries"
-    hx-trigger="every 1s"
-    hx-swap="outerHTML"
-    {% endif %}
->
+<div id="boreal-drive-summaries">
     <div class="d-flex flex-column">
     {% if google_drive_enabled %}
     <section class="mb-4 order-3" aria-labelledby="google-drive-summary-heading">
@@ -17,23 +10,21 @@
                     <i class="bi bi-folder2-open boreal-google-drive-color me-2"></i>My Drive
                 </a>
             </h2>
-            {% if metadata.updating %}
-            <span class="badge text-bg-primary"><span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>{{ metadata.phase }}</span>
-            {% else if metadata.completed_at.len() > 0 %}
+            {% if metadata.completed_at.len() > 0 %}
             <span class="badge text-bg-success">Indexed</span>
             {% else %}
             <span class="badge text-bg-warning">Not indexed</span>
             {% endif %}
         </div>
         <div class="card"><div class="card-body">
-            {% if metadata.updating || metadata.completed_at.len() > 0 %}
+            {% if metadata.completed_at.len() > 0 %}
             <div class="row g-3">
                 <div class="col-6 col-md"><div class="small text-body-secondary">Total size</div><div class="fs-4 fw-semibold">{{ metadata.size_label }}</div></div>
                 <div class="col-6 col-md"><div class="small text-body-secondary">Files</div><div class="fs-4 fw-semibold">{{ metadata.files_scanned }}</div></div>
                 <div class="col-6 col-md"><div class="small text-body-secondary">Folders</div><div class="fs-4 fw-semibold">{{ metadata.folders_scanned }}</div></div>
                 <div class="col-6 col-md"><div class="small text-body-secondary">Permissions</div><div class="fs-4 fw-semibold">{{ metadata.permissions_scanned }}</div></div>
                 <div class="col-6 col-md"><div class="small text-body-secondary">Metadata age</div>
-                    {% if metadata.completed_at.len() > 0 %}<div class="fs-4 fw-semibold boreal-data-age" data-synchronized-at="{{ metadata.completed_at }}">just now</div>{% else %}<div class="fs-4 fw-semibold">Updating</div>{% endif %}
+                    <div class="fs-4 fw-semibold boreal-data-age" data-synchronized-at="{{ metadata.completed_at }}">just now</div>
                 </div>
             </div>
             {% else %}
@@ -45,7 +36,7 @@
     <div class="mb-4" aria-labelledby="shared-drives-summary-heading">
         <div class="d-flex justify-content-between align-items-center mb-2">
             <h2 class="h5 mb-0" id="shared-drives-summary-heading"><a class="text-body text-decoration-none" href="/shared-drives" title="Explore Shared Drives"><i class="bi bi-cloud-fill boreal-google-drive-color me-2"></i>Shared Drives ({{ metadata.shared_drives_count }})</a></h2>
-            {% if metadata.updating %}<span class="badge text-bg-primary"><span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>{{ metadata.phase }}</span>{% else if metadata.shared_drives_indexed %}<span class="badge text-bg-success">Indexed</span>{% else %}<span class="badge text-bg-warning">Not indexed</span>{% endif %}
+            {% if metadata.shared_drives_indexed %}<span class="badge text-bg-success">Indexed</span>{% else %}<span class="badge text-bg-warning">Not indexed</span>{% endif %}
         </div>
         <div class="card"><div class="card-body">
             {% if metadata.shared_drives_indexed %}
@@ -67,9 +58,7 @@
                     <i class="bi bi-share-fill boreal-google-drive-color me-2"></i>Shared with me
                 </a>
             </h2>
-            {% if metadata.updating %}
-            <span class="badge text-bg-primary"><span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>{{ metadata.phase }}</span>
-            {% else if metadata.shared_indexed %}
+            {% if metadata.shared_indexed %}
             <span class="badge text-bg-success">Indexed</span>
             {% else %}
             <span class="badge text-bg-warning">Not indexed</span>

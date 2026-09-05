@@ -570,7 +570,6 @@ pub struct InventorySummary {
 pub struct ScanTimingEstimate {
     pub elapsed_seconds: u64,
     pub average_seconds: u64,
-    pub sample_count: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -1745,7 +1744,6 @@ pub fn scan_timing_estimate(
         (sample_count > 0 && average_seconds > 0).then_some(ScanTimingEstimate {
             elapsed_seconds,
             average_seconds,
-            sample_count,
         }),
     )
 }
