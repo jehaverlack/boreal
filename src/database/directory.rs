@@ -50,6 +50,7 @@ pub struct PersonChoice {
     pub display_name: String,
     pub primary_email: String,
     pub username: String,
+    pub search_text: String,
 }
 
 #[derive(Debug, Clone)]
@@ -310,11 +311,17 @@ pub fn list_principal_types(database: &Database) -> Result<Vec<String>, Database
 pub fn list_person_choices(database: &Database) -> Result<Vec<PersonChoice>, DatabaseError> {
     let connection = database.connect()?;
     let mut statement = connection.prepare(
-        "SELECT id, COALESCE(display_name, ''), COALESCE(primary_email, ''),
-                COALESCE(username, '')
-         FROM principals
-         WHERE lower(trim(principal_type)) IN ('person', 'user')
-         ORDER BY display_name COLLATE NOCASE, primary_email COLLATE NOCASE, username COLLATE NOCASE",
+        "SELECT p.id, COALESCE(p.display_name, ''), COALESCE(p.primary_email, ''),
+                COALESCE(p.username, ''),
+                COALESCE((
+                    SELECT group_concat(pe.email, ' ')
+                    FROM principal_emails pe
+                    WHERE pe.principal_id = p.id
+                ), '')
+         FROM principals p
+         WHERE lower(trim(p.principal_type)) NOT IN ('group', 'google group', 'google_group')
+         ORDER BY p.display_name COLLATE NOCASE, p.primary_email COLLATE NOCASE,
+                  p.username COLLATE NOCASE",
     )?;
     let rows = statement.query_map([], |row| {
         Ok(PersonChoice {
@@ -322,6 +329,7 @@ pub fn list_person_choices(database: &Database) -> Result<Vec<PersonChoice>, Dat
             display_name: row.get(1)?,
             primary_email: row.get(2)?,
             username: row.get(3)?,
+            search_text: row.get(4)?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)

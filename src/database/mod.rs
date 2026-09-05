@@ -318,6 +318,35 @@ mod tests {
     }
 
     #[test]
+    fn owner_candidates_include_custom_person_types_and_email_aliases() {
+        let root = temporary_directory();
+        let database = Database::initialize(&runtime(&root)).expect("database should initialize");
+        directory::import_csv(
+            &database,
+            "people.csv",
+            b"email,username,name,type\nresearcher@example.edu,researcher,Research User,Affiliate Researcher\ngroup@example.edu,research-group,Research Group,Google Group\n",
+        )
+        .expect("directory should import");
+        let connection = database.connect().expect("database should connect");
+        connection
+            .execute(
+                "INSERT INTO principal_emails (principal_id, email)
+                 SELECT id, 'alias@example.edu' FROM principals WHERE username = 'researcher'",
+                [],
+            )
+            .expect("email alias should insert");
+        drop(connection);
+
+        let choices =
+            directory::list_person_choices(&database).expect("owner candidates should be readable");
+        assert_eq!(choices.len(), 1, "groups should not be owner candidates");
+        assert_eq!(choices[0].username, "researcher");
+        assert!(choices[0].search_text.contains("alias@example.edu"));
+
+        fs::remove_dir_all(root).expect("temporary database directory should be removable");
+    }
+
+    #[test]
     fn creates_foundation_tables() {
         let root = temporary_directory();
         let database = Database::initialize(&runtime(&root)).expect("database should initialize");

@@ -1162,7 +1162,7 @@ struct MetadataUpdateForm {
 
 #[derive(Default, Clone, serde::Deserialize)]
 struct LocalFilesQuery {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "form_usize")]
     root: usize,
     #[serde(default)]
     path: String,
@@ -1184,22 +1184,44 @@ struct LocalFilesQuery {
     group: String,
     #[serde(default)]
     tag: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "form_bool")]
     duplicates: bool,
     #[serde(default)]
     sort: String,
     #[serde(default)]
     direction: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "form_bool")]
     owner_saved: bool,
     #[serde(default)]
     owner_error: String,
 }
 
+fn form_usize<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+    value.parse().map_err(serde::de::Error::custom)
+}
+
+fn form_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "on" | "yes" => Ok(true),
+        "false" | "0" | "off" | "no" | "" => Ok(false),
+        _ => Err(serde::de::Error::custom(format!(
+            "invalid boolean value {value:?}"
+        ))),
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct LocalFileTagForm {
     selected_item_ids: String,
-    tag: String,
+    tag_to_apply: String,
     #[serde(flatten)]
     query: LocalFilesQuery,
 }
@@ -5036,10 +5058,12 @@ fn change_local_file_tag(
     let database = state
         .database()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    database::local_files::change_tags(&database, &ids, &form.tag, remove).map_err(|error| {
-        log::error!("Unable to change Local Files tags: {error}");
-        StatusCode::BAD_REQUEST
-    })?;
+    database::local_files::change_tags(&database, &ids, &form.tag_to_apply, remove).map_err(
+        |error| {
+            log::error!("Unable to change Local Files tags: {error}");
+            StatusCode::BAD_REQUEST
+        },
+    )?;
     Ok(Redirect::to(&local_files_redirect(&form.query)))
 }
 
@@ -7336,5 +7360,48 @@ mod tests {
         assert!(!complete.spinner);
         assert_eq!(complete.value, "Complete: Research");
         assert_eq!(complete.value_class, "text-success");
+    }
+
+    #[test]
+    fn local_file_action_redirect_preserves_explorer_state() {
+        let redirect = local_files_redirect(&LocalFilesQuery {
+            root: 2,
+            path: "Reports/Annual".to_string(),
+            q: "budget review".to_string(),
+            name: "Budget".to_string(),
+            path_filter: "Annual".to_string(),
+            item_type: "PDF".to_string(),
+            size: "2.2 MB".to_string(),
+            modified: ">=2026-01-01".to_string(),
+            owner: "jsmith".to_string(),
+            group: "research".to_string(),
+            tag: "needs-review".to_string(),
+            duplicates: true,
+            sort: "modified".to_string(),
+            direction: "desc".to_string(),
+            ..LocalFilesQuery::default()
+        });
+
+        for expected in [
+            "root=2",
+            "path=Reports%2FAnnual",
+            "q=budget%20review",
+            "name=Budget",
+            "path_filter=Annual",
+            "item_type=PDF",
+            "size=2.2%20MB",
+            "modified=%3E%3D2026-01-01",
+            "owner=jsmith",
+            "group=research",
+            "tag=needs-review",
+            "duplicates=true",
+            "sort=modified",
+            "direction=desc",
+        ] {
+            assert!(
+                redirect.contains(expected),
+                "missing preserved state: {expected}"
+            );
+        }
     }
 }
