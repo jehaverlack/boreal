@@ -7,10 +7,28 @@
 | **License** | MIT |
 | **Version** | 1.1.1 |
 | **Maturity** | STABLE |
-| **Date** | 2026-09-04 |
+| **Date** | 2026-09-08 |
 
-## v1.1.1 - 2026-09-04 (STABLE)
+## v1.1.1 - 2026-09-08 (STABLE)
 
+**Summary**
+Added Local File Parser
+
+**Notes**
+Major Feature Rewrite pre 1.2.0
+
+- Fixed Person Association
+- Fixing File Metadata
+- Adding File Search
+- Fixing Metadata Updates
+- Local File Updates
+- vis updates
+- Readme Cleanup
+- Cleaning up Dashboard
+- Menu Cleanup
+- Fixing Wget/curl deps
+- Fixing Rclone Process Issue
+- Adding local file support
 - Start v1.1.1
 - Adding security policy
 
@@ -304,6 +322,18 @@ Added Migration Assitant and Polished Interfaces
 **Summary**
 Project Initialization
 
+- Fixed Person Association
+- Fixing File Metadata
+- Adding File Search
+- Fixing Metadata Updates
+- Local File Updates
+- vis updates
+- Readme Cleanup
+- Cleaning up Dashboard
+- Menu Cleanup
+- Fixing Wget/curl deps
+- Fixing Rclone Process Issue
+- Adding local file support
 - Start v1.1.1
 - Adding security policy
 

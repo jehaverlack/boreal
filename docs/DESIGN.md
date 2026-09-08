@@ -5,7 +5,7 @@
 | **License** | MIT |
 | **Version** | 1.1.1 |
 | **Maturity** | STABLE |
-| **Date** | 2026-09-04 |
+| **Date** | 2026-09-08 |
 
 # BOREAL design
 

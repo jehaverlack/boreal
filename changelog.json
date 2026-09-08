@@ -2,7 +2,7 @@
   "releases": [
     {
       "version": "1.1.1",
-      "date": "2026-09-04",
+      "date": "2026-09-08",
       "maturity": "STABLE",
       "summary": "Added Local File Parser",
       "notes": "Major Feature Rewrite pre 1.2.0"
