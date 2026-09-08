@@ -10,7 +10,7 @@ pub struct ImportSummary {
     pub rows_rejected: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DirectorySummary {
     pub principals: u64,
     pub organizations: u64,
@@ -22,6 +22,7 @@ pub struct DirectorySummary {
 #[derive(Debug, Clone)]
 pub struct PrincipalRow {
     pub id: i64,
+    pub username: String,
     pub display_name: String,
     pub primary_email: String,
     pub principal_type: String,
@@ -41,6 +42,15 @@ pub struct IdentityTag {
     pub name: String,
     pub description: String,
     pub color: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PersonChoice {
+    pub id: i64,
+    pub display_name: String,
+    pub primary_email: String,
+    pub username: String,
+    pub search_text: String,
 }
 
 #[derive(Debug, Clone)]
@@ -179,7 +189,7 @@ pub fn list_principals_filtered(
             JOIN organizations o ON o.id = om.organization_id
             GROUP BY om.principal_id
          )
-         SELECT p.id, COALESCE(p.display_name, ''), COALESCE(p.primary_email, ''),
+         SELECT p.id, COALESCE(p.username, ''), COALESCE(p.display_name, ''), COALESCE(p.primary_email, ''),
                 p.principal_type, p.status, COALESCE(p.departure_date, ''),
                 COALESCE(po.names, ''), COALESCE(m.member_count, 0),
                 COALESCE(owned.item_count, 0), COALESCE(permitted.item_count, 0),
@@ -191,6 +201,7 @@ pub fn list_principals_filtered(
          LEFT JOIN permitted ON permitted.principal_id = p.id
          WHERE (?1 = '' OR instr(lower(COALESCE(p.display_name, '')), lower(?1)) > 0)
            AND (?2 = '' OR instr(lower(COALESCE(p.primary_email, '')), lower(?2)) > 0
+                OR instr(lower(COALESCE(p.username, '')), lower(?2)) > 0
                 OR EXISTS (
                     SELECT 1 FROM principal_emails pe
                     WHERE pe.principal_id = p.id
@@ -244,17 +255,18 @@ pub fn list_principals_filtered(
         |row| {
             Ok(PrincipalRow {
                 id: row.get(0)?,
-                display_name: row.get(1)?,
-                primary_email: row.get(2)?,
-                principal_type: row.get(3)?,
-                status: row.get(4)?,
-                departure_date: row.get(5)?,
-                organizations: row.get(6)?,
-                members: row.get::<_, i64>(7)? as u64,
-                owned_items: row.get::<_, i64>(8)? as u64,
-                permitted_items: row.get::<_, i64>(9)? as u64,
+                username: row.get(1)?,
+                display_name: row.get(2)?,
+                primary_email: row.get(3)?,
+                principal_type: row.get(4)?,
+                status: row.get(5)?,
+                departure_date: row.get(6)?,
+                organizations: row.get(7)?,
+                members: row.get::<_, i64>(8)? as u64,
+                owned_items: row.get::<_, i64>(9)? as u64,
+                permitted_items: row.get::<_, i64>(10)? as u64,
                 tags: Vec::new(),
-                notes: row.get(10)?,
+                notes: row.get(11)?,
             })
         },
     )?;
@@ -294,6 +306,58 @@ pub fn list_principal_types(database: &Database) -> Result<Vec<String>, Database
         types.insert(principal_type?);
     }
     Ok(types.into_iter().collect())
+}
+
+pub fn list_person_choices(database: &Database) -> Result<Vec<PersonChoice>, DatabaseError> {
+    let connection = database.connect()?;
+    let mut statement = connection.prepare(
+        "SELECT p.id, COALESCE(p.display_name, ''), COALESCE(p.primary_email, ''),
+                COALESCE(p.username, ''),
+                COALESCE((
+                    SELECT group_concat(pe.email, ' ')
+                    FROM principal_emails pe
+                    WHERE pe.principal_id = p.id
+                ), '')
+         FROM principals p
+         WHERE lower(trim(p.principal_type)) NOT IN ('group', 'google group', 'google_group')
+         ORDER BY p.display_name COLLATE NOCASE, p.primary_email COLLATE NOCASE,
+                  p.username COLLATE NOCASE",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok(PersonChoice {
+            id: row.get(0)?,
+            display_name: row.get(1)?,
+            primary_email: row.get(2)?,
+            username: row.get(3)?,
+            search_text: row.get(4)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+pub fn associate_username(
+    database: &Database,
+    principal_id: i64,
+    username: &str,
+) -> Result<(), DatabaseError> {
+    let username = username.trim();
+    if username.is_empty() {
+        return Err("A filesystem username is required".into());
+    }
+    let connection = database.connect()?;
+    let updated = connection.execute(
+        "UPDATE principals SET username = ?2, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?1
+           AND NOT EXISTS (
+               SELECT 1 FROM principals other
+               WHERE other.id <> ?1 AND lower(other.username) = lower(?2)
+           )",
+        params![principal_id, username],
+    )?;
+    if updated == 0 {
+        return Err("The person was not found or that username is already associated".into());
+    }
+    Ok(())
 }
 
 pub fn apply_principal_tag(
@@ -350,6 +414,7 @@ pub fn remove_principal_tag(
 pub fn save_manual_principal(
     database: &Database,
     principal_id: Option<i64>,
+    username: &str,
     email: &str,
     display_name: &str,
     principal_type: &str,
@@ -358,9 +423,13 @@ pub fn save_manual_principal(
     organization: &str,
     notes: &str,
 ) -> Result<i64, DatabaseError> {
+    let username = username.trim();
     let email = email.trim().to_ascii_lowercase();
-    if !valid_email(&email) {
-        return Err("A valid primary email address is required".into());
+    if username.is_empty() && email.is_empty() {
+        return Err("A username or primary email address is required".into());
+    }
+    if !email.is_empty() && !valid_email(&email) {
+        return Err("Enter a valid primary email address or leave it blank".into());
     }
     if principal_type.trim().is_empty() {
         return Err("A directory identity type is required".into());
@@ -373,26 +442,45 @@ pub fn save_manual_principal(
     };
     let mut connection = database.connect()?;
     let transaction = connection.transaction()?;
-    let email_owner: Option<i64> = transaction
-        .query_row(
-            "SELECT principal_id FROM principal_emails WHERE lower(email) = lower(?1)",
-            [&email],
-            |row| row.get(0),
-        )
-        .optional()?;
+    let email_owner: Option<i64> = if email.is_empty() {
+        None
+    } else {
+        transaction
+            .query_row(
+                "SELECT principal_id FROM principal_emails WHERE lower(email) = lower(?1)",
+                [&email],
+                |row| row.get(0),
+            )
+            .optional()?
+    };
     if email_owner.is_some() && email_owner != principal_id {
         return Err("That email address already belongs to another directory identity".into());
     }
+    let username_owner: Option<i64> = if username.is_empty() {
+        None
+    } else {
+        transaction
+            .query_row(
+                "SELECT id FROM principals WHERE lower(username) = lower(?1)",
+                [username],
+                |row| row.get(0),
+            )
+            .optional()?
+    };
+    if username_owner.is_some() && username_owner != principal_id {
+        return Err("That username already belongs to another directory identity".into());
+    }
     let id = if let Some(id) = principal_id {
         let updated = transaction.execute(
-            "UPDATE principals SET principal_type = ?2, primary_email = ?3,
-                    display_name = NULLIF(?4, ''), status = ?5,
-                    departure_date = NULLIF(?6, ''), notes = NULLIF(?7, ''),
+            "UPDATE principals SET principal_type = ?2, username = NULLIF(?3, ''),
+                    primary_email = NULLIF(?4, ''), display_name = NULLIF(?5, ''), status = ?6,
+                    departure_date = NULLIF(?7, ''), notes = NULLIF(?8, ''),
                     source = 'manual', updated_at = CURRENT_TIMESTAMP
              WHERE id = ?1",
             params![
                 id,
                 principal_type,
+                username,
                 email,
                 display_name.trim(),
                 status,
@@ -407,11 +495,12 @@ pub fn save_manual_principal(
     } else {
         transaction.execute(
             "INSERT INTO principals (
-                principal_type, primary_email, display_name, status,
+                principal_type, username, primary_email, display_name, status,
                 departure_date, notes, source
-             ) VALUES (?1, ?2, NULLIF(?3, ''), ?4, NULLIF(?5, ''), NULLIF(?6, ''), 'manual')",
+             ) VALUES (?1, NULLIF(?2, ''), NULLIF(?3, ''), NULLIF(?4, ''), ?5, NULLIF(?6, ''), NULLIF(?7, ''), 'manual')",
             params![
                 principal_type,
+                username,
                 email,
                 display_name.trim(),
                 status,
@@ -422,14 +511,16 @@ pub fn save_manual_principal(
         transaction.last_insert_rowid()
     };
     transaction.execute(
-        "UPDATE principal_emails SET is_primary = 0 WHERE principal_id = ?1",
+        "DELETE FROM principal_emails WHERE principal_id = ?1 AND is_primary = 1",
         [id],
     )?;
-    transaction.execute(
-        "INSERT INTO principal_emails (principal_id, email, is_primary) VALUES (?1, ?2, 1)
-         ON CONFLICT(email) DO UPDATE SET is_primary = 1",
-        params![id, email],
-    )?;
+    if !email.is_empty() {
+        transaction.execute(
+            "INSERT INTO principal_emails (principal_id, email, is_primary) VALUES (?1, ?2, 1)
+             ON CONFLICT(email) DO UPDATE SET is_primary = 1",
+            params![id, email],
+        )?;
+    }
     transaction.execute(
         "DELETE FROM organization_memberships WHERE principal_id = ?1",
         [id],
@@ -651,9 +742,13 @@ pub fn validate_csv(data: &[u8]) -> Result<(), DatabaseError> {
         .iter()
         .map(|value| normalize_header(value))
         .collect::<Vec<_>>();
-    header_index(&headers, &["email", "primary_email", "email_address"])
-        .ok_or_else(|| "Directory CSV requires an email column".into())
-        .map(|_| ())
+    if header_index(&headers, &["email", "primary_email", "email_address"]).is_none()
+        && header_index(&headers, &["username", "user_name", "login"]).is_none()
+    {
+        Err("Directory CSV requires an email or username column".into())
+    } else {
+        Ok(())
+    }
 }
 
 pub fn import_linked_sheet_csv(
@@ -688,8 +783,11 @@ fn import_csv_source(
         .iter()
         .map(|value| normalize_header(value))
         .collect();
-    let email_index = header_index(&headers, &["email", "primary_email", "email_address"])
-        .ok_or("Directory CSV requires an email column")?;
+    let email_index = header_index(&headers, &["email", "primary_email", "email_address"]);
+    let username_index = header_index(&headers, &["username", "user_name", "login"]);
+    if email_index.is_none() && username_index.is_none() {
+        return Err("Directory CSV requires an email or username column".into());
+    }
     let name_index = header_index(&headers, &["name", "display_name"]);
     let type_index = header_index(&headers, &["type", "category", "principal_type"]);
     let status_index = header_index(&headers, &["status", "employment_status"]);
@@ -734,8 +832,14 @@ fn import_csv_source(
             continue;
         }
         summary.rows_seen += 1;
-        let email = cell(row, email_index).trim().to_ascii_lowercase();
-        if !valid_email(&email) {
+        let email = email_index
+            .map(|index| cell(row, index).trim().to_ascii_lowercase())
+            .unwrap_or_default();
+        let username = username_index
+            .map(|index| cell(row, index).trim())
+            .unwrap_or("");
+        if (email.is_empty() && username.is_empty()) || (!email.is_empty() && !valid_email(&email))
+        {
             summary.rows_rejected += 1;
             continue;
         }
@@ -758,39 +862,50 @@ fn import_csv_source(
         let notes = notes_index
             .map(|index| cell(row, index).trim())
             .filter(|value| !value.is_empty());
-        let existed: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM principals WHERE lower(primary_email) = lower(?1))",
-            [&email],
-            |row| row.get(0),
-        )?;
-        transaction.execute(
-            "INSERT INTO principals (
-                principal_type, primary_email, display_name, status, departure_date, notes, source
-             ) VALUES (COALESCE(?1, 'person'), ?2, NULLIF(?3, ''), ?4, ?5, ?6, ?7)
-             ON CONFLICT(primary_email) DO UPDATE SET
-                principal_type = CASE WHEN ?8 THEN excluded.principal_type ELSE principals.principal_type END,
-                display_name = COALESCE(excluded.display_name, principals.display_name),
-                status = excluded.status,
-                departure_date = excluded.departure_date,
-                notes = COALESCE(excluded.notes, principals.notes),
-                source = excluded.source,
-                updated_at = CURRENT_TIMESTAMP",
-            params![
-                principal_type,
-                email,
-                display_name,
-                status,
-                departure,
-                notes,
-                source_name,
-                type_was_supplied,
-            ],
-        )?;
-        let principal_id: i64 = transaction.query_row(
-            "SELECT id FROM principals WHERE lower(primary_email) = lower(?1)",
-            [&email],
-            |row| row.get(0),
-        )?;
+        let existing_id: Option<i64> = transaction
+            .query_row(
+                "SELECT id FROM principals
+                 WHERE (?1 <> '' AND lower(primary_email) = lower(?1))
+                    OR (?2 <> '' AND lower(username) = lower(?2))
+                 LIMIT 1",
+                params![email, username],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let principal_id = if let Some(id) = existing_id {
+            transaction.execute(
+                "UPDATE principals SET
+                    username = COALESCE(NULLIF(?2, ''), username),
+                    primary_email = COALESCE(NULLIF(?3, ''), primary_email),
+                    principal_type = CASE WHEN ?4 THEN COALESCE(?5, principal_type) ELSE principal_type END,
+                    display_name = COALESCE(NULLIF(?6, ''), display_name),
+                    status = ?7, departure_date = ?8,
+                    notes = COALESCE(?9, notes), source = ?10,
+                    updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?1",
+                params![id, username, email, type_was_supplied, principal_type, display_name, status, departure, notes, source_name],
+            )?;
+            id
+        } else {
+            transaction.execute(
+                "INSERT INTO principals (
+                    principal_type, username, primary_email, display_name, status,
+                    departure_date, notes, source
+                 ) VALUES (COALESCE(?1, 'person'), NULLIF(?2, ''), NULLIF(?3, ''),
+                    NULLIF(?4, ''), ?5, ?6, ?7, ?8)",
+                params![
+                    principal_type,
+                    username,
+                    email,
+                    display_name,
+                    status,
+                    departure,
+                    notes,
+                    source_name
+                ],
+            )?;
+            transaction.last_insert_rowid()
+        };
         if let Some(tags) = tags_index.map(|index| cell(row, index)) {
             for tag in tags.split(';').map(str::trim).filter(|tag| !tag.is_empty()) {
                 let tag_slug = tag_reference_slug(tag);
@@ -805,11 +920,13 @@ fn import_csv_source(
                 )?;
             }
         }
-        transaction.execute(
-            "INSERT OR IGNORE INTO principal_emails (principal_id, email, is_primary)
-             VALUES (?1, ?2, 1)",
-            params![principal_id, email],
-        )?;
+        if !email.is_empty() {
+            transaction.execute(
+                "INSERT OR IGNORE INTO principal_emails (principal_id, email, is_primary)
+                 VALUES (?1, ?2, 1)",
+                params![principal_id, email],
+            )?;
+        }
         // The imported row is authoritative for this identity's organization.
         // Clear prior memberships even when the CSV organization cell is blank.
         transaction.execute(
@@ -838,7 +955,7 @@ fn import_csv_source(
                 params![organization_id, principal_id, status, source_name],
             )?;
         }
-        if existed {
+        if existing_id.is_some() {
             summary.rows_updated += 1;
         } else {
             summary.rows_created += 1;

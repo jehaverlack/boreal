@@ -52,10 +52,16 @@
             <div class="card-body">
                 <div class="row g-3">
                     <div class="col-md-6">
-                        <label class="form-label" for="directory-email">Primary email</label>
-                        <input class="form-control" id="directory-email" name="email" type="email" value="{{ email }}" required autocomplete="email">
+                        <label class="form-label" for="directory-username">Username</label>
+                        <input class="form-control" id="directory-username" name="username" value="{{ username }}" autocomplete="username">
+                        <div class="form-text">Used to associate local filesystem ownership with this person.</div>
                     </div>
                     <div class="col-md-6">
+                        <label class="form-label" for="directory-email">Primary email</label>
+                        <input class="form-control" id="directory-email" name="email" type="email" value="{{ email }}" autocomplete="email">
+                        <div class="form-text">A username or primary email is required.</div>
+                    </div>
+                    <div class="col-12">
                         <label class="form-label" for="directory-name">Display name</label>
                         <input class="form-control" id="directory-name" name="display_name" value="{{ display_name }}" autocomplete="name">
                     </div>

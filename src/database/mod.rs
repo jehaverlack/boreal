@@ -2,8 +2,10 @@ pub mod directory;
 pub mod github;
 pub mod inventory;
 pub mod keeper;
+pub mod local_files;
 pub mod migration;
 mod migrations;
+pub mod s3;
 pub mod settings;
 
 use std::{
@@ -25,6 +27,12 @@ const DATABASE_FILE_NAME: &str = "boreal.sqlite";
 #[derive(Debug, Clone)]
 pub struct Database {
     path: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MetadataTimingEstimate {
+    pub average_seconds: u64,
+    pub sample_count: u64,
 }
 
 impl Database {
@@ -113,6 +121,39 @@ impl Database {
         )?;
         Ok(())
     }
+
+    pub fn record_metadata_timing(
+        &self,
+        source: &str,
+        duration_seconds: u64,
+    ) -> Result<(), DatabaseError> {
+        let connection = self.connect()?;
+        connection.execute(
+            "INSERT INTO metadata_timing_history(source, duration_seconds)
+             VALUES (?1, ?2)",
+            params![source, duration_seconds.max(1) as i64],
+        )?;
+        Ok(())
+    }
+
+    pub fn metadata_timing_estimate(
+        &self,
+        source: &str,
+    ) -> Result<Option<MetadataTimingEstimate>, DatabaseError> {
+        let connection = self.connect()?;
+        let (average, count) = connection.query_row(
+            "SELECT COALESCE(AVG(duration_seconds), 0), COUNT(*) FROM (
+                 SELECT duration_seconds FROM metadata_timing_history
+                 WHERE source = ?1 ORDER BY id DESC LIMIT 5
+             )",
+            [source],
+            |row| Ok((row.get::<_, f64>(0)?, row.get::<_, i64>(1)?)),
+        )?;
+        Ok((count > 0).then_some(MetadataTimingEstimate {
+            average_seconds: average.round() as u64,
+            sample_count: count as u64,
+        }))
+    }
 }
 
 fn path(runtime: &Runtime) -> Result<PathBuf, DatabaseError> {
@@ -189,7 +230,7 @@ mod tests {
             })
             .expect("migration count should be readable");
 
-        assert_eq!(migration_count, 29,);
+        assert_eq!(migration_count, 35,);
 
         let safe_to_delete_scope_count: i64 = connection
             .query_row(
@@ -200,16 +241,16 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("migrated tag scopes should be readable");
-        assert_eq!(safe_to_delete_scope_count, 3);
+        assert_eq!(safe_to_delete_scope_count, 5);
 
         for (slug, expected_scope_count) in [
             ("data-loss-risk", 1_i64),
             ("access-review", 1_i64),
-            ("needs-review", 4_i64),
-            ("permission-review", 4_i64),
-            ("needs-handoff", 4_i64),
-            ("retain", 4_i64),
-            ("to-delete", 3_i64),
+            ("needs-review", 6_i64),
+            ("permission-review", 5_i64),
+            ("needs-handoff", 6_i64),
+            ("retain", 6_i64),
+            ("to-delete", 5_i64),
             ("to-migrate", 2_i64),
             ("migrated", 2_i64),
             ("remove-my-permissions", 4_i64),
@@ -236,7 +277,7 @@ mod tests {
         assert_eq!(safe_to_delete_tag.0, "Safe to Delete");
         assert_eq!(
             safe_to_delete_tag.1,
-            "Content the user has reviewed and marked as ready for manual deletion from Google Drive."
+            "Content the user has reviewed and marked as ready for manual deletion from its source location."
         );
         assert_eq!(safe_to_delete_tag.2, "#198754");
 
@@ -277,6 +318,35 @@ mod tests {
     }
 
     #[test]
+    fn owner_candidates_include_custom_person_types_and_email_aliases() {
+        let root = temporary_directory();
+        let database = Database::initialize(&runtime(&root)).expect("database should initialize");
+        directory::import_csv(
+            &database,
+            "people.csv",
+            b"email,username,name,type\nresearcher@example.edu,researcher,Research User,Affiliate Researcher\ngroup@example.edu,research-group,Research Group,Google Group\n",
+        )
+        .expect("directory should import");
+        let connection = database.connect().expect("database should connect");
+        connection
+            .execute(
+                "INSERT INTO principal_emails (principal_id, email)
+                 SELECT id, 'alias@example.edu' FROM principals WHERE username = 'researcher'",
+                [],
+            )
+            .expect("email alias should insert");
+        drop(connection);
+
+        let choices =
+            directory::list_person_choices(&database).expect("owner candidates should be readable");
+        assert_eq!(choices.len(), 1, "groups should not be owner candidates");
+        assert_eq!(choices[0].username, "researcher");
+        assert!(choices[0].search_text.contains("alias@example.edu"));
+
+        fs::remove_dir_all(root).expect("temporary database directory should be removable");
+    }
+
+    #[test]
     fn creates_foundation_tables() {
         let root = temporary_directory();
         let database = Database::initialize(&runtime(&root)).expect("database should initialize");
@@ -298,6 +368,8 @@ mod tests {
             "directory_sources",
             "directory_import_runs",
             "remote_accounts",
+            "metadata_timing_history",
+            "s3_objects",
             "shared_drives",
             "shared_drive_tags",
             "github_organizations",
@@ -329,6 +401,7 @@ mod tests {
         let root = temporary_directory();
         let database = Database::initialize(&runtime(&root)).expect("database should initialize");
         let expected = settings::InventorySettings {
+            google_drive_enabled: true,
             automatic_updates: false,
             refresh_interval_hours: 12,
             full_reconciliation_days: 14,
@@ -342,6 +415,7 @@ mod tests {
             keeper_enabled: true,
             keeper_command: "keeper".to_string(),
             keeper_last_sync_at: String::new(),
+            ..settings::InventorySettings::default()
         };
 
         settings::save(&database, &expected).expect("settings should save");
@@ -349,6 +423,7 @@ mod tests {
         let actual = settings::load(&database).expect("settings should load");
 
         assert_eq!(actual.automatic_updates, expected.automatic_updates,);
+        assert_eq!(actual.google_drive_enabled, expected.google_drive_enabled);
         assert_eq!(
             actual.refresh_interval_hours,
             expected.refresh_interval_hours,
@@ -763,12 +838,37 @@ mod tests {
     }
 
     #[test]
+    fn averages_the_five_most_recent_metadata_timings() {
+        let root = temporary_directory();
+        let database = Database::initialize(&runtime(&root)).expect("database should initialize");
+        for seconds in [10, 20, 30, 40, 50, 60] {
+            database
+                .record_metadata_timing("local-files", seconds)
+                .expect("timing should save");
+        }
+        let estimate = database
+            .metadata_timing_estimate("local-files")
+            .expect("estimate should load")
+            .expect("history should produce an estimate");
+        assert_eq!(estimate.average_seconds, 40);
+        assert_eq!(estimate.sample_count, 5);
+        assert!(
+            database
+                .metadata_timing_estimate("unknown")
+                .expect("missing estimate should load")
+                .is_none()
+        );
+        fs::remove_dir_all(root).expect("temporary database directory should be removable");
+    }
+
+    #[test]
     fn manual_directory_entries_can_be_created_and_edited() {
         let root = temporary_directory();
         let database = Database::initialize(&runtime(&root)).expect("database should initialize");
         let principal_id = directory::save_manual_principal(
             &database,
             None,
+            "newuser",
             "new.user@example.edu",
             "New User",
             "staff",
@@ -781,6 +881,7 @@ mod tests {
         directory::save_manual_principal(
             &database,
             Some(principal_id),
+            "newuser",
             "new.user@example.edu",
             "Updated User",
             "staff",
@@ -794,11 +895,196 @@ mod tests {
             .expect("identity should load")
             .expect("identity should exist");
         assert_eq!(principal.display_name, "Updated User");
+        assert_eq!(principal.username, "newuser");
         assert_eq!(principal.principal_type, "staff");
         assert_eq!(principal.status, "departing");
         assert_eq!(principal.departure_date, "2026-12-31");
         assert_eq!(principal.organizations, "ACEP");
         assert_eq!(principal.notes, "Updated manually");
+        fs::remove_dir_all(root).expect("temporary database directory should be removable");
+    }
+
+    #[test]
+    fn local_file_search_and_username_associations_span_the_inventory() {
+        let root = temporary_directory();
+        let database = Database::initialize(&runtime(&root)).expect("database should initialize");
+        local_files::synchronize(
+            &database,
+            &[
+                crate::local_files::Item {
+                    root_path: "/inventory".to_string(),
+                    relative_path: "nested".to_string(),
+                    name: "nested".to_string(),
+                    extension: String::new(),
+                    is_directory: true,
+                    size_bytes: 42,
+                    modified_unix: 1,
+                    checksum_sha256: String::new(),
+                    is_symlink: false,
+                    symlink_target: String::new(),
+                    owner_username: "jsmith".to_string(),
+                    owner_identifier: "1001".to_string(),
+                    group_name: "research".to_string(),
+                    group_identifier: "2001".to_string(),
+                },
+                crate::local_files::Item {
+                    root_path: "/inventory".to_string(),
+                    relative_path: "nested/reports/Annual Report.pdf".to_string(),
+                    name: "Annual Report.pdf".to_string(),
+                    extension: "pdf".to_string(),
+                    is_directory: false,
+                    size_bytes: 42,
+                    modified_unix: 1,
+                    checksum_sha256: String::new(),
+                    is_symlink: false,
+                    symlink_target: String::new(),
+                    owner_username: "jsmith".to_string(),
+                    owner_identifier: "1001".to_string(),
+                    group_name: "research".to_string(),
+                    group_identifier: "2001".to_string(),
+                },
+            ],
+        )
+        .expect("local inventory should synchronize");
+
+        let root_items = local_files::list_children(
+            &database,
+            "/inventory",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            false,
+            "name",
+            false,
+        )
+        .expect("root directory should load");
+        assert_eq!(root_items[0].size_bytes, 42);
+
+        let matches = local_files::list_children(
+            &database,
+            "/inventory",
+            "",
+            "annual report",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            false,
+            "name",
+            false,
+        )
+        .expect("recursive search should succeed");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].group_name, "research");
+        assert_eq!(matches[0].owner_principal_id, 0);
+
+        for (search, expected) in [
+            ("PDF", 1),
+            ("42 B", 2),
+            ("jsmith", 2),
+            ("research", 2),
+            (matches[0].modified_label.as_str(), 2),
+        ] {
+            let broad_matches = local_files::list_children(
+                &database,
+                "/inventory",
+                "",
+                search,
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                false,
+                "name",
+                false,
+            )
+            .expect("full-tree detail search should succeed");
+            assert_eq!(
+                broad_matches.len(),
+                expected,
+                "search should match: {search}"
+            );
+        }
+
+        for (label, item_type, owner, group, expected) in [
+            ("type", "pdf", "", "", 1),
+            ("owner", "", "jsmith", "", 1),
+            ("group", "", "", "research", 1),
+            ("combined", "pdf", "jsmith", "research", 1),
+        ] {
+            let filtered = local_files::list_children(
+                &database,
+                "/inventory",
+                "nested/reports",
+                "",
+                "",
+                "",
+                item_type,
+                "",
+                "",
+                owner,
+                group,
+                "",
+                false,
+                "name",
+                false,
+            )
+            .expect("type, owner, and group filters should succeed");
+            assert_eq!(
+                filtered.len(),
+                expected,
+                "column filter should match: {label}"
+            );
+        }
+
+        let principal_id = directory::save_manual_principal(
+            &database,
+            None,
+            "jsmith",
+            "jsmith@example.edu",
+            "Jamie Smith",
+            "person",
+            "active",
+            "",
+            "",
+            "",
+        )
+        .expect("person with a username should save");
+        let associated = local_files::list_children(
+            &database,
+            "/inventory",
+            "",
+            "annual report",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            false,
+            "name",
+            false,
+        )
+        .expect("associated search should succeed");
+        assert_eq!(associated[0].owner_principal_id, principal_id);
+        assert_eq!(associated[0].owner_display_name, "Jamie Smith");
         fs::remove_dir_all(root).expect("temporary database directory should be removable");
     }
 

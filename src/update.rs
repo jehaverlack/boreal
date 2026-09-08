@@ -85,7 +85,7 @@ fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
 }
 
 pub fn release_url(version: &str) -> String {
-    format!("https://github.com/jehaverlack/uaf-boreal/releases/tag/v{version}")
+    format!("https://github.com/jehaverlack/boreal/releases/tag/v{version}")
 }
 
 pub fn download_url(version: &str) -> Option<String> {
@@ -114,7 +114,7 @@ pub fn download_url(version: &str) -> Option<String> {
     };
     let filename = format!("boreal-v{version}-{platform}-{architecture}{extension}");
     Some(format!(
-        "https://github.com/jehaverlack/uaf-boreal/raw/refs/tags/v{version}/dist/{filename}"
+        "https://github.com/jehaverlack/boreal/raw/refs/tags/v{version}/dist/{filename}"
     ))
 }
 

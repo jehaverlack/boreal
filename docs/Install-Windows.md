@@ -6,13 +6,13 @@ Windows `PATH`.
 
 ## 1. Download BOREAL
 
-Download `boreal-v1.1.0-windows-x86_64.exe` from the
+Download `boreal-v1.1.1-windows-x86_64.exe` from the
 [BOREAL download table](../README.md#install-boreal).
 
 ## 2. Start BOREAL
 
 1. Open the **Downloads** folder.
-2. Double-click `boreal-v1.1.0-windows-x86_64.exe`.
+2. Double-click `boreal-v1.1.1-windows-x86_64.exe`.
 3. Keep the BOREAL console window open while using the application.
 
 Windows may warn that the beta executable is not code-signed. Confirm that the
@@ -24,7 +24,7 @@ running it.
 Open PowerShell in the Downloads directory and run:
 
 ```powershell
-Get-FileHash .\boreal-v1.1.0-windows-x86_64.exe -Algorithm SHA256
+Get-FileHash .\boreal-v1.1.1-windows-x86_64.exe -Algorithm SHA256
 ```
 
 Compare the result with the release `SHA256SUMS` file.

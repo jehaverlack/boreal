@@ -9,9 +9,9 @@ does not require root privileges and does not modify `PATH`.
 uname -m
 ```
 
-- `x86_64`: download `boreal-v1.1.0-linux-x86_64`.
-- `aarch64` or `arm64`: download `boreal-v1.1.0-linux-aarch64`.
-- `armv7l`: download `boreal-v1.1.0-linux-armv7`.
+- `x86_64`: download `boreal-v1.1.1-linux-x86_64`.
+- `aarch64` or `arm64`: download `boreal-v1.1.1-linux-aarch64`.
+- `armv7l`: download `boreal-v1.1.1-linux-armv7`.
 
 Download the correct file from the [BOREAL download table](../README.md#install-boreal).
 
@@ -21,7 +21,7 @@ The following example uses the x86_64 download:
 
 ```bash
 cd ~/Downloads
-chmod +x boreal-v1.1.0-linux-x86_64
+chmod +x boreal-v1.1.1-linux-x86_64
 ```
 
 Substitute the ARM64 or ARMv7 filename when appropriate.
@@ -29,7 +29,7 @@ Substitute the ARM64 or ARMv7 filename when appropriate.
 ## 3. Start BOREAL
 
 ```bash
-./boreal-v1.1.0-linux-x86_64
+./boreal-v1.1.1-linux-x86_64
 ```
 
 Keep the terminal open while using BOREAL. The application will create its
@@ -39,7 +39,7 @@ local browser interface.
 ## Verify the Download
 
 ```bash
-sha256sum boreal-v1.1.0-linux-x86_64
+sha256sum boreal-v1.1.1-linux-x86_64
 ```
 
 Compare the result with the release `SHA256SUMS` file.

@@ -8,7 +8,7 @@
 
         <div class="d-flex justify-content-between align-items-center mb-3">
             <div>
-                <h1 class="h3 mb-1">Settings</h1>
+                <h1 class="h3 mb-1"><i class="bi bi-gear me-2" aria-hidden="true"></i>Settings</h1>
                 <p class="text-body-secondary mb-0">
                     Configure optional BOREAL integrations.
                 </p>
@@ -37,8 +37,22 @@
 
         <form method="post" action="/settings">
 
-            <div class="card mb-3">
-                <div class="card-header fw-semibold">Linked persons spreadsheet</div>
+            <div class="d-flex flex-column">
+
+            <div class="card mb-3 order-3">
+                <div class="card-header fw-semibold boreal-google-drive-color"><img class="boreal-service-icon me-1" src="/assets/google-drive-logo.svg" alt="">Google Drive <span class="badge text-bg-secondary ms-1">Optional</span></div>
+                <div class="card-body">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" id="googleDriveEnabled" name="google_drive_enabled" value="true" {% if settings.google_drive_enabled %}checked{% endif %}>
+                        <label class="form-check-label" for="googleDriveEnabled">Enable Google Drive metadata</label>
+                    </div>
+                    <div class="form-text">When enabled, BOREAL walks you through OAuth credentials and a read-only Drive connection. Disabling preserves existing credentials and inventory data.</div>
+                </div>
+            </div>
+
+            {% if settings.google_drive_enabled %}
+            <div class="card mb-3 order-2">
+                <div class="card-header fw-semibold boreal-person-color"><i class="bi bi-person-vcard me-1"></i>Persons</div>
                 <div class="card-body">
                     <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
                         <span class="small text-body-secondary">Need a persons spreadsheet?</span>
@@ -78,9 +92,10 @@
                     {% endif %}
                 </div>
             </div>
+            {% endif %}
 
-            <div class="card mb-3">
-                <div class="card-header fw-semibold"><i class="bi bi-github me-1"></i>GitHub integration <span class="badge text-bg-secondary ms-1">Optional</span></div>
+            <div class="card mb-3 order-4">
+                <div class="card-header fw-semibold boreal-github-color"><i class="bi bi-github me-1"></i>GitHub integration <span class="badge text-bg-secondary ms-1">Optional</span></div>
                 <div class="card-body">
                     <div class="form-check form-switch mb-3">
                         <input class="form-check-input" type="checkbox" role="switch" id="githubEnabled" name="github_enabled" value="true" {% if settings.github_enabled %}checked{% endif %}>
@@ -114,8 +129,8 @@
                 </div>
             </div>
 
-            <div class="card mb-3">
-                <div class="card-header fw-semibold"><i class="bi bi-shield-lock-fill me-1"></i>Keeper integration <span class="badge text-bg-secondary ms-1">Optional</span></div>
+            <div class="card mb-3" style="order: 6">
+                <div class="card-header fw-semibold boreal-keeper-color"><i class="bi bi-shield-lock-fill me-1"></i>Keeper integration <span class="badge text-bg-secondary ms-1">Optional</span></div>
                 <div class="card-body">
                     <div class="form-check form-switch mb-3">
                         <input class="form-check-input" type="checkbox" role="switch" id="keeperEnabled" name="keeper_enabled" value="true" {% if settings.keeper_enabled %}checked{% endif %}>
@@ -131,6 +146,35 @@
                     {% if keeper_version.len() > 0 %}<div class="small text-success mt-2"><i class="bi bi-check-circle me-1"></i>{{ keeper_version }}</div>{% endif %}
                     {% if settings.keeper_last_sync_at.len() > 0 %}<div class="small text-body-secondary mt-1">Last updated {{ settings.keeper_last_sync_at }} UTC</div>{% endif %}
                 </div>
+            </div>
+
+            <div class="card mb-3 order-1" id="local-files">
+                <div class="card-header fw-semibold boreal-local-files-color"><i class="bi bi-folder2-open me-1"></i>Local Files <span class="badge text-bg-secondary ms-1">Optional</span></div>
+                <div class="card-body">
+                    <div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" id="localFilesEnabled" name="local_files_enabled" value="true" {% if settings.local_files_enabled %}checked{% endif %}><label class="form-check-label" for="localFilesEnabled">Enable local file metadata</label></div>
+                    <label class="form-label" for="localFileRoots">Folders to inventory</label><textarea class="form-control font-monospace" id="localFileRoots" name="local_file_roots" rows="3" placeholder="One absolute folder per line">{{ settings.local_file_roots }}</textarea>
+                    <div class="form-text mb-3">One absolute folder per line. BOREAL stores names, paths, sizes, dates, and duplicate-candidate checksums locally. File contents are not stored.</div>
+                    <div class="d-flex flex-wrap gap-3 mb-3"><div class="form-check"><input class="form-check-input" type="checkbox" id="excludeHidden" name="local_exclude_hidden" value="true" {% if settings.local_exclude_hidden %}checked{% endif %}><label class="form-check-label" for="excludeHidden">Exclude hidden files</label></div><div class="form-check"><input class="form-check-input" type="checkbox" id="excludeCaches" name="local_exclude_caches" value="true" {% if settings.local_exclude_caches %}checked{% endif %}><label class="form-check-label" for="excludeCaches">Exclude caches</label></div><div class="form-check"><input class="form-check-input" type="checkbox" id="excludeTemporary" name="local_exclude_temporary" value="true" {% if settings.local_exclude_temporary %}checked{% endif %}><label class="form-check-label" for="excludeTemporary">Exclude temporary/trash folders</label></div></div>
+                    <label class="form-label" for="localExcludePatterns">Additional exclusions</label><textarea class="form-control font-monospace" id="localExcludePatterns" name="local_exclude_patterns" rows="3" placeholder="One relative-path pattern per line, for example: Downloads/*.iso">{{ settings.local_exclude_patterns }}</textarea>
+                    <div class="form-text">Supports <code>*</code> and <code>?</code>. Symbolic links are never followed, and BOREAL's own runtime directory is always excluded.</div>
+                    {% if settings.local_files_last_sync_at.len() > 0 %}<div class="small text-body-secondary mt-2">Last updated {{ settings.local_files_last_sync_at }} UTC</div>{% endif %}
+                </div>
+            </div>
+
+            <div class="card mb-3 order-5" id="s3">
+                <div class="card-header fw-semibold boreal-s3-color"><i class="bi bi-bucket me-1"></i>S3-compatible storage <span class="badge text-bg-secondary ms-1">Optional</span></div>
+                <div class="card-body">
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="s3Enabled" name="s3_enabled" value="true" {% if settings.s3_enabled %}checked{% endif %}>
+                        <label class="form-check-label" for="s3Enabled">Enable S3 object metadata</label>
+                    </div>
+                    <label class="form-label" for="s3RemoteName">Rclone remote name</label>
+                    <input class="form-control font-monospace" id="s3RemoteName" name="s3_remote_name" value="{{ settings.s3_remote_name }}" placeholder="research-s3">
+                    <div class="form-text">Configure the S3 remote in BOREAL's Rclone WebGUI, then enter its name here without the trailing colon. Compatible endpoints include AWS S3, MinIO, Ceph, and Wasabi.</div>
+                    <a class="btn btn-sm btn-outline-primary mt-3" href="/rclone-gui" target="_blank" rel="noopener noreferrer"><i class="bi bi-gear me-1"></i>Configure Rclone remote</a>
+                </div>
+            </div>
+
             </div>
 
             <button type="submit" class="btn btn-primary me-2">

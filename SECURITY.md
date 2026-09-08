@@ -13,13 +13,13 @@ already have been corrected.
 | < 1.1 | :x: |
 
 The current release is listed on the
-[BOREAL Update page](https://github.com/jehaverlack/uaf-boreal/releases/latest)
+[BOREAL Update page](https://github.com/jehaverlack/boreal/releases/latest)
 and in the repository's `changelog.json` file.
 
 ## Reporting a vulnerability
 
 Please report suspected security vulnerabilities privately through
-[GitHub Private Vulnerability Reporting](https://github.com/jehaverlack/uaf-boreal/security/advisories/new).
+[GitHub Private Vulnerability Reporting](https://github.com/jehaverlack/boreal/security/advisories/new).
 
 Do **not** disclose a suspected vulnerability in a public GitHub issue,
 discussion, pull request, log excerpt, or screenshot. Public issues remain the

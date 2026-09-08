@@ -10,8 +10,8 @@ run it with `sudo`.
 
 Use **About This Mac** in the Apple menu to identify the processor:
 
-- Apple M1, M2, M3, or later: download `boreal-v1.1.0-macos-aarch64`.
-- Intel processor: download `boreal-v1.1.0-macos-x86_64`.
+- Apple M1, M2, M3, or later: download `boreal-v1.1.1-macos-aarch64`.
+- Intel processor: download `boreal-v1.1.1-macos-x86_64`.
 
 Download the correct file from the [BOREAL download table](../README.md#install-boreal).
 
@@ -23,14 +23,14 @@ Apple Silicon:
 
 ```bash
 cd ~/Downloads
-chmod +x boreal-v1.1.0-macos-aarch64
+chmod +x boreal-v1.1.1-macos-aarch64
 ```
 
 Intel:
 
 ```bash
 cd ~/Downloads
-chmod +x boreal-v1.1.0-macos-x86_64
+chmod +x boreal-v1.1.1-macos-x86_64
 ```
 
 ## 3. Start BOREAL
@@ -38,13 +38,13 @@ chmod +x boreal-v1.1.0-macos-x86_64
 Apple Silicon:
 
 ```bash
-./boreal-v1.1.0-macos-aarch64
+./boreal-v1.1.1-macos-aarch64
 ```
 
 Intel:
 
 ```bash
-./boreal-v1.1.0-macos-x86_64
+./boreal-v1.1.1-macos-x86_64
 ```
 
 Keep the Terminal window open while using BOREAL. The current beta is a
@@ -60,8 +60,8 @@ If necessary, remove the downloaded file's quarantine attribute and start it
 again:
 
 ```bash
-xattr -d com.apple.quarantine boreal-v1.1.0-macos-aarch64
-./boreal-v1.1.0-macos-aarch64
+xattr -d com.apple.quarantine boreal-v1.1.1-macos-aarch64
+./boreal-v1.1.1-macos-aarch64
 ```
 
 Substitute the Intel filename on an Intel Mac. Do not add `sudo`.
@@ -69,7 +69,7 @@ Substitute the Intel filename on an Intel Mac. Do not add `sudo`.
 ## Verify the Download
 
 ```bash
-shasum -a 256 boreal-v1.1.0-macos-aarch64
+shasum -a 256 boreal-v1.1.1-macos-aarch64
 ```
 
 Compare the result with the release `SHA256SUMS` file. An Apple Silicon binary

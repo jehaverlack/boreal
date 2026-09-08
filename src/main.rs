@@ -22,8 +22,10 @@ mod desktop;
 mod github;
 mod google;
 mod keeper;
+mod local_files;
 mod logging;
 mod rclone;
+mod s3;
 mod update;
 mod web;
 
@@ -46,16 +48,22 @@ fn main() {
                 return;
             }
         };
-        if let Err(error) = runtime.block_on(run_boreal()) {
+        let result = runtime.block_on(run_boreal());
+        runtime.shutdown_timeout(Duration::from_secs(2));
+        if let Err(error) = result {
             std::eprintln!("BOREAL stopped with an error: {error}");
         }
     })
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), Box<dyn Error>> {
-    run_boreal().await
+fn main() -> Result<(), Box<dyn Error>> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let result = runtime.block_on(run_boreal());
+    runtime.shutdown_timeout(Duration::from_secs(2));
+    result
 }
 
 async fn run_boreal() -> Result<(), Box<dyn Error>> {
@@ -86,7 +94,7 @@ async fn run_boreal() -> Result<(), Box<dyn Error>> {
         .unwrap_or("Unknown");
 
     std::println!("BOREAL v{} ({maturity})", env!("CARGO_PKG_VERSION"));
-    std::println!("GitHub: https://github.com/jehaverlack/uaf-boreal");
+    std::println!("GitHub: https://github.com/jehaverlack/boreal");
     std::println!("Startup status: Starting BOREAL services...");
 
     log::info!(

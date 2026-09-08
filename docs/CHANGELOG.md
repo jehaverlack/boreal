@@ -5,15 +5,40 @@
 | **Name** | boreal |
 | **Author** | John Haverlack |
 | **License** | MIT |
-| **Version** | 1.1.0 |
+| **Version** | 1.1.1 |
 | **Maturity** | STABLE |
-| **Date** | 2026-09-03 |
+| **Date** | 2026-09-08 |
+
+## v1.1.1 - 2026-09-08 (STABLE)
+
+**Summary**
+Added Local File Parser
+
+**Notes**
+Major Feature Rewrite pre 1.2.0
+
+- Fixed Person Association
+- Fixing File Metadata
+- Adding File Search
+- Fixing Metadata Updates
+- Local File Updates
+- vis updates
+- Readme Cleanup
+- Cleaning up Dashboard
+- Menu Cleanup
+- Fixing Wget/curl deps
+- Fixing Rclone Process Issue
+- Adding local file support
+- Start v1.1.1
+- Adding security policy
 
 ## v1.1.0 - 2026-09-03 (STABLE)
 
 **Summary**
 Added GitHub and Keeper Support
 
+- b1.1.0
+- b1.1.0
 - Cleaning up Github Summary
 - Fixing Keeper Integration
 - Updating Docs
@@ -297,12 +322,18 @@ Added Migration Assitant and Polished Interfaces
 **Summary**
 Project Initialization
 
-- Cleaning up Github Summary
-- Fixing Keeper Integration
-- Updating Docs
-- Adding Keeper Integration
-- Fixed Github PDF Exporter
-- github token assistance widget
-- Adding GitHub Integration
-- Start v1.1.0
+- Fixed Person Association
+- Fixing File Metadata
+- Adding File Search
+- Fixing Metadata Updates
+- Local File Updates
+- vis updates
+- Readme Cleanup
+- Cleaning up Dashboard
+- Menu Cleanup
+- Fixing Wget/curl deps
+- Fixing Rclone Process Issue
+- Adding local file support
+- Start v1.1.1
+- Adding security policy
 

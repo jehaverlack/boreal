@@ -1,47 +1,42 @@
-<div
-    id="boreal-drive-summaries"
-    {% if metadata.poll %}
-    hx-get="/ui/drive-summaries"
-    hx-trigger="every 1s"
-    hx-swap="outerHTML"
-    {% endif %}
->
-    <section class="mb-4" aria-labelledby="my-drive-summary-heading">
+<div id="boreal-drive-summaries">
+    <div class="d-flex flex-column">
+    {% if google_drive_enabled %}
+    <section class="mb-4 order-3" aria-labelledby="google-drive-summary-heading">
+        <h1 class="h4 mb-3 boreal-google-drive-color" id="google-drive-summary-heading"><img class="boreal-service-icon me-2" src="/assets/google-drive-logo.svg" alt="">Google Drive</h1>
+    <div class="mb-4" aria-labelledby="my-drive-summary-heading">
         <div class="d-flex justify-content-between align-items-center mb-2">
-            <h1 class="h4 mb-0" id="my-drive-summary-heading">
+            <h2 class="h5 mb-0" id="my-drive-summary-heading">
                 <a class="text-body text-decoration-none" href="/my-drive" title="Explore My Drive">
-                    <i class="bi bi-folder2-open text-primary me-2"></i>My Drive
+                    <i class="bi bi-folder2-open boreal-google-drive-color me-2"></i>My Drive
                 </a>
-            </h1>
-            {% if metadata.updating %}
-            <span class="badge text-bg-primary"><span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>{{ metadata.phase }}</span>
-            {% else if metadata.completed_at.len() > 0 %}
+            </h2>
+            {% if metadata.completed_at.len() > 0 %}
             <span class="badge text-bg-success">Indexed</span>
             {% else %}
             <span class="badge text-bg-warning">Not indexed</span>
             {% endif %}
         </div>
         <div class="card"><div class="card-body">
-            {% if metadata.updating || metadata.completed_at.len() > 0 %}
+            {% if metadata.completed_at.len() > 0 %}
             <div class="row g-3">
                 <div class="col-6 col-md"><div class="small text-body-secondary">Total size</div><div class="fs-4 fw-semibold">{{ metadata.size_label }}</div></div>
                 <div class="col-6 col-md"><div class="small text-body-secondary">Files</div><div class="fs-4 fw-semibold">{{ metadata.files_scanned }}</div></div>
                 <div class="col-6 col-md"><div class="small text-body-secondary">Folders</div><div class="fs-4 fw-semibold">{{ metadata.folders_scanned }}</div></div>
                 <div class="col-6 col-md"><div class="small text-body-secondary">Permissions</div><div class="fs-4 fw-semibold">{{ metadata.permissions_scanned }}</div></div>
                 <div class="col-6 col-md"><div class="small text-body-secondary">Metadata age</div>
-                    {% if metadata.completed_at.len() > 0 %}<div class="fs-4 fw-semibold boreal-data-age" data-synchronized-at="{{ metadata.completed_at }}">just now</div>{% else %}<div class="fs-4 fw-semibold">Updating</div>{% endif %}
+                    <div class="fs-4 fw-semibold boreal-data-age" data-synchronized-at="{{ metadata.completed_at }}">just now</div>
                 </div>
             </div>
             {% else %}
             <p class="text-body-secondary mb-0">Use Update in the navigation bar to populate My Drive statistics.</p>
             {% endif %}
         </div></div>
-    </section>
+    </div>
 
-    <section class="mb-4" aria-labelledby="shared-drives-summary-heading">
+    <div class="mb-4" aria-labelledby="shared-drives-summary-heading">
         <div class="d-flex justify-content-between align-items-center mb-2">
-            <h2 class="h4 mb-0" id="shared-drives-summary-heading"><a class="text-body text-decoration-none" href="/shared-drives" title="Explore Shared Drives"><i class="bi bi-cloud-fill text-primary me-2"></i>Shared Drives ({{ metadata.shared_drives_count }})</a></h2>
-            {% if metadata.updating %}<span class="badge text-bg-primary"><span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>{{ metadata.phase }}</span>{% else if metadata.shared_drives_indexed %}<span class="badge text-bg-success">Indexed</span>{% else %}<span class="badge text-bg-warning">Not indexed</span>{% endif %}
+            <h2 class="h5 mb-0" id="shared-drives-summary-heading"><a class="text-body text-decoration-none" href="/shared-drives" title="Explore Shared Drives"><i class="bi bi-cloud-fill boreal-google-drive-color me-2"></i>Shared Drives ({{ metadata.shared_drives_count }})</a></h2>
+            {% if metadata.shared_drives_indexed %}<span class="badge text-bg-success">Indexed</span>{% else %}<span class="badge text-bg-warning">Not indexed</span>{% endif %}
         </div>
         <div class="card"><div class="card-body">
             {% if metadata.shared_drives_indexed %}
@@ -54,18 +49,16 @@
             </div>
             {% else %}<p class="text-body-secondary mb-0">Use Update in the navigation bar to discover and index Shared Drives.</p>{% endif %}
         </div></div>
-    </section>
+    </div>
 
-    <section class="mb-4" aria-labelledby="shared-with-me-summary-heading">
+    <div aria-labelledby="shared-with-me-summary-heading">
         <div class="d-flex justify-content-between align-items-center mb-2">
-            <h2 class="h4 mb-0" id="shared-with-me-summary-heading">
+            <h2 class="h5 mb-0" id="shared-with-me-summary-heading">
                 <a class="text-body text-decoration-none" href="/shared-with-me" title="Explore Shared with me">
-                    <i class="bi bi-share-fill text-primary me-2"></i>Shared with me
+                    <i class="bi bi-share-fill boreal-google-drive-color me-2"></i>Shared with me
                 </a>
             </h2>
-            {% if metadata.updating %}
-            <span class="badge text-bg-primary"><span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>{{ metadata.phase }}</span>
-            {% else if metadata.shared_indexed %}
+            {% if metadata.shared_indexed %}
             <span class="badge text-bg-success">Indexed</span>
             {% else %}
             <span class="badge text-bg-warning">Not indexed</span>
@@ -84,17 +77,30 @@
             <p class="text-body-secondary mb-0">Use Update in the navigation bar to populate Shared with me statistics.</p>
             {% endif %}
         </div></div>
+    </div>
     </section>
+    {% endif %}
 
-    {% if github_enabled || keeper_enabled %}
-    <div class="row g-4 mb-4">
-        {% if github_enabled %}
-        <section class="col-12" aria-labelledby="github-summary-heading">
+    <div class="d-contents">
+        <section class="mb-4 order-2" aria-labelledby="persons-summary-heading">
             <div class="d-flex justify-content-between align-items-center mb-2">
-                <h2 class="h4 mb-0" id="github-summary-heading"><a class="text-body text-decoration-none" href="/github"><i class="bi bi-github me-2"></i>GitHub</a></h2>
+                <h2 class="h4 mb-0" id="persons-summary-heading"><a class="boreal-person-color text-decoration-none" href="/directory"><i class="bi bi-person-vcard me-2"></i>Persons</a></h2>
+            </div>
+            <div class="card"><div class="card-body"><div class="row g-3">
+                <div class="col-6 col-md"><div class="small text-body-secondary">Persons and accounts</div><div class="fs-4 fw-semibold">{{ directory_summary.principals }}</div></div>
+                <div class="col-6 col-md"><div class="small text-body-secondary">Organizations</div><div class="fs-4 fw-semibold">{{ directory_summary.organizations }}</div></div>
+                <div class="col-6 col-md"><div class="small text-body-secondary">Groups</div><div class="fs-4 fw-semibold">{{ directory_summary.groups }}</div></div>
+                <div class="col-6 col-md"><div class="small text-body-secondary">Former / departing</div><div class="fs-4 fw-semibold">{{ directory_summary.former_or_departing }}</div></div>
+                <div class="col-6 col-md"><div class="small text-body-secondary">Linked sources</div><div class="fs-4 fw-semibold">{{ directory_summary.sources }}</div></div>
+            </div></div></div>
+        </section>
+        {% if github_enabled %}
+        <section class="mb-4 order-4" aria-labelledby="github-summary-heading">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h2 class="h4 mb-0" id="github-summary-heading"><a class="boreal-github-color text-decoration-none" href="/github"><i class="bi bi-github me-2"></i>GitHub</a></h2>
                 {% if github_summary.completed_at.len() > 0 %}<span class="badge text-bg-success">Indexed</span>{% else %}<span class="badge text-bg-warning">Not indexed</span>{% endif %}
             </div>
-            <div class="card h-100"><div class="card-body">
+            <div class="card"><div class="card-body">
                 {% if github_summary.completed_at.len() > 0 %}
                 <div class="row g-3">
                     <div class="col-6 col-md-4 col-xl-2"><div class="small text-body-secondary">Repository size</div><div class="fs-4 fw-semibold">{{ github_summary.total_size_label }}</div></div>
@@ -108,13 +114,19 @@
             </div></div>
         </section>
         {% endif %}
+        {% if local_files_enabled %}
+        <section class="mb-4 order-1" aria-labelledby="local-files-summary-heading">
+            <div class="d-flex justify-content-between align-items-center mb-2"><h2 class="h4 mb-0" id="local-files-summary-heading"><a class="boreal-local-files-color text-decoration-none" href="/local-files"><i class="bi bi-folder2-open me-2"></i>Local Files</a></h2>{% if local_files_summary.completed_at.len() > 0 %}<span class="badge text-bg-success">Indexed</span>{% else %}<span class="badge text-bg-warning">Not indexed</span>{% endif %}</div>
+            <div class="card"><div class="card-body">{% if local_files_summary.completed_at.len() > 0 %}<div class="row g-3"><div class="col-6 col-md"><div class="small text-body-secondary">Total size</div><div class="fs-4 fw-semibold">{{ local_files_summary.size_label }}</div></div><div class="col-6 col-md"><div class="small text-body-secondary">Files</div><div class="fs-4 fw-semibold">{{ local_files_summary.files }}</div></div><div class="col-6 col-md"><div class="small text-body-secondary">Folders</div><div class="fs-4 fw-semibold">{{ local_files_summary.folders }}</div></div><div class="col-6 col-md"><div class="small text-body-secondary">Duplicate groups</div><div class="fs-4 fw-semibold">{{ local_files_summary.duplicate_groups }}</div></div><div class="col-6 col-md"><div class="small text-body-secondary">Potential savings</div><div class="fs-4 fw-semibold">{{ local_files_summary.duplicate_size_label }}</div></div><div class="col-6 col-md"><div class="small text-body-secondary">Metadata age</div><div class="fs-4 fw-semibold boreal-data-age" data-synchronized-at="{{ local_files_summary.completed_at }}">just now</div></div></div>{% else %}<p class="text-body-secondary mb-0">Select Local Files from Update to populate this summary.</p>{% endif %}</div></div>
+        </section>
+        {% endif %}
         {% if keeper_enabled %}
-        <section class="col-lg-6" aria-labelledby="keeper-summary-heading">
+        <section class="mb-4" style="order: 6" aria-labelledby="keeper-summary-heading">
             <div class="d-flex justify-content-between align-items-center mb-2">
-                <h2 class="h4 mb-0" id="keeper-summary-heading"><a class="text-body text-decoration-none" href="/keeper"><i class="bi bi-shield-lock-fill text-warning me-2"></i>Keeper</a></h2>
+                <h2 class="h4 mb-0" id="keeper-summary-heading"><a class="boreal-keeper-color text-decoration-none" href="/keeper"><i class="bi bi-shield-lock-fill me-2"></i>Keeper</a></h2>
                 {% if keeper_summary.completed_at.len() > 0 %}<span class="badge text-bg-success">Indexed</span>{% else %}<span class="badge text-bg-warning">Not indexed</span>{% endif %}
             </div>
-            <div class="card h-100"><div class="card-body">
+            <div class="card"><div class="card-body">
                 {% if keeper_summary.completed_at.len() > 0 %}
                 <div class="row g-3">
                     <div class="col-6 col-xl"><div class="small text-body-secondary">Shared folders</div><div class="fs-4 fw-semibold">{{ keeper_summary.shared_folders }}</div></div>
@@ -126,6 +138,24 @@
             </div></div>
         </section>
         {% endif %}
+        {% if s3_enabled %}
+        <section class="mb-4 order-5" aria-labelledby="s3-summary-heading">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h2 class="h4 mb-0 boreal-s3-color" id="s3-summary-heading"><i class="bi bi-bucket me-2"></i>S3-compatible storage</h2>
+                {% if s3_summary.completed_at.len() > 0 %}<span class="badge text-bg-success">Indexed</span>{% else %}<span class="badge text-bg-warning">Not indexed</span>{% endif %}
+            </div>
+            <div class="card"><div class="card-body">
+                {% if s3_summary.completed_at.len() > 0 %}
+                <div class="row g-3">
+                    <div class="col-6 col-md"><div class="small text-body-secondary">Total size</div><div class="fs-4 fw-semibold">{{ s3_summary.size_label }}</div></div>
+                    <div class="col-6 col-md"><div class="small text-body-secondary">Objects</div><div class="fs-4 fw-semibold">{{ s3_summary.objects }}</div></div>
+                    <div class="col-6 col-md"><div class="small text-body-secondary">Buckets / prefixes</div><div class="fs-4 fw-semibold">{{ s3_summary.prefixes }}</div></div>
+                    <div class="col-6 col-md"><div class="small text-body-secondary">Metadata age</div><div class="fs-4 fw-semibold boreal-data-age" data-synchronized-at="{{ s3_summary.completed_at }}">just now</div></div>
+                </div>
+                {% else %}<p class="text-body-secondary mb-0">Select S3-compatible storage from Update to populate this summary.</p>{% endif %}
+            </div></div>
+        </section>
+        {% endif %}
     </div>
-    {% endif %}
+    </div>
 </div>

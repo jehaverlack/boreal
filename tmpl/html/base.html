@@ -90,6 +90,9 @@
         .boreal-col-modified { width: 12rem; }
         .boreal-col-owner { width: 11rem; }
         .boreal-col-permissions { width: 14rem; }
+        .boreal-local-select-col { width: 2.5rem; }
+        .boreal-local-name-col { width: 34%; }
+        .boreal-local-type-col { width: 8rem; }
         .boreal-shared-name { width: 30%; }
         .boreal-shared-tags { width: 9rem; }
         .boreal-shared-count { width: 5.5rem; }
@@ -138,6 +141,32 @@
             width: 1.15rem;
             height: 1.15rem;
         }
+
+        .boreal-status-icon {
+            width: 1rem;
+            height: 1rem;
+            flex: 0 0 auto;
+        }
+
+        .boreal-service-icon {
+            width: 1.15rem;
+            height: 1.15rem;
+            object-fit: contain;
+            vertical-align: -0.15em;
+        }
+
+        .d-contents { display: contents; }
+        .boreal-local-files-color { color: #36454f !important; }
+        .boreal-person-color { color: #0aa2c0 !important; }
+        .boreal-google-drive-color { color: #198754 !important; }
+        .boreal-github-color { color: #000 !important; }
+        .boreal-keeper-color { color: #daa520 !important; }
+        .boreal-s3-color { color: #d97706 !important; }
+
+        [data-status-label="Local Files"] i { color: #36454f; }
+        [data-status-label="GitHub"] i { color: #000; }
+        [data-status-label="Keeper"] i { color: #daa520; }
+        [data-status-label="S3"] i { color: #d97706; }
 
         .boreal-unknown-identity {
             background-color: #fff3cd;
@@ -207,8 +236,12 @@
         .navbar .boreal-github-nav:focus {
             color: #000 !important;
         }
+        .navbar .boreal-local-files-nav,
+        .navbar .boreal-local-files-nav.active { color: #36454f !important; }
+        .navbar .boreal-local-files-nav:hover,
+        .navbar .boreal-local-files-nav:focus { color: #212529 !important; }
         .navbar .boreal-keeper-nav,
-        .navbar .boreal-keeper-nav.active { color: #ffc107; }
+        .navbar .boreal-keeper-nav.active { color: #daa520; }
         .navbar .boreal-keeper-nav:hover,
         .navbar .boreal-keeper-nav:focus { color: #ffda6a; }
 
@@ -303,7 +336,7 @@
 
 </head>
 
-<body class="d-flex flex-column min-vh-100{% if active_page == "my-drive" || active_page == "shared-drives" || active_page == "shared-with-me" || active_page == "directory" || active_page == "tags" || active_page == "github" || active_page == "keeper" %} vh-100 overflow-hidden{% endif %}">
+<body class="d-flex flex-column min-vh-100{% if active_page == "my-drive" || active_page == "shared-drives" || active_page == "shared-with-me" || active_page == "directory" || active_page == "tags" || active_page == "github" || active_page == "keeper" || active_page == "local-files" %} vh-100 overflow-hidden{% endif %}">
 
     <nav
         class="navbar navbar-expand-lg bg-body-tertiary border-bottom"
@@ -348,9 +381,35 @@
                             href="/"
                             title="Dashboard"
                         >
+                            <i class="bi bi-speedometer2 me-1"></i>
                             Dashboard
                         </a>
 
+                    </li>
+
+                    <li id="local-files-primary-navigation" hx-get="/ui/local-files-primary-nav" hx-trigger="load" hx-swap="outerHTML"></li>
+
+                    <li class="nav-item">
+                        <a
+                            class="nav-link boreal-person-nav{% if active_page == "directory" %} active{% endif %}"
+                            {% if active_page == "directory" %}aria-current="page"{% endif %}
+                            href="/directory"
+                            title="People, groups, organizations, and accounts"
+                        >
+                            <i class="bi bi-person-vcard me-1"></i>
+                            Persons
+                        </a>
+                    </li>
+
+                    <li id="google-drive-primary-navigation" hx-get="/ui/google-drive-primary-nav" hx-trigger="load" hx-swap="outerHTML"></li>
+
+                    <li id="github-primary-navigation" hx-get="/ui/github-primary-nav" hx-trigger="load" hx-swap="outerHTML"></li>
+                    <li id="keeper-primary-navigation" hx-get="/ui/keeper-primary-nav" hx-trigger="load" hx-swap="outerHTML"></li>
+
+                    <li class="nav-item">
+                        <a class="nav-link boreal-purple-nav{% if active_page == "migrations" %} active{% endif %}"
+                           {% if active_page == "migrations" %}aria-current="page"{% endif %}
+                           href="/migrations" title="Migration plans and history"><i class="bi bi-arrow-left-right me-1"></i>Migrations</a>
                     </li>
 
                     <li class="nav-item">
@@ -361,67 +420,9 @@
                             data-bs-target="#metadataUpdateModal"
                             title="Update Metadata"
                         >
+                            <i class="bi bi-arrow-clockwise me-1"></i>
                             Update
                         </button>
-                    </li>
-
-                    <li class="nav-item">
-                        <a
-                            class="nav-link boreal-drive-nav{% if active_page == "my-drive" %} active{% endif %}"
-                            {% if active_page == "my-drive" %}aria-current="page"{% endif %}
-                            href="/my-drive"
-                            title="Explore My Drive"
-                        >
-                            My Drive
-                        </a>
-                    </li>
-
-                    <li class="nav-item">
-                        <a class="nav-link boreal-drive-nav{% if active_page == "shared-drives" %} active{% endif %}"
-                           {% if active_page == "shared-drives" %}aria-current="page"{% endif %}
-                           href="/shared-drives" title="Explore Shared Drives">Shared Drives</a>
-                    </li>
-
-                    <li class="nav-item">
-                        <a
-                            class="nav-link boreal-drive-nav{% if active_page == "shared-with-me" %} active{% endif %}"
-                            {% if active_page == "shared-with-me" %}aria-current="page"{% endif %}
-                            href="/shared-with-me"
-                            title="Explore Shared with me"
-                        >
-                            Shared with me
-                        </a>
-                    </li>
-
-                    <li id="github-primary-navigation" hx-get="/ui/github-primary-nav" hx-trigger="load" hx-swap="outerHTML"></li>
-                    <li id="keeper-primary-navigation" hx-get="/ui/keeper-primary-nav" hx-trigger="load" hx-swap="outerHTML"></li>
-
-                    <li class="nav-item">
-                        <a
-                            class="nav-link boreal-person-nav{% if active_page == "directory" %} active{% endif %}"
-                            {% if active_page == "directory" %}aria-current="page"{% endif %}
-                            href="/directory"
-                            title="People, groups, organizations, and accounts"
-                        >
-                            Persons
-                        </a>
-                    </li>
-
-                    <li class="nav-item">
-                        <a class="nav-link boreal-purple-nav{% if active_page == "migrations" %} active{% endif %}"
-                           {% if active_page == "migrations" %}aria-current="page"{% endif %}
-                           href="/migrations" title="Migration plans and history">Migrations</a>
-                    </li>
-
-                    <li class="nav-item">
-                        <a
-                            class="nav-link boreal-purple-nav{% if active_page == "remotes" %} active{% endif %}"
-                            {% if active_page == "remotes" %}aria-current="page"{% endif %}
-                            href="/remotes"
-                            title="View Remotes"
-                        >
-                            Remotes
-                        </a>
                     </li>
 
                 </ul>
@@ -440,29 +441,11 @@
                             title="Open Rclone WebGUI in a new tab"
                             aria-label="Open Rclone WebGUI in a new tab"
                         >
-                            <i class="bi bi-arrow-repeat" aria-hidden="true"></i>
+                            <img class="boreal-service-icon" src="/assets/rclone-logo.svg" alt="" aria-hidden="true">
                         </a>
                     </li>
 
-                    <li class="nav-item">
-                        <a
-                            class="nav-link boreal-drive-nav"
-                            href="https://drive.google.com/drive/quota"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title="Open Google Drive in a new tab"
-                            aria-label="Open Google Drive in a new tab"
-                        >
-                            <svg class="boreal-google-drive-icon" viewBox="0 0 87.3 78" aria-hidden="true">
-                                <path fill="#0066da" d="m6.6 66.9 3.8 6.6c.8 1.4 2 2.5 3.4 3.3L27.4 53H.2c0 1.6.4 3.2 1.2 4.6z"/>
-                                <path fill="#00ac47" d="M43.7 25.2 30.1 1.4A10 10 0 0 0 26.6 0L13.8 22.3 27.4 46z"/>
-                                <path fill="#ea4335" d="M73.5 76.8a10 10 0 0 0 3.4-3.3l1.6-2.8 7.5-13.1c.8-1.4 1.2-3 1.2-4.6H59.8l5.8 11.4z"/>
-                                <path fill="#00832d" d="M43.7 25.2 57.3 1.4A10 10 0 0 0 53.8 0H33.6c-2.5 0-4.8.5-7 1.4z"/>
-                                <path fill="#2684fc" d="M59.8 53H27.4L13.8 76.8c1.4.8 3 1.2 4.6 1.2h50.5c1.6 0 3.2-.4 4.6-1.2z"/>
-                                <path fill="#ffba00" d="M73.3 26.7 60.7 4.6a10 10 0 0 0-3.4-3.2L43.7 25.2 59.8 53h27.3c0-1.6-.4-3.2-1.2-4.6z"/>
-                            </svg>
-                        </a>
-                    </li>
+                    <li id="google-drive-launcher" hx-get="/ui/google-drive-launcher" hx-trigger="load" hx-swap="outerHTML"></li>
 
                     <li class="nav-item dropdown">
 
@@ -474,6 +457,7 @@
                             aria-expanded="false"
                             title="Application Menu"
                         >
+                            <i class="bi bi-grid me-1" aria-hidden="true"></i>
                             App
                         </a>
 
@@ -504,7 +488,7 @@
                                     href="/update"
                                 >
                                     <i class="bi bi-arrow-up-circle me-2"></i>
-                                    Update
+                                    Upgrade
                                 </a>
 
                             </li>
@@ -577,7 +561,7 @@
 
                                 <a
                                     class="dropdown-item"
-                                    href="https://github.com/jehaverlack/uaf-boreal/issues"
+                                    href="https://github.com/jehaverlack/boreal/issues"
                                     target="_blank"
                                     rel="noopener noreferrer"
                                 >
@@ -618,7 +602,7 @@
 
     {% include "partials/alerts.html" %}
 
-    <main class="container-fluid py-4 flex-grow-1{% if active_page == "my-drive" || active_page == "shared-drives" || active_page == "shared-with-me" || active_page == "directory" || active_page == "tags" || active_page == "github" || active_page == "keeper" %} overflow-hidden{% endif %}">
+    <main class="container-fluid py-4 flex-grow-1{% if active_page == "my-drive" || active_page == "shared-drives" || active_page == "shared-with-me" || active_page == "directory" || active_page == "tags" || active_page == "github" || active_page == "keeper" || active_page == "local-files" %} overflow-hidden{% endif %}">
 
         {% block content %}
         {% endblock %}
@@ -628,6 +612,20 @@
     {% include "partials/status.html" %}
 
     {% include "partials/google-client-modal.html" %}
+
+    <div class="modal fade" id="rcloneProcessHelpModal" tabindex="-1" aria-labelledby="rcloneProcessHelpTitle" aria-hidden="true">
+        <div class="modal-dialog modal-lg"><div class="modal-content">
+            <div class="modal-header"><h2 class="modal-title fs-5" id="rcloneProcessHelpTitle"><i class="bi bi-exclamation-triangle text-warning me-2"></i>Existing Rclone process detected</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+            <div class="modal-body">
+                <p>An Rclone process was already running before this BOREAL session. It may be left over from an earlier BOREAL run, but it could also belong to another application or an active transfer.</p>
+                <div class="alert alert-warning"><strong>Before stopping it:</strong> confirm that no Rclone transfer, mount, or other application is using the process. BOREAL will not stop it automatically.</div>
+                <h3 class="h6">Linux or macOS</h3><p>Open Terminal and identify the process:</p><pre class="border rounded bg-body-tertiary p-2"><code>ps -ax -o pid=,command= | grep '[r]clone'</code></pre><p>After confirming the PID is stale, request a normal shutdown:</p><pre class="border rounded bg-body-tertiary p-2"><code>kill -TERM &lt;PID&gt;</code></pre>
+                <h3 class="h6">Windows PowerShell</h3><p>Identify existing Rclone processes:</p><pre class="border rounded bg-body-tertiary p-2"><code>Get-Process rclone</code></pre><p>After confirming the PID is stale, request that it stop:</p><pre class="border rounded bg-body-tertiary p-2"><code>Stop-Process -Id &lt;PID&gt;</code></pre>
+                <p class="mb-0">After the stale process has stopped, quit and restart BOREAL. If the process belongs to another application, leave it running; current BOREAL builds use automatically selected WebGUI ports.</p>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-primary" data-bs-dismiss="modal">Close</button></div>
+        </div></div>
+    </div>
 
     <div
         class="modal fade"
@@ -650,7 +648,12 @@
                     <p>Select one or more metadata sources. Unselected inventories retain their existing data and timestamps.</p>
                     <div class="list-group mb-3">
                         <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="my_drive" value="true" checked>My Drive (2–20 min)</label>
-                        <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="shared_drives" value="true">Shared Drives (1–6 hours)</label>
+                        <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" id="allSharedDrivesUpdateFallback" type="checkbox" name="shared_drives" value="true">All Shared Drives (1–6 hours)</label>
+                        <div class="list-group-item">
+                            <label class="form-label mb-1" for="specificSharedDriveUrlFallback"><i class="bi bi-link-45deg me-1"></i>One Shared Drive by URL</label>
+                            <input class="form-control form-control-sm" form="metadata-update-form" id="specificSharedDriveUrlFallback" name="specific_shared_drive_url" type="url" placeholder="https://drive.google.com/drive/folders/..." oninput="document.getElementById('allSharedDrivesUpdateFallback').checked = false">
+                            <div class="form-text">Paste the root URL of a Shared Drive to inventory only that Drive.</div>
+                        </div>
                         <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="shared_with_me" value="true" checked>Shared with me (2–20 min)</label>
                         <label class="list-group-item text-body-secondary"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="directory_info" value="true" disabled>Persons (~10 sec) <span class="small">— checking configuration…</span></label>
                     </div>
@@ -831,7 +834,11 @@
             const metadataModal = metadataModalElement
                 ? bootstrap.Modal.getOrCreateInstance(metadataModalElement)
                 : null;
-            let metadataModalDismissed = false;
+            const metadataBackgroundKey = "boreal.metadata.continueInBackground";
+            let metadataModalDismissed = (() => {
+                try { return window.sessionStorage.getItem(metadataBackgroundKey) === "true"; }
+                catch (_error) { return false; }
+            })();
             let metadataRefreshPending = false;
 
             async function replaceFromEndpoint(url, selector) {
@@ -852,6 +859,40 @@
                     "/ui/download-status-item",
                     '[data-status-label="Download"]',
                 );
+
+            function refreshMetadataEstimate() {
+                if (!metadataModalElement) return;
+                const output = metadataModalElement.querySelector("#metadata-selected-estimate");
+                if (!output) return;
+                const selected = Array.from(
+                    metadataModalElement.querySelectorAll('input[type="checkbox"][data-estimated-seconds]:checked'),
+                );
+                const specificDrive = metadataModalElement.querySelector(
+                    'input[name="specific_shared_drive_url"][data-estimated-seconds]',
+                );
+                if (specificDrive?.value.trim()) selected.push(specificDrive);
+                if (selected.length === 0) {
+                    output.textContent = "Select a metadata source";
+                    return;
+                }
+                const seconds = selected.reduce(
+                    (total, input) => total + Number(input.dataset.estimatedSeconds || 0),
+                    0,
+                );
+                const missing = selected.filter(
+                    (input) => Number(input.dataset.estimatedSeconds || 0) <= 0,
+                ).length;
+                const duration = seconds >= 3600
+                    ? `${Math.floor(seconds / 3600)}h ${Math.ceil((seconds % 3600) / 60)}m`
+                    : seconds >= 60
+                        ? `${Math.ceil(seconds / 60)} minutes`
+                        : `${Math.max(1, seconds)} seconds`;
+                output.textContent = seconds === 0
+                    ? "Learning from completed updates"
+                    : missing > 0
+                        ? `About ${duration}, plus ${missing} source${missing === 1 ? "" : "s"} without history`
+                        : `About ${duration}`;
+            }
 
             async function refreshMetadataUi() {
                 if (!document.querySelector("#boreal-drive-summaries")) {
@@ -881,11 +922,21 @@
                     const isUpdating = parsed
                         .querySelector("#metadata-update-modal-content")
                         ?.dataset.updating === "true";
+                    const wasBackgrounded = metadataModalDismissed;
+                    if (!isUpdating) {
+                        try { window.sessionStorage.removeItem(metadataBackgroundKey); } catch (_error) {}
+                    }
                     const completed = parsed
                         .querySelector("#metadata-update-modal-content")
                         ?.dataset.complete === "true";
                     modalContent.innerHTML = responseHtml;
+                    refreshMetadataEstimate();
                     if (wasUpdating && !isUpdating && completed) {
+                        metadataModalDismissed = false;
+                        if (wasBackgrounded) {
+                            if (document.querySelector("#boreal-drive-summaries")) refreshMetadataUi();
+                            return;
+                        }
                         metadataRefreshPending = true;
                         modalContent.innerHTML = `
                             <div class="modal-header">
@@ -896,6 +947,7 @@
                             <div class="modal-footer"><button type="button" class="btn btn-primary" data-bs-dismiss="modal">Done</button></div>`;
                         return;
                     }
+                    if (!isUpdating) metadataModalDismissed = false;
                     const updating = metadataModalElement
                         .querySelector("#metadata-update-modal-content")
                         ?.dataset.updating === "true";
@@ -906,6 +958,13 @@
             }
 
             if (metadataModalElement) {
+                metadataModalElement.addEventListener("input", refreshMetadataEstimate);
+                metadataModalElement.addEventListener("change", refreshMetadataEstimate);
+                metadataModalElement.addEventListener("click", (event) => {
+                    if (!event.target.closest("[data-metadata-background]")) return;
+                    metadataModalDismissed = true;
+                    try { window.sessionStorage.setItem(metadataBackgroundKey, "true"); } catch (_error) {}
+                });
                 metadataModalElement.addEventListener("hide.bs.modal", () => {
                     metadataModalDismissed = true;
                 });
@@ -924,7 +983,10 @@
                     const button = event.target.querySelector("button[type=submit]");
                     const selectedSources = Array.from(event.target.elements)
                         .filter((control) => control.type === "checkbox" && control.checked);
-                    if (selectedSources.length === 0) {
+                    const specificDriveSelected = String(
+                        new FormData(event.target).get("specific_shared_drive_url") || "",
+                    ).trim().length > 0;
+                    if (selectedSources.length === 0 && !specificDriveSelected) {
                         button.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Select at least one';
                         return;
                     }
@@ -937,6 +999,7 @@
                         });
                         if (!response.ok) throw new Error("Unable to start metadata update");
                         metadataModalDismissed = false;
+                        try { window.sessionStorage.removeItem(metadataBackgroundKey); } catch (_error) {}
                         await refreshMetadataModal(false);
                     } catch (_error) {
                         button.disabled = false;

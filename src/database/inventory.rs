@@ -21,6 +21,7 @@ pub enum TagScope {
     SharedWithMe,
     GitHubRepositories,
     KeeperSharedFolders,
+    LocalFiles,
 }
 
 impl TagScope {
@@ -32,6 +33,7 @@ impl TagScope {
             Self::SharedWithMe => "shared-with-me",
             Self::GitHubRepositories => "github-repositories",
             Self::KeeperSharedFolders => "keeper-shared-folders",
+            Self::LocalFiles => "local-files",
         }
     }
 
@@ -157,6 +159,23 @@ pub fn reconcile_shared_drives(
         )?;
     }
     transaction.commit()?;
+    Ok(())
+}
+
+pub fn record_shared_drive(
+    database: &Database,
+    drive_id: &str,
+    name: &str,
+) -> Result<(), DatabaseError> {
+    let connection = database.connect()?;
+    connection.execute(
+        "INSERT INTO shared_drives (drive_id, name, inventory_scope)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(drive_id) DO UPDATE SET name = excluded.name,
+            inventory_scope = excluded.inventory_scope, is_accessible = 1,
+            last_seen_at = CURRENT_TIMESTAMP",
+        params![drive_id, name, shared_drive_scope(drive_id)],
+    )?;
     Ok(())
 }
 
@@ -308,6 +327,7 @@ pub fn list_shared_drives_filtered(
                                         shared_with_me: false,
                                         github_repositories: false,
                                         keeper_shared_folders: false,
+                                        local_files: false,
                                     })
                                 })
                                 .collect()
@@ -376,6 +396,7 @@ pub fn list_shared_drives_filtered(
                 shared_with_me: false,
                 github_repositories: false,
                 keeper_shared_folders: false,
+                local_files: false,
             },
         ))
     })? {
@@ -549,7 +570,6 @@ pub struct InventorySummary {
 pub struct ScanTimingEstimate {
     pub elapsed_seconds: u64,
     pub average_seconds: u64,
-    pub sample_count: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -616,6 +636,7 @@ pub struct Tag {
     pub shared_with_me: bool,
     pub github_repositories: bool,
     pub keeper_shared_folders: bool,
+    pub local_files: bool,
 }
 
 #[allow(dead_code)]
@@ -850,6 +871,7 @@ pub fn list_drive_directory(
                                     shared_with_me: false,
                                     github_repositories: false,
                                     keeper_shared_folders: false,
+                                    local_files: false,
                                 })
                             })
                             .collect()
@@ -904,6 +926,7 @@ pub fn list_drive_directory(
                 shared_with_me: false,
                 github_repositories: false,
                 keeper_shared_folders: false,
+                local_files: false,
             },
         ))
     })? {
@@ -1038,7 +1061,8 @@ fn list_tags_query(
                 EXISTS(SELECT 1 FROM tag_scopes s WHERE s.tag_id = t.id AND s.scope = 'shared-drives'),
                 EXISTS(SELECT 1 FROM tag_scopes s WHERE s.tag_id = t.id AND s.scope = 'shared-with-me'),
                 EXISTS(SELECT 1 FROM tag_scopes s WHERE s.tag_id = t.id AND s.scope = 'github-repositories'),
-                EXISTS(SELECT 1 FROM tag_scopes s WHERE s.tag_id = t.id AND s.scope = 'keeper-shared-folders')
+                EXISTS(SELECT 1 FROM tag_scopes s WHERE s.tag_id = t.id AND s.scope = 'keeper-shared-folders'),
+                EXISTS(SELECT 1 FROM tag_scopes s WHERE s.tag_id = t.id AND s.scope = 'local-files')
          FROM tags t
          WHERE ?1 IS NULL OR EXISTS(
              SELECT 1 FROM tag_scopes selected
@@ -1058,6 +1082,7 @@ fn list_tags_query(
             shared_with_me: row.get(7)?,
             github_repositories: row.get(8)?,
             keeper_shared_folders: row.get(9)?,
+            local_files: row.get(10)?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -1070,14 +1095,35 @@ pub fn create_tag(database: &Database, name: &str, color: &str) -> Result<(), Da
 
 impl TagScope {
     #[allow(dead_code)]
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Directory,
         Self::MyDrive,
         Self::SharedDrives,
         Self::SharedWithMe,
         Self::GitHubRepositories,
         Self::KeeperSharedFolders,
+        Self::LocalFiles,
     ];
+}
+
+pub fn update_tag_scopes_bulk(
+    database: &Database,
+    updates: &[(String, Vec<TagScope>)],
+) -> Result<(), DatabaseError> {
+    let mut connection = database.connect()?;
+    let transaction = connection.transaction()?;
+    for (slug, scopes) in updates {
+        validate_tag_scopes(scopes)?;
+        let tag_id: i64 = transaction
+            .query_row("SELECT id FROM tags WHERE slug=?1", [slug], |row| {
+                row.get(0)
+            })
+            .map_err(|_| format!("Unknown tag: {slug}"))?;
+        transaction.execute("DELETE FROM tag_scopes WHERE tag_id=?1", [tag_id])?;
+        save_tag_scopes(&transaction, tag_id, scopes)?;
+    }
+    transaction.commit()?;
+    Ok(())
 }
 
 pub fn create_tag_with_scopes(
@@ -1698,7 +1744,6 @@ pub fn scan_timing_estimate(
         (sample_count > 0 && average_seconds > 0).then_some(ScanTimingEstimate {
             elapsed_seconds,
             average_seconds,
-            sample_count,
         }),
     )
 }

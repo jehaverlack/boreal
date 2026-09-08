@@ -189,6 +189,7 @@ pub fn list(
                     shared_with_me: row.get(7)?,
                     github_repositories: row.get(8)?,
                     keeper_shared_folders: row.get(9)?,
+                    local_files: false,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

@@ -41,20 +41,30 @@
         <p class="mb-0 text-danger">{{ metadata.phase }}</p>
         {% else %}
         <p class="mb-2">Select one or more metadata sources. Unselected inventories retain their existing data and timestamps.</p>
+        <div class="alert alert-light border py-2 mb-3"><i class="bi bi-clock-history me-2"></i><strong>Estimated time:</strong> <span id="metadata-selected-estimate">Select a metadata source</span><div class="small text-body-secondary">Calculated from the five most recent completed updates for each source.</div></div>
         <div class="list-group mb-3">
-            <label class="list-group-item{% if !directory_available %} text-body-secondary{% endif %}"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="directory_info" value="true" {% if directory_available %}checked{% else %}disabled{% endif %}>Persons (~10 sec) {% if !directory_available %}<span class="small">— configure a spreadsheet URL in Settings</span>{% endif %}</label>
-            <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="my_drive" value="true" checked>My Drive (2–20 min)</label>
-            <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="shared_with_me" value="true" checked>Shared with me (2–20 min)</label>
-            <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="shared_drives" value="true">Shared Drives (1–6 hours)</label>
-            {% if github_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="github" value="true">GitHub repositories (optional)</label>{% endif %}
-            {% if keeper_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="keeper" value="true">Keeper shared folders (optional)</label>{% endif %}
+            <label class="list-group-item{% if !directory_available %} text-body-secondary{% endif %}"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="directory_info" value="true" data-estimated-seconds="{{ directory_estimate.seconds }}" {% if directory_available %}checked{% else %}disabled{% endif %}>Persons <span class="small text-body-secondary">— {{ directory_estimate.label }}</span>{% if !directory_available %}<span class="small"> — configure a spreadsheet URL in Settings</span>{% endif %}</label>
+            {% if google_available %}
+            <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="my_drive" value="true" data-estimated-seconds="{{ my_drive_estimate.seconds }}" checked>My Drive <span class="small text-body-secondary">— {{ my_drive_estimate.label }}</span></label>
+            <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="shared_with_me" value="true" data-estimated-seconds="{{ shared_with_me_estimate.seconds }}" checked>Shared with me <span class="small text-body-secondary">— {{ shared_with_me_estimate.label }}</span></label>
+            <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" id="allSharedDrivesUpdate" type="checkbox" name="shared_drives" value="true" data-estimated-seconds="{{ shared_drives_estimate.seconds }}">All Shared Drives <span class="small text-body-secondary">— {{ shared_drives_estimate.label }}</span></label>
+            <div class="list-group-item">
+                <label class="form-label mb-1" for="specificSharedDriveUrl"><i class="bi bi-link-45deg me-1"></i>One Shared Drive by URL</label>
+                <input class="form-control form-control-sm" form="metadata-update-form" id="specificSharedDriveUrl" name="specific_shared_drive_url" type="url" data-estimated-seconds="{{ specific_shared_drive_estimate.seconds }}" placeholder="https://drive.google.com/drive/folders/..." oninput="document.getElementById('allSharedDrivesUpdate').checked = false">
+                <div class="form-text">Paste the root URL of a Shared Drive to inventory only that Drive — {{ specific_shared_drive_estimate.label }}.</div>
+            </div>
+            {% endif %}
+            {% if github_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="github" value="true" data-estimated-seconds="{{ github_estimate.seconds }}">GitHub repositories <span class="small text-body-secondary">— {{ github_estimate.label }}</span></label>{% endif %}
+            {% if keeper_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="keeper" value="true" data-estimated-seconds="{{ keeper_estimate.seconds }}">Keeper shared folders <span class="small text-body-secondary">— {{ keeper_estimate.label }}</span></label>{% endif %}
+            {% if local_files_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="local_files" value="true" data-estimated-seconds="{{ local_files_estimate.seconds }}">Local Files <span class="small text-body-secondary">— {{ local_files_estimate.label }}</span></label>{% endif %}
+            {% if s3_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="s3" value="true" data-estimated-seconds="{{ s3_estimate.seconds }}">S3-compatible storage <span class="small text-body-secondary">— {{ s3_estimate.label }}</span></label>{% endif %}
         </div>
         <p class="mb-0">Large inventories can take several hours to update. Keep BOREAL running until the update completes.</p>
         {% endif %}
     </div>
     <div class="modal-footer">
         {% if metadata.updating %}
-        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Continue in background</button>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" data-metadata-background>Continue in background</button>
         {% else if metadata.errors > 0 %}
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
         {% else %}

@@ -3,9 +3,9 @@
 | **Name** | boreal |
 | **Author** | John Haverlack |
 | **License** | MIT |
-| **Version** | 1.1.0 |
+| **Version** | 1.1.1 |
 | **Maturity** | STABLE |
-| **Date** | 2026-09-03 |
+| **Date** | 2026-09-08 |
 
 # BOREAL design
 
@@ -195,6 +195,12 @@ BOREAL invokes `rclone lsjson` recursively with metadata, owner information, per
 Shared Drives are discovered using the rclone Drive backend’s `drives` command. Rclone JSON output is written to the cache directory, parsed into memory, validated for Drive IDs, and removed after parsing.
 
 ## Metadata update lifecycle
+
+### Local Files inventory
+
+Local Files is an optional, read-only metadata source configured in Settings. BOREAL recursively scans one or more absolute local folders without following symbolic links. Hidden entries, common cache directories, temporary/trash directories, and user-defined wildcard patterns can be excluded. BOREAL's own runtime directory is always excluded.
+
+The SQLite inventory records names, relative paths, sizes, modification times, and SHA-256 checksums. To limit disk I/O, BOREAL hashes only non-empty files whose sizes match another inventory candidate and reuses a checksum while size and modification time remain unchanged. Equal SHA-256 values identify exact duplicate groups. BOREAL does not change or delete local files.
 
 Updates are manual. BOREAL does not automatically query Google Drive at startup or on a schedule.
 

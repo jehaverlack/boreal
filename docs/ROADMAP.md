@@ -24,6 +24,18 @@
 - [ ] Build Org Template in Google Drive for Copying
    -  Support for Org Quotas
    -  Improved People Statuses
+- [x] Cleanup Dashboard for modules and colorize modules.
+- [x] Cleanup Menu order
+- [ ] Deduplication Feature
+- [ ] Linux SystemD service
+- [ ] Update Documenation
+- [ ] Security Docs Sensitivity of Meta Data
+- [x] Simplified Readme
+- [x] Add a Gear to SEttings Page
+- [x] Add icons to Menu Items
+- [x] Add S3-compatible object-storage metadata indexing
+- [ ] Consider CryptPad as an optional metadata source
+- [ ] Consider Nextcloud as an optional metadata source
 
 ## Future Implementation: Per-User Installation, Startup, and Updates
 

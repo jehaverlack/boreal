@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     path::{Path as FsPath, PathBuf},
     process::Command,
     sync::{Arc, OnceLock},
@@ -143,6 +144,8 @@ struct DashboardTemplate {
     setup_steps: Vec<SetupStep>,
     setup_percent: u8,
     initial_setup_complete: bool,
+    modules_enabled: bool,
+    google_drive_enabled: bool,
     poll_rclone: bool,
     metadata: MetadataView,
     directory_sheet_enabled: bool,
@@ -151,6 +154,11 @@ struct DashboardTemplate {
     github_summary: database::github::Summary,
     keeper_enabled: bool,
     keeper_summary: database::keeper::Summary,
+    local_files_enabled: bool,
+    local_files_summary: database::local_files::Summary,
+    directory_summary: database::directory::DirectorySummary,
+    s3_enabled: bool,
+    s3_summary: database::s3::Summary,
 }
 
 #[allow(dead_code)]
@@ -594,6 +602,30 @@ struct KeeperTemplate {
     query: KeeperQuery,
 }
 
+#[derive(Template)]
+#[template(path = "local-files.html", config = "askama.toml")]
+struct LocalFilesTemplate {
+    title: &'static str,
+    active_page: &'static str,
+    alerts: Vec<AlertItem>,
+    status_items: Vec<StatusItem>,
+    poll_rclone: bool,
+    roots: Vec<LocalRootView>,
+    summary: database::local_files::Summary,
+    query: LocalFilesQuery,
+    tags: Vec<database::inventory::Tag>,
+    filter_tags: Vec<TagFilterPill>,
+    persons: Vec<database::directory::PersonChoice>,
+}
+
+struct LocalRootView {
+    index: usize,
+    root_path: String,
+    current_path: String,
+    parent_path: String,
+    items: Vec<database::local_files::Row>,
+}
+
 #[allow(dead_code)]
 #[derive(Template)]
 #[template(path = "directory.html", config = "askama.toml")]
@@ -649,6 +681,7 @@ struct DirectoryEditTemplate {
     heading: &'static str,
     action: String,
     principal_id: i64,
+    username: String,
     email: String,
     display_name: String,
     principal_type: String,
@@ -706,9 +739,27 @@ struct MetadataProgressTemplate {
 struct MetadataUpdateModalTemplate {
     metadata: MetadataView,
     scopes: Vec<MetadataScopeProgressView>,
+    google_available: bool,
     directory_available: bool,
     github_available: bool,
     keeper_available: bool,
+    local_files_available: bool,
+    s3_available: bool,
+    directory_estimate: MetadataTimingView,
+    my_drive_estimate: MetadataTimingView,
+    shared_with_me_estimate: MetadataTimingView,
+    shared_drives_estimate: MetadataTimingView,
+    specific_shared_drive_estimate: MetadataTimingView,
+    github_estimate: MetadataTimingView,
+    keeper_estimate: MetadataTimingView,
+    local_files_estimate: MetadataTimingView,
+    s3_estimate: MetadataTimingView,
+}
+
+#[derive(Clone, Default)]
+struct MetadataTimingView {
+    seconds: u64,
+    label: String,
 }
 
 #[allow(dead_code)]
@@ -728,10 +779,16 @@ struct MetadataScopeProgressView {
 #[template(path = "partials/drive-summaries.html", config = "askama.toml")]
 struct DriveSummariesTemplate {
     metadata: MetadataView,
+    google_drive_enabled: bool,
     github_enabled: bool,
     github_summary: database::github::Summary,
     keeper_enabled: bool,
     keeper_summary: database::keeper::Summary,
+    local_files_enabled: bool,
+    local_files_summary: database::local_files::Summary,
+    directory_summary: database::directory::DirectorySummary,
+    s3_enabled: bool,
+    s3_summary: database::s3::Summary,
 }
 
 #[derive(serde::Deserialize)]
@@ -877,6 +934,8 @@ struct ApplyPrincipalTagForm {
 
 #[derive(serde::Deserialize)]
 struct PrincipalEditForm {
+    #[serde(default)]
+    username: String,
     email: String,
     display_name: String,
     principal_type: String,
@@ -893,6 +952,8 @@ struct PrincipalEditForm {
 struct NewPrincipalQuery {
     #[serde(default)]
     email: String,
+    #[serde(default)]
+    username: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -915,6 +976,8 @@ struct TagForm {
     github_repositories: Option<String>,
     #[serde(default)]
     keeper_shared_folders: Option<String>,
+    #[serde(default)]
+    local_files: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -925,6 +988,8 @@ struct DeleteTagForm {
 #[derive(serde::Deserialize)]
 struct SettingsForm {
     #[serde(default)]
+    google_drive_enabled: Option<String>,
+    #[serde(default)]
     directory_sheet_url: String,
     #[serde(default)]
     github_enabled: Option<String>,
@@ -932,6 +997,22 @@ struct SettingsForm {
     keeper_enabled: Option<String>,
     #[serde(default)]
     keeper_command: String,
+    #[serde(default)]
+    local_files_enabled: Option<String>,
+    #[serde(default)]
+    local_file_roots: String,
+    #[serde(default)]
+    local_exclude_hidden: Option<String>,
+    #[serde(default)]
+    local_exclude_caches: Option<String>,
+    #[serde(default)]
+    local_exclude_temporary: Option<String>,
+    #[serde(default)]
+    local_exclude_patterns: String,
+    #[serde(default)]
+    s3_enabled: Option<String>,
+    #[serde(default)]
+    s3_remote_name: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -1064,6 +1145,8 @@ struct MetadataUpdateForm {
     #[serde(default)]
     shared_drives: Option<String>,
     #[serde(default)]
+    specific_shared_drive_url: String,
+    #[serde(default)]
     shared_with_me: Option<String>,
     #[serde(default)]
     directory_info: Option<String>,
@@ -1071,6 +1154,89 @@ struct MetadataUpdateForm {
     github: Option<String>,
     #[serde(default)]
     keeper: Option<String>,
+    #[serde(default)]
+    local_files: Option<String>,
+    #[serde(default)]
+    s3: Option<String>,
+}
+
+#[derive(Default, Clone, serde::Deserialize)]
+struct LocalFilesQuery {
+    #[serde(default, deserialize_with = "form_usize")]
+    root: usize,
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    path_filter: String,
+    #[serde(default)]
+    item_type: String,
+    #[serde(default)]
+    size: String,
+    #[serde(default)]
+    modified: String,
+    #[serde(default)]
+    owner: String,
+    #[serde(default)]
+    group: String,
+    #[serde(default)]
+    tag: String,
+    #[serde(default, deserialize_with = "form_bool")]
+    duplicates: bool,
+    #[serde(default)]
+    sort: String,
+    #[serde(default)]
+    direction: String,
+    #[serde(default, deserialize_with = "form_bool")]
+    owner_saved: bool,
+    #[serde(default)]
+    owner_error: String,
+}
+
+fn form_usize<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+    value.parse().map_err(serde::de::Error::custom)
+}
+
+fn form_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "on" | "yes" => Ok(true),
+        "false" | "0" | "off" | "no" | "" => Ok(false),
+        _ => Err(serde::de::Error::custom(format!(
+            "invalid boolean value {value:?}"
+        ))),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct LocalFileTagForm {
+    selected_item_ids: String,
+    tag_to_apply: String,
+    #[serde(flatten)]
+    query: LocalFilesQuery,
+}
+
+#[derive(serde::Deserialize)]
+struct LocalFileOwnerForm {
+    username: String,
+    #[serde(default)]
+    principal_id: i64,
+    #[serde(default)]
+    display_name: String,
+    #[serde(default)]
+    email: String,
+    #[serde(flatten)]
+    query: LocalFilesQuery,
 }
 
 #[derive(Default, serde::Deserialize)]
@@ -1138,6 +1304,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/help", get(help_page))
         .route("/assets/uaf-logo.png", get(uaf_logo))
         .route("/assets/acep-logo.png", get(acep_logo))
+        .route("/assets/rclone-logo.svg", get(rclone_logo))
+        .route("/assets/google-drive-logo.svg", get(google_drive_logo))
         .route(
             "/assets/google-cloud-project-selection.png",
             get(google_cloud_project_selection),
@@ -1184,12 +1352,25 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/github/tags", post(apply_github_tag))
         .route("/github/tags/remove", post(remove_github_tag))
         .route("/ui/github-primary-nav", get(ui_github_primary_nav))
+        .route(
+            "/ui/google-drive-primary-nav",
+            get(ui_google_drive_primary_nav),
+        )
+        .route("/ui/google-drive-launcher", get(ui_google_drive_launcher))
         .route("/ui/github-launcher", get(ui_github_launcher))
         .route("/keeper", get(keeper_page))
         .route("/keeper/tags", post(apply_keeper_tag))
         .route("/keeper/tags/remove", post(remove_keeper_tag))
         .route("/ui/keeper-primary-nav", get(ui_keeper_primary_nav))
         .route("/ui/keeper-launcher", get(ui_keeper_launcher))
+        .route("/local-files", get(local_files_page))
+        .route("/local-files/tags", post(apply_local_file_tag))
+        .route("/local-files/tags/remove", post(remove_local_file_tag))
+        .route("/local-files/owners", post(associate_local_file_owner))
+        .route(
+            "/ui/local-files-primary-nav",
+            get(ui_local_files_primary_nav),
+        )
         .route("/migrations", get(migrations_page))
         .route("/migrations/new", post(create_migration))
         .route("/migrations/download", post(create_download_migration))
@@ -1255,6 +1436,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/directory/import/csv", post(import_directory_csv))
         .route("/tags/create", post(create_tag))
         .route("/tags/update", post(update_tag))
+        .route("/tags/scopes", post(update_tag_scopes))
         .route("/tags/delete", post(delete_tag))
         .route("/settings", get(settings_page).post(save_settings))
         .route("/settings/keeper/test", post(test_keeper_connection))
@@ -1302,12 +1484,21 @@ async fn log_http_request(request: Request, next: Next) -> axum::response::Respo
     let response = next.run(request).await;
     let status = response.status();
     let elapsed_ms = started.elapsed().as_millis();
-    if method == axum::http::Method::GET {
+    if is_routine_poll(method.as_str(), uri.path()) && status.is_success() {
+        // Health checks and HTMX status fragments are expected background
+        // traffic. Logging each successful poll obscures useful diagnostics.
+    } else if is_routine_poll(method.as_str(), uri.path()) {
+        log::warn!("HTTP {method} {uri} -> {status} ({elapsed_ms} ms)");
+    } else if method == axum::http::Method::GET {
         log::debug!("HTTP {method} {uri} -> {status} ({elapsed_ms} ms)");
     } else {
         log::info!("HTTP {method} {uri} -> {status} ({elapsed_ms} ms)");
     }
     response
+}
+
+fn is_routine_poll(method: &str, path: &str) -> bool {
+    method == "GET" && (path == "/status" || path.starts_with("/ui/"))
 }
 
 async fn uaf_logo() -> impl IntoResponse {
@@ -1317,6 +1508,26 @@ async fn uaf_logo() -> impl IntoResponse {
             (header::CACHE_CONTROL, "public, max-age=86400"),
         ],
         include_bytes!("../../tmpl/html/img/UAFLogo_A_blue.png").as_slice(),
+    )
+}
+
+async fn rclone_logo() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        include_bytes!("../../tmpl/html/img/rclone-logo.svg").as_slice(),
+    )
+}
+
+async fn google_drive_logo() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        include_bytes!("../../tmpl/html/img/google-drive-logo.svg").as_slice(),
     )
 }
 
@@ -1361,7 +1572,7 @@ async fn google_cloud_oauth_json() -> impl IntoResponse {
 }
 
 const PERSONS_CSV_TEMPLATE: &str =
-    "name,email,organization,type,status,departure_date,notes,tags\r\n";
+    "name,username,email,organization,type,status,departure_date,notes,tags\r\n";
 
 async fn directory_csv_template() -> impl IntoResponse {
     (
@@ -1400,7 +1611,7 @@ async fn index(State(state): State<Arc<AppState>>) -> Result<Html<String>, Statu
     );
 
     let status_items = build_status_items(
-        &state.download_state(),
+        &state,
         &rclone_state,
         &google_client_state,
         &google_remotes_state,
@@ -1440,6 +1651,22 @@ async fn index(State(state): State<Arc<AppState>>) -> Result<Html<String>, Statu
         .ok()
         .and_then(|database| database::keeper::summary(&database).ok())
         .unwrap_or_default();
+    let local_files_is_enabled = setup_settings.local_files_enabled;
+    let local_files_summary = state
+        .database()
+        .ok()
+        .and_then(|database| database::local_files::summary(&database).ok())
+        .unwrap_or_default();
+    let directory_summary = state
+        .database()
+        .ok()
+        .and_then(|database| database::directory::summary(&database).ok())
+        .unwrap_or_default();
+    let s3_summary = state
+        .database()
+        .ok()
+        .and_then(|database| database::s3::summary(&database).ok())
+        .unwrap_or_default();
 
     let poll_rclone = should_poll_ui(&rclone_state, &google_remotes_state, &metadata_state);
 
@@ -1452,6 +1679,12 @@ async fn index(State(state): State<Arc<AppState>>) -> Result<Html<String>, Statu
         setup_steps,
         setup_percent,
         initial_setup_complete,
+        modules_enabled: setup_settings.google_drive_enabled
+            || github_is_enabled
+            || keeper_is_enabled
+            || local_files_is_enabled
+            || setup_settings.s3_enabled,
+        google_drive_enabled: setup_settings.google_drive_enabled,
         poll_rclone,
         metadata: build_metadata_view(
             &metadata_state,
@@ -1468,6 +1701,11 @@ async fn index(State(state): State<Arc<AppState>>) -> Result<Html<String>, Statu
         github_summary,
         keeper_enabled: keeper_is_enabled,
         keeper_summary,
+        local_files_enabled: local_files_is_enabled,
+        local_files_summary,
+        directory_summary,
+        s3_enabled: setup_settings.s3_enabled,
+        s3_summary,
     };
 
     render_template(&template)
@@ -1485,6 +1723,25 @@ fn build_setup_progress(
             title: "Install Rclone",
             description: "BOREAL is installing and verifying its private Rclone binary."
                 .to_string(),
+            state_label: "In progress",
+            state_class: "text-bg-warning",
+            complete: false,
+            modal_target: "",
+            action: "",
+            disabled: true,
+            detail: String::new(),
+        },
+
+        RcloneState::Downloading {
+            downloaded_bytes,
+            total_bytes,
+        } => SetupStep {
+            icon: "bi-cloud-arrow-down",
+            title: "Install Rclone",
+            description: format!(
+                "BOREAL is downloading its private Rclone binary: {}.",
+                rclone_download_progress(*downloaded_bytes, *total_bytes)
+            ),
             state_label: "In progress",
             state_class: "text-bg-warning",
             complete: false,
@@ -1805,8 +2062,14 @@ async fn save_settings(
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     let mut inventory_settings =
         settings::load(&database).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    inventory_settings.directory_sheet_enabled = !directory_sheet_url.is_empty();
-    inventory_settings.directory_sheet_url = directory_sheet_url;
+    let google_drive_was_enabled = inventory_settings.google_drive_enabled;
+    inventory_settings.google_drive_enabled = form.google_drive_enabled.is_some();
+    if inventory_settings.google_drive_enabled {
+        inventory_settings.directory_sheet_enabled = !directory_sheet_url.is_empty();
+        inventory_settings.directory_sheet_url = directory_sheet_url;
+    } else {
+        inventory_settings.directory_sheet_enabled = false;
+    }
     inventory_settings.github_enabled = form.github_enabled.is_some();
     inventory_settings.keeper_enabled = form.keeper_enabled.is_some();
     inventory_settings.keeper_command = if form.keeper_command.trim().is_empty() {
@@ -1814,6 +2077,15 @@ async fn save_settings(
     } else {
         form.keeper_command.trim().to_string()
     };
+    inventory_settings.local_files_enabled = form.local_files_enabled.is_some();
+    inventory_settings.local_file_roots = form.local_file_roots.trim().to_string();
+    inventory_settings.local_exclude_hidden = form.local_exclude_hidden.is_some();
+    inventory_settings.local_exclude_caches = form.local_exclude_caches.is_some();
+    inventory_settings.local_exclude_temporary = form.local_exclude_temporary.is_some();
+    inventory_settings.local_exclude_patterns = form.local_exclude_patterns.trim().to_string();
+    inventory_settings.s3_enabled = form.s3_enabled.is_some();
+    inventory_settings.s3_remote_name =
+        form.s3_remote_name.trim().trim_end_matches(':').to_string();
     if inventory_settings.github_enabled && !crate::github::client::configured(&state.runtime) {
         return render_settings(
             &state,
@@ -1823,6 +2095,31 @@ async fn save_settings(
             String::new(),
         )
         .map(axum::response::IntoResponse::into_response);
+    }
+    if inventory_settings.s3_enabled {
+        let s3_remote_ready = match state.rclone_state() {
+            RcloneState::Ready(status) => {
+                rclone::remotes::list_configured(&state.runtime, &status.path)
+                    .map(|remotes| {
+                        remotes.into_iter().any(|remote| {
+                            remote.name == inventory_settings.s3_remote_name
+                                && remote.backend == "s3"
+                        })
+                    })
+                    .unwrap_or(false)
+            }
+            _ => false,
+        };
+        if !s3_remote_ready {
+            return render_settings(
+                &state,
+                inventory_settings,
+                false,
+                "Configure an S3 Rclone remote with this name before enabling S3".to_string(),
+                String::new(),
+            )
+            .map(axum::response::IntoResponse::into_response);
+        }
     }
     if inventory_settings.directory_sheet_enabled {
         if let Err(error) =
@@ -1839,7 +2136,19 @@ async fn save_settings(
         }
     }
     match settings::save(&database, &inventory_settings) {
-        Ok(()) => Ok(Redirect::to("/settings?saved=true").into_response()),
+        Ok(()) => {
+            if !google_drive_was_enabled && inventory_settings.google_drive_enabled {
+                let destination =
+                    if matches!(state.google_client_state(), GoogleClientState::Ready(_)) {
+                        "/remotes"
+                    } else {
+                        "/google-client"
+                    };
+                Ok(Redirect::to(destination).into_response())
+            } else {
+                Ok(Redirect::to("/settings?saved=true").into_response())
+            }
+        }
 
         Err(error) => render_settings(
             &state,
@@ -2119,7 +2428,7 @@ fn render_settings(
             bookmark_reminder_visible(state),
         ),
         status_items: build_status_items(
-            &state.download_state(),
+            &state,
             &rclone_state,
             &google_client_state,
             &google_remotes_state,
@@ -2167,7 +2476,7 @@ async fn about(State(state): State<Arc<AppState>>) -> Result<Html<String>, Statu
     );
 
     let status_items = build_status_items(
-        &state.download_state(),
+        &state,
         &rclone_state,
         &google_client_state,
         &google_remotes_state,
@@ -2218,7 +2527,7 @@ async fn update_page(State(state): State<Arc<AppState>>) -> Result<Html<String>,
             bookmark_reminder_visible(&state),
         ),
         status_items: build_status_items(
-            &state.download_state(),
+            &state,
             &rclone_state,
             &google_client_state,
             &google_remotes_state,
@@ -2277,7 +2586,7 @@ async fn docs_page(State(state): State<Arc<AppState>>) -> Result<Html<String>, S
             bookmark_reminder_visible(&state),
         ),
         status_items: build_status_items(
-            &state.download_state(),
+            &state,
             &rclone_state,
             &google_client_state,
             &google_remotes_state,
@@ -2304,7 +2613,7 @@ async fn help_page(State(state): State<Arc<AppState>>) -> Result<Html<String>, S
             bookmark_reminder_visible(&state),
         ),
         status_items: build_status_items(
-            &state.download_state(),
+            &state,
             &rclone_state,
             &google_client_state,
             &google_remotes_state,
@@ -2333,7 +2642,7 @@ async fn google_client_page(
             bookmark_reminder_visible(&state),
         ),
         status_items: build_status_items(
-            &state.download_state(),
+            &state,
             &rclone_state,
             &google_client_state,
             &google_remotes_state,
@@ -2405,7 +2714,7 @@ async fn migrations_page(
             bookmark_reminder_visible(&state),
         ),
         status_items: build_status_items(
-            &state.download_state(),
+            &state,
             &rclone_state,
             &google_client_state,
             &google_remotes_state,
@@ -2581,6 +2890,9 @@ async fn save_migration_destination(
             RcloneState::Ready(status) => status.path,
             RcloneState::Initializing => {
                 return Err("Rclone is still initializing. Try again when it is ready.".to_string());
+            }
+            RcloneState::Downloading { .. } => {
+                return Err("Rclone is still downloading. Try again when it is ready.".to_string());
             }
             RcloneState::Error(error) => {
                 return Err(format!("Rclone is not ready: {error}"));
@@ -2818,7 +3130,7 @@ fn render_migration_wizard(
             bookmark_reminder_visible(state),
         ),
         status_items: build_status_items(
-            &state.download_state(),
+            &state,
             &rclone_state,
             &google_client_state,
             &google_remotes_state,
@@ -3022,7 +3334,7 @@ async fn remotes_page(State(state): State<Arc<AppState>>) -> Result<Html<String>
             bookmark_reminder_visible(&state),
         ),
         status_items: build_status_items(
-            &state.download_state(),
+            &state,
             &rclone_state,
             &google_client_state,
             &google_remotes_state,
@@ -3615,7 +3927,7 @@ async fn shared_drives_page(
                 bookmark_reminder_visible(&state),
             ),
             status_items: build_status_items(
-                &state.download_state(),
+                &state,
                 &rclone_state,
                 &google_client_state,
                 &google_remotes_state,
@@ -3920,7 +4232,7 @@ fn render_drive_explorer(
             bookmark_reminder_visible(state),
         ),
         status_items: build_status_items(
-            &state.download_state(),
+            &state,
             &rclone_state,
             &google_client_state,
             &google_remotes_state,
@@ -4366,17 +4678,21 @@ async fn ui_download_status(
 async fn ui_download_status_item(
     State(state): State<Arc<AppState>>,
 ) -> Result<Html<String>, StatusCode> {
-    render_template(&DownloadStatusItemTemplate {
-        item: build_download_status_item(&state.download_state()),
-    })
+    match state.download_state() {
+        running @ DownloadState::Running { .. } => render_template(&DownloadStatusItemTemplate {
+            item: build_download_status_item(&running),
+        }),
+        _ => Ok(Html(String::new())),
+    }
 }
 
 async fn ui_migration_status_item(
     State(state): State<Arc<AppState>>,
 ) -> Result<Html<String>, StatusCode> {
-    render_template(&MigrationStatusItemTemplate {
-        item: build_migration_status_item(&state),
-    })
+    match build_migration_status_item(&state) {
+        Some(item) => render_template(&MigrationStatusItemTemplate { item }),
+        None => Ok(Html(String::new())),
+    }
 }
 
 fn render_download_status(state: &DownloadState) -> Result<Html<String>, StatusCode> {
@@ -4431,9 +4747,42 @@ fn github_enabled(state: &AppState) -> bool {
         && crate::github::client::configured(&state.runtime)
 }
 
+fn google_drive_enabled(state: &AppState) -> bool {
+    state
+        .database()
+        .ok()
+        .and_then(|database| database::settings::load(&database).ok())
+        .is_some_and(|settings| settings.google_drive_enabled)
+}
+
+async fn ui_google_drive_primary_nav(State(state): State<Arc<AppState>>) -> Html<String> {
+    if !google_drive_enabled(&state) {
+        return Html(
+            "<li id=\"google-drive-primary-navigation\" class=\"d-none\"></li>".to_string(),
+        );
+    }
+    Html(r##"<li id="google-drive-primary-navigation" class="nav-item dropdown">
+<a class="nav-link dropdown-toggle boreal-drive-nav" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false" title="Google Drive"><img class="boreal-service-icon me-1" src="/assets/google-drive-logo.svg" alt="">GDrive</a>
+<ul class="dropdown-menu">
+<li><a class="dropdown-item boreal-drive-nav" href="/my-drive"><i class="bi bi-person-workspace me-2"></i>My Drive</a></li>
+<li><a class="dropdown-item boreal-drive-nav" href="/shared-drives"><i class="bi bi-people-fill me-2"></i>Shared Drives</a></li>
+<li><a class="dropdown-item boreal-drive-nav" href="/shared-with-me"><i class="bi bi-person-down me-2"></i>Shared with me</a></li>
+<li><hr class="dropdown-divider"></li>
+<li><a class="dropdown-item boreal-drive-nav" href="/remotes"><i class="bi bi-cloud-arrow-down-fill me-2"></i>Remotes</a></li>
+</ul></li>"##.to_string())
+}
+
+async fn ui_google_drive_launcher(State(state): State<Arc<AppState>>) -> Html<String> {
+    if google_drive_enabled(&state) {
+        Html(r#"<li id="google-drive-launcher" class="nav-item"><a class="nav-link boreal-drive-nav" href="https://drive.google.com/drive/quota" target="_blank" rel="noopener noreferrer" title="Open Google Drive in a new tab" aria-label="Open Google Drive in a new tab"><img class="boreal-service-icon" src="/assets/google-drive-logo.svg" alt="" aria-hidden="true"></a></li>"#.to_string())
+    } else {
+        Html("<li id=\"google-drive-launcher\" class=\"d-none\"></li>".to_string())
+    }
+}
+
 async fn ui_github_primary_nav(State(state): State<Arc<AppState>>) -> Html<String> {
     if github_enabled(&state) {
-        Html("<li id=\"github-primary-navigation\" class=\"nav-item\"><a class=\"nav-link boreal-github-nav\" href=\"/github\" title=\"Explore GitHub repositories\">GitHub</a></li>".to_string())
+        Html("<li id=\"github-primary-navigation\" class=\"nav-item\"><a class=\"nav-link boreal-github-nav\" href=\"/github\" title=\"Explore GitHub repositories\"><i class=\"bi bi-github me-1\"></i>GitHub</a></li>".to_string())
     } else {
         Html("<li id=\"github-primary-navigation\" class=\"d-none\"></li>".to_string())
     }
@@ -4460,7 +4809,7 @@ fn keeper_enabled(state: &AppState) -> bool {
 
 async fn ui_keeper_primary_nav(State(state): State<Arc<AppState>>) -> Html<String> {
     if keeper_enabled(&state) {
-        Html("<li id=\"keeper-primary-navigation\" class=\"nav-item\"><a class=\"nav-link boreal-keeper-nav\" href=\"/keeper\" title=\"Explore Keeper shared-folder metadata\">Keeper</a></li>".to_string())
+        Html("<li id=\"keeper-primary-navigation\" class=\"nav-item\"><a class=\"nav-link boreal-keeper-nav\" href=\"/keeper\" title=\"Explore Keeper shared-folder metadata\"><i class=\"bi bi-shield-lock-fill me-1\"></i>Keeper</a></li>".to_string())
     } else {
         Html("<li id=\"keeper-primary-navigation\" class=\"d-none\"></li>".to_string())
     }
@@ -4530,7 +4879,7 @@ async fn keeper_page(
             bookmark_reminder_visible(&state),
         ),
         status_items: build_status_items(
-            &state.download_state(),
+            &state,
             &rclone_state,
             &google_client_state,
             &google_remotes_state,
@@ -4545,6 +4894,251 @@ async fn keeper_page(
         filter_tags,
         query,
     })
+}
+
+fn local_files_enabled(state: &AppState) -> bool {
+    state
+        .database()
+        .ok()
+        .and_then(|d| database::settings::load(&d).ok())
+        .is_some_and(|s| s.local_files_enabled)
+}
+
+async fn ui_local_files_primary_nav(State(state): State<Arc<AppState>>) -> Html<String> {
+    if local_files_enabled(&state) {
+        Html("<li id=\"local-files-primary-navigation\" class=\"nav-item\"><a class=\"nav-link boreal-local-files-nav\" href=\"/local-files\" title=\"Explore local file metadata\"><i class=\"bi bi-folder2-open me-1\"></i>Local Files</a></li>".to_string())
+    } else {
+        Html("<li id=\"local-files-primary-navigation\" class=\"d-none\"></li>".to_string())
+    }
+}
+
+async fn local_files_page(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<LocalFilesQuery>,
+) -> Result<Html<String>, StatusCode> {
+    if !local_files_enabled(&state) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let database = state
+        .database()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let settings =
+        database::settings::load(&database).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let configured_roots = crate::local_files::parse_roots(&settings.local_file_roots);
+    let safe_path = normalize_local_explorer_path(&query.path).ok_or(StatusCode::BAD_REQUEST)?;
+    let mut roots = Vec::new();
+    for (index, root) in configured_roots.iter().enumerate() {
+        let current_path = if index == query.root {
+            safe_path.clone()
+        } else {
+            String::new()
+        };
+        let parent_path = current_path
+            .rsplit_once('/')
+            .map(|(p, _)| p)
+            .unwrap_or("")
+            .to_string();
+        let items = database::local_files::list_children(
+            &database,
+            &root.to_string_lossy(),
+            &current_path,
+            &query.q,
+            &query.name,
+            &query.path_filter,
+            &query.item_type,
+            &query.size,
+            &query.modified,
+            &query.owner,
+            &query.group,
+            &query.tag,
+            query.duplicates,
+            &query.sort,
+            query.direction == "desc",
+        )
+        .map_err(|error| {
+            log::error!("Unable to list local files: {error}");
+            StatusCode::BAD_REQUEST
+        })?;
+        roots.push(LocalRootView {
+            index,
+            root_path: root.to_string_lossy().into_owned(),
+            current_path,
+            parent_path,
+            items,
+        });
+    }
+    let summary =
+        database::local_files::summary(&database).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let tags = database::inventory::list_tags_for_scope(
+        &database,
+        database::inventory::TagScope::LocalFiles,
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut filter_tags = tags
+        .iter()
+        .map(|tag| TagFilterPill {
+            slug: tag.slug.clone(),
+            name: tag.name.clone(),
+            description: tag.description.clone(),
+            color: tag.color.clone(),
+            text_color: tag_text_color(&tag.color),
+            selected: query.tag == tag.slug,
+            excluded: false,
+        })
+        .collect::<Vec<_>>();
+    filter_tags.push(no_tags_filter_pill(&query.tag));
+    let persons = database::directory::list_person_choices(&database)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let rclone_state = state.rclone_state();
+    let google_client_state = state.google_client_state();
+    let google_remotes_state = state.google_remotes_state();
+    let metadata_state = state.metadata_state();
+    render_template(&LocalFilesTemplate {
+        title: "Local Files - BOREAL",
+        active_page: "local-files",
+        alerts: build_alerts(
+            &rclone_state,
+            &google_client_state,
+            bookmark_reminder_visible(&state),
+        ),
+        status_items: build_status_items(
+            &state,
+            &rclone_state,
+            &google_client_state,
+            &google_remotes_state,
+            &metadata_state,
+            configured_remote_count(&state.runtime, &rclone_state),
+            authenticated_google_email(&state),
+            &state.update_state(),
+        ),
+        poll_rclone: should_poll_ui(&rclone_state, &google_remotes_state, &metadata_state),
+        roots,
+        summary,
+        query,
+        tags,
+        filter_tags,
+        persons,
+    })
+}
+
+fn normalize_local_explorer_path(path: &str) -> Option<String> {
+    let normalized = path.replace('\\', "/").trim_matches('/').to_string();
+    if normalized
+        .split('/')
+        .any(|part| part == ".." || part == ".")
+    {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+async fn apply_local_file_tag(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<LocalFileTagForm>,
+) -> Result<Redirect, StatusCode> {
+    change_local_file_tag(&state, form, false)
+}
+async fn remove_local_file_tag(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<LocalFileTagForm>,
+) -> Result<Redirect, StatusCode> {
+    change_local_file_tag(&state, form, true)
+}
+fn change_local_file_tag(
+    state: &AppState,
+    form: LocalFileTagForm,
+    remove: bool,
+) -> Result<Redirect, StatusCode> {
+    let ids = form
+        .selected_item_ids
+        .split(',')
+        .filter_map(|v| v.trim().parse().ok())
+        .collect::<Vec<i64>>();
+    let database = state
+        .database()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    database::local_files::change_tags(&database, &ids, &form.tag_to_apply, remove).map_err(
+        |error| {
+            log::error!("Unable to change Local Files tags: {error}");
+            StatusCode::BAD_REQUEST
+        },
+    )?;
+    Ok(Redirect::to(&local_files_redirect(&form.query)))
+}
+
+async fn associate_local_file_owner(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<LocalFileOwnerForm>,
+) -> Result<Redirect, StatusCode> {
+    let database = state
+        .database()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let result = if form.principal_id > 0 {
+        database::directory::associate_username(&database, form.principal_id, &form.username)
+    } else {
+        let display_name = if form.display_name.trim().is_empty() {
+            form.username.trim()
+        } else {
+            form.display_name.trim()
+        };
+        database::directory::save_manual_principal(
+            &database,
+            None,
+            &form.username,
+            &form.email,
+            display_name,
+            "person",
+            "active",
+            "",
+            "",
+            "",
+        )
+        .map(|_| ())
+    };
+    let mut query = form.query;
+    match result {
+        Ok(()) => query.owner_saved = true,
+        Err(error) => {
+            log::warn!("Unable to associate Local Files owner: {error}");
+            query.owner_error = error.to_string();
+        }
+    }
+    Ok(Redirect::to(&local_files_redirect(&query)))
+}
+
+fn local_files_redirect(q: &LocalFilesQuery) -> String {
+    format!(
+        "/local-files?root={}&path={}&q={}&name={}&path_filter={}&item_type={}&size={}&modified={}&owner={}&group={}&tag={}&duplicates={}&sort={}&direction={}&owner_saved={}&owner_error={}",
+        q.root,
+        url_component(&q.path),
+        url_component(&q.q),
+        url_component(&q.name),
+        url_component(&q.path_filter),
+        url_component(&q.item_type),
+        url_component(&q.size),
+        url_component(&q.modified),
+        url_component(&q.owner),
+        url_component(&q.group),
+        url_component(&q.tag),
+        q.duplicates,
+        url_component(&q.sort),
+        url_component(&q.direction),
+        q.owner_saved,
+        url_component(&q.owner_error)
+    )
+}
+fn url_component(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
 }
 
 async fn apply_keeper_tag(
@@ -4654,7 +5248,7 @@ async fn github_page(
             bookmark_reminder_visible(&state),
         ),
         status_items: build_status_items(
-            &state.download_state(),
+            &state,
             &rclone_state,
             &google_client_state,
             &google_remotes_state,
@@ -4844,7 +5438,7 @@ async fn tags_page(
             bookmark_reminder_visible(&state),
         ),
         status_items: build_status_items(
-            &state.download_state(),
+            &state,
             &rclone_state,
             &google_client_state,
             &google_remotes_state,
@@ -4924,7 +5518,7 @@ async fn directory_page(
             bookmark_reminder_visible(&state),
         ),
         status_items: build_status_items(
-            &state.download_state(),
+            &state,
             &rclone_state,
             &google_client_state,
             &google_remotes_state,
@@ -5061,20 +5655,22 @@ async fn new_principal_page(
     State(state): State<Arc<AppState>>,
     Query(query): Query<NewPrincipalQuery>,
 ) -> Result<Html<String>, StatusCode> {
-    let submitted = (!query.email.trim().is_empty()).then(|| {
-        (
-            None,
-            PrincipalEditForm {
-                email: query.email.trim().to_string(),
-                display_name: String::new(),
-                principal_type: "person".to_string(),
-                status: "active".to_string(),
-                departure_date: String::new(),
-                organization: String::new(),
-                notes: String::new(),
-            },
-        )
-    });
+    let submitted =
+        (!query.email.trim().is_empty() || !query.username.trim().is_empty()).then(|| {
+            (
+                None,
+                PrincipalEditForm {
+                    username: query.username.trim().to_string(),
+                    email: query.email.trim().to_string(),
+                    display_name: String::new(),
+                    principal_type: "person".to_string(),
+                    status: "active".to_string(),
+                    departure_date: String::new(),
+                    organization: String::new(),
+                    notes: String::new(),
+                },
+            )
+        });
     render_principal_editor(&state, None, submitted, String::new())
 }
 
@@ -5117,6 +5713,7 @@ fn save_principal_editor(
     match database::directory::save_manual_principal(
         &database,
         principal_id,
+        &form.username,
         &form.email,
         &form.display_name,
         &form.principal_type,
@@ -5145,38 +5742,49 @@ fn render_principal_editor(
         .or_else(|| principal.as_ref().map(|value| value.id))
         .unwrap_or(0);
     let is_new = principal_id == 0;
-    let (email, display_name, principal_type, status, departure_date, organization, notes) =
-        if let Some((_, form)) = submitted {
-            (
-                form.email,
-                form.display_name,
-                form.principal_type,
-                form.status,
-                form.departure_date,
-                form.organization,
-                form.notes,
-            )
-        } else if let Some(principal) = principal {
-            (
-                principal.primary_email,
-                principal.display_name,
-                principal.principal_type,
-                principal.status,
-                principal.departure_date,
-                principal.organizations,
-                principal.notes,
-            )
-        } else {
-            (
-                String::new(),
-                String::new(),
-                "person".to_string(),
-                "active".to_string(),
-                String::new(),
-                String::new(),
-                String::new(),
-            )
-        };
+    let (
+        username,
+        email,
+        display_name,
+        principal_type,
+        status,
+        departure_date,
+        organization,
+        notes,
+    ) = if let Some((_, form)) = submitted {
+        (
+            form.username,
+            form.email,
+            form.display_name,
+            form.principal_type,
+            form.status,
+            form.departure_date,
+            form.organization,
+            form.notes,
+        )
+    } else if let Some(principal) = principal {
+        (
+            principal.username,
+            principal.primary_email,
+            principal.display_name,
+            principal.principal_type,
+            principal.status,
+            principal.departure_date,
+            principal.organizations,
+            principal.notes,
+        )
+    } else {
+        (
+            String::new(),
+            String::new(),
+            String::new(),
+            "person".to_string(),
+            "active".to_string(),
+            String::new(),
+            String::new(),
+            String::new(),
+        )
+    };
     let rclone_state = state.rclone_state();
     let google_client_state = state.google_client_state();
     let google_remotes_state = state.google_remotes_state();
@@ -5212,7 +5820,7 @@ fn render_principal_editor(
             bookmark_reminder_visible(&state),
         ),
         status_items: build_status_items(
-            &state.download_state(),
+            &state,
             &rclone_state,
             &google_client_state,
             &google_remotes_state,
@@ -5229,6 +5837,7 @@ fn render_principal_editor(
             format!("/directory/principals/{principal_id}/edit")
         },
         principal_id,
+        username,
         email,
         display_name,
         principal_type,
@@ -5327,7 +5936,7 @@ async fn principal_page(
             bookmark_reminder_visible(&state),
         ),
         status_items: build_status_items(
-            &state.download_state(),
+            &state,
             &rclone_state,
             &google_client_state,
             &google_remotes_state,
@@ -5390,6 +5999,55 @@ async fn update_tag(
     Ok(Redirect::to("/tags?saved=true"))
 }
 
+async fn update_tag_scopes(
+    State(state): State<Arc<AppState>>,
+    Form(fields): Form<HashMap<String, String>>,
+) -> Result<Redirect, StatusCode> {
+    let database = state
+        .database()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let tags =
+        database::inventory::list_tags(&database).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let definitions = [
+        ("directory", database::inventory::TagScope::Directory),
+        ("my_drive", database::inventory::TagScope::MyDrive),
+        ("shared_drives", database::inventory::TagScope::SharedDrives),
+        (
+            "shared_with_me",
+            database::inventory::TagScope::SharedWithMe,
+        ),
+        (
+            "github_repositories",
+            database::inventory::TagScope::GitHubRepositories,
+        ),
+        (
+            "keeper_shared_folders",
+            database::inventory::TagScope::KeeperSharedFolders,
+        ),
+        ("local_files", database::inventory::TagScope::LocalFiles),
+    ];
+    let updates = tags
+        .into_iter()
+        .map(|tag| {
+            let scopes = definitions
+                .iter()
+                .filter_map(|(field, scope)| {
+                    fields
+                        .contains_key(&format!("{field}__{}", tag.slug))
+                        .then_some(*scope)
+                })
+                .collect();
+            (tag.slug, scopes)
+        })
+        .collect::<Vec<_>>();
+    database::inventory::update_tag_scopes_bulk(&database, &updates).map_err(|error| {
+        log::error!("Unable to update tag scopes: {error}");
+        StatusCode::BAD_REQUEST
+    })?;
+    log::info!("Tag scopes updated in bulk: tags={}", updates.len());
+    Ok(Redirect::to("/tags?saved=true"))
+}
+
 async fn delete_tag(
     State(state): State<Arc<AppState>>,
     Form(form): Form<DeleteTagForm>,
@@ -5424,6 +6082,9 @@ fn tag_form_scopes(form: &TagForm) -> Vec<database::inventory::TagScope> {
     }
     if form.keeper_shared_folders.is_some() {
         scopes.push(database::inventory::TagScope::KeeperSharedFolders);
+    }
+    if form.local_files.is_some() {
+        scopes.push(database::inventory::TagScope::LocalFiles);
     }
     scopes
 }
@@ -5516,7 +6177,7 @@ async fn ui_status(State(state): State<Arc<AppState>>) -> Result<Html<String>, S
 
     let template = StatusTemplate {
         status_items: build_status_items(
-            &state.download_state(),
+            &state,
             &rclone_state,
             &google_client_state,
             &google_remotes_state,
@@ -5584,6 +6245,12 @@ async fn ui_drive_summaries(
         .ok()
         .and_then(|database| database::keeper::summary(&database).ok())
         .unwrap_or_default();
+    let local_files_is_enabled = local_files_enabled(&state);
+    let local_files_summary = state
+        .database()
+        .ok()
+        .and_then(|database| database::local_files::summary(&database).ok())
+        .unwrap_or_default();
     let template = DriveSummariesTemplate {
         metadata: build_metadata_view(
             &metadata_state,
@@ -5594,10 +6261,32 @@ async fn ui_drive_summaries(
             latest_shared_drives_summary(&state).as_ref(),
             shared_drive_count(&state),
         ),
+        google_drive_enabled: state
+            .database()
+            .ok()
+            .and_then(|database| database::settings::load(&database).ok())
+            .is_some_and(|settings| settings.google_drive_enabled),
         github_enabled: github_is_enabled,
         github_summary,
         keeper_enabled: keeper_is_enabled,
         keeper_summary,
+        local_files_enabled: local_files_is_enabled,
+        local_files_summary,
+        directory_summary: state
+            .database()
+            .ok()
+            .and_then(|database| database::directory::summary(&database).ok())
+            .unwrap_or_default(),
+        s3_enabled: state
+            .database()
+            .ok()
+            .and_then(|database| database::settings::load(&database).ok())
+            .is_some_and(|settings| settings.s3_enabled),
+        s3_summary: state
+            .database()
+            .ok()
+            .and_then(|database| database::s3::summary(&database).ok())
+            .unwrap_or_default(),
     };
     render_template(&template)
 }
@@ -5631,7 +6320,16 @@ async fn ui_metadata_update_modal(
     let rclone_state = state.rclone_state();
     let metadata_state = state.metadata_state();
     let shared_summary = latest_shared_summary(&state);
-    let available = matches!(remotes.ro, RemoteState::Ready);
+    let enabled_settings = state
+        .database()
+        .ok()
+        .and_then(|database| database::settings::load(&database).ok())
+        .unwrap_or_default();
+    let available = matches!(remotes.ro, RemoteState::Ready)
+        || enabled_settings.github_enabled
+        || enabled_settings.keeper_enabled
+        || enabled_settings.local_files_enabled
+        || enabled_settings.s3_enabled;
     let scopes = metadata_scope_progress_views(&state, &metadata_state);
 
     render_template(&MetadataUpdateModalTemplate {
@@ -5645,6 +6343,8 @@ async fn ui_metadata_update_modal(
             shared_drive_count(&state),
         ),
         scopes,
+        google_available: enabled_settings.google_drive_enabled
+            && matches!(remotes.ro, RemoteState::Ready),
         directory_available: state
             .database()
             .ok()
@@ -5660,7 +6360,46 @@ async fn ui_metadata_update_modal(
             .is_some_and(|settings| settings.github_enabled)
             && crate::github::client::configured(&state.runtime),
         keeper_available: keeper_enabled(&state),
+        local_files_available: state
+            .database()
+            .ok()
+            .and_then(|d| database::settings::load(&d).ok())
+            .is_some_and(|s| s.local_files_enabled),
+        s3_available: state
+            .database()
+            .ok()
+            .and_then(|database| database::settings::load(&database).ok())
+            .is_some_and(|settings| settings.s3_enabled && !settings.s3_remote_name.is_empty()),
+        directory_estimate: metadata_timing_view(&state, "directory"),
+        my_drive_estimate: metadata_timing_view(&state, "my-drive"),
+        shared_with_me_estimate: metadata_timing_view(&state, "shared-with-me"),
+        shared_drives_estimate: metadata_timing_view(&state, "shared-drives"),
+        specific_shared_drive_estimate: metadata_timing_view(&state, "specific-shared-drive"),
+        github_estimate: metadata_timing_view(&state, "github"),
+        keeper_estimate: metadata_timing_view(&state, "keeper"),
+        local_files_estimate: metadata_timing_view(&state, "local-files"),
+        s3_estimate: metadata_timing_view(&state, "s3"),
     })
+}
+
+fn metadata_timing_view(state: &AppState, source: &str) -> MetadataTimingView {
+    state
+        .database()
+        .ok()
+        .and_then(|database| database.metadata_timing_estimate(source).ok().flatten())
+        .map(|estimate| MetadataTimingView {
+            seconds: estimate.average_seconds,
+            label: format!(
+                "about {} from {} prior update{}",
+                format_duration(estimate.average_seconds),
+                estimate.sample_count,
+                if estimate.sample_count == 1 { "" } else { "s" }
+            ),
+        })
+        .unwrap_or_else(|| MetadataTimingView {
+            seconds: 0,
+            label: "timing history not available yet".to_string(),
+        })
 }
 
 fn metadata_scope_progress_views(
@@ -5739,9 +6478,19 @@ fn metadata_scope_progress_views(
     } else {
         (false, false, 0, "Waiting".to_string())
     };
+    let local_files = if phase == "Scanning local files" {
+        (true, false, 50, phase.to_string())
+    } else {
+        (false, false, 0, "Waiting".to_string())
+    };
+    let s3 = if phase == "Fetching S3 object metadata" {
+        (true, false, 50, phase.to_string())
+    } else {
+        (false, false, 0, "Waiting".to_string())
+    };
 
     [
-        ("Persons", selection.directory_info, "", directory),
+        ("Persons", selection.directory_info, "directory", directory),
         ("My Drive", selection.my_drive, "my-drive", my_drive),
         (
             "Shared with me",
@@ -5750,13 +6499,28 @@ fn metadata_scope_progress_views(
             shared_with_me,
         ),
         (
-            "Shared Drives",
-            selection.shared_drives,
-            "shared-drives",
+            if selection.specific_shared_drive {
+                "One Shared Drive"
+            } else {
+                "All Shared Drives"
+            },
+            selection.shared_drives || selection.specific_shared_drive,
+            if selection.specific_shared_drive {
+                "specific-shared-drive"
+            } else {
+                "shared-drives"
+            },
             shared_drives,
         ),
-        ("GitHub", selection.github, "", github),
-        ("Keeper", selection.keeper, "", keeper),
+        ("GitHub", selection.github, "github", github),
+        ("Keeper", selection.keeper, "keeper", keeper),
+        (
+            "Local Files",
+            selection.local_files,
+            "local-files",
+            local_files,
+        ),
+        ("S3-compatible storage", selection.s3, "s3", s3),
     ]
     .into_iter()
     .map(
@@ -5779,6 +6543,10 @@ fn metadata_scope_progress_views(
                         })
                         .flatten()
                 });
+            let historical_timing = selected
+                .then(|| state.database().ok())
+                .flatten()
+                .and_then(|database| database.metadata_timing_estimate(scan_type).ok().flatten());
             if active {
                 if let Some(timing) = timing.as_ref() {
                     let time_percent = (timing.elapsed_seconds.saturating_mul(100)
@@ -5804,7 +6572,7 @@ fn metadata_scope_progress_views(
                             String::new()
                         }
                     }),
-                estimate_label: timing
+                estimate_label: historical_timing
                     .as_ref()
                     .map(|value| {
                         format!(
@@ -5985,28 +6753,47 @@ async fn start_metadata_update(
 
     let google_selected = form.my_drive.is_some()
         || form.shared_drives.is_some()
+        || !form.specific_shared_drive_url.trim().is_empty()
         || form.shared_with_me.is_some()
         || form.directory_info.is_some();
     if google_selected && !matches!(remotes.ro, RemoteState::Ready) {
         return Err(StatusCode::PRECONDITION_FAILED);
     }
 
+    let mut specific_shared_drive_id = if form.specific_shared_drive_url.trim().is_empty() {
+        String::new()
+    } else {
+        google_drive_folder_id(&form.specific_shared_drive_url).map_err(|error| {
+            log::warn!("Invalid targeted Shared Drive URL: {error}");
+            StatusCode::BAD_REQUEST
+        })?
+    };
+    if form.shared_drives.is_some() && !specific_shared_drive_id.is_empty() {
+        log::info!("All Shared Drives selected; ignoring the specific Shared Drive URL");
+        specific_shared_drive_id.clear();
+    }
+
     let selection = crate::app::MetadataUpdateSelection {
         my_drive: form.my_drive.is_some(),
         shared_drives: form.shared_drives.is_some(),
+        specific_shared_drive: !specific_shared_drive_id.is_empty(),
         shared_with_me: form.shared_with_me.is_some(),
         directory_info: form.directory_info.is_some(),
         github: form.github.is_some(),
         keeper: form.keeper.is_some(),
+        local_files: form.local_files.is_some(),
+        s3: form.s3.is_some(),
     };
     if let Ok(database) = state.database() {
         database::settings::set_metadata_setup_skipped(&database, false)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
-    AppState::start_metadata_update(state, selection).map_err(|error| {
-        eprintln!("Unable to start metadata update: {error}");
-        StatusCode::CONFLICT
-    })?;
+    AppState::start_metadata_update(state, selection, specific_shared_drive_id).map_err(
+        |error| {
+            eprintln!("Unable to start metadata update: {error}");
+            StatusCode::CONFLICT
+        },
+    )?;
 
     Ok(Redirect::to("/"))
 }
@@ -6059,7 +6846,23 @@ async fn skip_setup_metadata(State(state): State<Arc<AppState>>) -> Result<Redir
 }
 
 fn should_poll_rclone(rclone_state: &RcloneState) -> bool {
-    matches!(rclone_state, RcloneState::Initializing)
+    matches!(
+        rclone_state,
+        RcloneState::Initializing | RcloneState::Downloading { .. }
+    )
+}
+
+fn rclone_download_progress(downloaded_bytes: u64, total_bytes: Option<u64>) -> String {
+    const MIB: u64 = 1024 * 1024;
+    match total_bytes.filter(|total| *total > 0) {
+        Some(total) => format!(
+            "{:.0}% ({} of {} MiB)",
+            downloaded_bytes as f64 * 100.0 / total as f64,
+            downloaded_bytes / MIB,
+            total / MIB
+        ),
+        None => format!("{} MiB downloaded", downloaded_bytes / MIB),
+    }
 }
 
 fn should_poll_setup(rclone_state: &RcloneState, remotes_state: &GoogleRemotesState) -> bool {
@@ -6101,7 +6904,33 @@ fn build_alerts(
             });
         }
 
-        RcloneState::Ready(_) => {}
+        RcloneState::Downloading {
+            downloaded_bytes,
+            total_bytes,
+        } => {
+            alerts.push(AlertItem {
+                level: "warning",
+                icon: "bi-cloud-arrow-down",
+                message: format!(
+                    "BOREAL is downloading Rclone: {}",
+                    rclone_download_progress(*downloaded_bytes, *total_bytes)
+                ),
+                modal_target: "",
+                dismiss_action: "",
+            });
+        }
+
+        RcloneState::Ready(status) => {
+            if !status.existing_process_warning.is_empty() {
+                alerts.push(AlertItem {
+                    level: "warning",
+                    icon: "bi-exclamation-triangle",
+                    message: status.existing_process_warning.clone(),
+                    modal_target: "rcloneProcessHelpModal",
+                    dismiss_action: "",
+                });
+            }
+        }
 
         RcloneState::Error(error) => {
             alerts.push(AlertItem {
@@ -6114,29 +6943,10 @@ fn build_alerts(
         }
     }
 
-    match google_client_state {
-        GoogleClientState::NotConfigured => {
-            alerts.push(AlertItem {
-                level: "warning",
-                icon: "bi-key",
-                message: "Google Client ID is not configured".to_string(),
-                modal_target: "googleClientSetupModal",
-                dismiss_action: "",
-            });
-        }
-
-        GoogleClientState::Ready(_) => {}
-
-        GoogleClientState::Error(error) => {
-            alerts.push(AlertItem {
-                level: "danger",
-                icon: "bi-key",
-                message: format!("Google Client ID configuration is invalid: {error}"),
-                modal_target: "googleClientSetupModal",
-                dismiss_action: "",
-            });
-        }
-    }
+    // Google Drive is optional. Its setup view reports missing or invalid
+    // credentials after the module is enabled, rather than raising a global
+    // application warning for users of other modules.
+    let _ = google_client_state;
 
     alerts
 }
@@ -6154,17 +6964,30 @@ fn authenticated_google_email(state: &AppState) -> String {
 }
 
 fn build_status_items(
-    download_state: &DownloadState,
+    state: &AppState,
     rclone_state: &RcloneState,
     google_client_state: &GoogleClientState,
     _google_remotes_state: &GoogleRemotesState,
     metadata_state: &MetadataState,
-    configured_remote_count: usize,
+    _configured_remote_count: usize,
     google_account_email: String,
     update_state: &crate::update::UpdateState,
 ) -> Vec<StatusItem> {
+    let source_settings = state
+        .database()
+        .ok()
+        .and_then(|database| database::settings::load(&database).ok())
+        .unwrap_or_default();
     let (rclone_value, rclone_value_class) = match rclone_state {
-        RcloneState::Initializing => ("Initializing...".to_string(), "text-warning"),
+        RcloneState::Initializing => ("Preparing download...".to_string(), "text-warning"),
+
+        RcloneState::Downloading {
+            downloaded_bytes,
+            total_bytes,
+        } => (
+            rclone_download_progress(*downloaded_bytes, *total_bytes),
+            "text-warning",
+        ),
 
         RcloneState::Ready(status) => (
             status
@@ -6178,25 +7001,13 @@ fn build_status_items(
         RcloneState::Error(_) => ("Unavailable".to_string(), "text-danger"),
     };
 
-    let (client_id_value, client_id_value_class) = match google_client_state {
-        GoogleClientState::NotConfigured => ("Not configured".to_string(), "text-warning"),
-
-        GoogleClientState::Ready(_) => ("Configured".to_string(), "text-success"),
-
-        GoogleClientState::Error(_) => ("Invalid".to_string(), "text-danger"),
-    };
-
-    let (remote_value, remote_class) = if configured_remote_count == 0 {
-        ("0 configured".to_string(), "text-warning")
-    } else {
-        (
-            format!("{configured_remote_count} configured"),
-            "text-success",
-        )
-    };
-
     let (google_account_value, google_account_class) = if google_account_email.is_empty() {
-        ("Not verified".to_string(), "text-warning")
+        let value = match google_client_state {
+            GoogleClientState::NotConfigured => "Setup required",
+            GoogleClientState::Ready(_) => "Not verified",
+            GoogleClientState::Error(_) => "Invalid setup",
+        };
+        (value.to_string(), "text-warning")
     } else {
         (google_account_email, "text-success")
     };
@@ -6212,18 +7023,45 @@ fn build_status_items(
         MetadataState::Error(_) => ("Update failed".to_string(), "text-danger", false),
     };
 
-    vec![
-        StatusItem {
-            icon: "bi-folder-symlink",
-            label: "Rclone",
-            value: rclone_value,
-            value_class: rclone_value_class,
-            value_url: rclone_gui_url(rclone_state),
-            spinner: false,
-            age_timestamp: String::new(),
-            title: "Open Rclone WebGUI".to_string(),
+    let mut items = vec![StatusItem {
+        icon: "",
+        label: "BOREAL",
+        value: boreal_version_label(),
+        value_class: if matches!(update_state, crate::update::UpdateState::Available { .. }) {
+            "text-warning fw-semibold"
+        } else {
+            "text-success"
         },
-        StatusItem {
+        value_url: "/update".to_string(),
+        spinner: false,
+        age_timestamp: String::new(),
+        title: match update_state {
+            crate::update::UpdateState::Available { release } => {
+                format!("BOREAL v{} is available", release.version)
+            }
+            crate::update::UpdateState::Checking => "Checking for BOREAL updates".to_string(),
+            crate::update::UpdateState::Current { .. } => {
+                "BOREAL is up to date. Open Update page.".to_string()
+            }
+            crate::update::UpdateState::Error(_) => {
+                "Open the Update page to retry the version check".to_string()
+            }
+        },
+    }];
+
+    items.push(StatusItem {
+        icon: "bi-folder-symlink",
+        label: "Rclone",
+        value: rclone_value,
+        value_class: rclone_value_class,
+        value_url: rclone_gui_url(rclone_state),
+        spinner: false,
+        age_timestamp: String::new(),
+        title: "Open Rclone WebGUI".to_string(),
+    });
+
+    if source_settings.google_drive_enabled {
+        items.push(StatusItem {
             icon: "bi-google",
             label: "GDrive",
             value: google_account_value,
@@ -6232,77 +7070,64 @@ fn build_status_items(
             spinner: false,
             age_timestamp: String::new(),
             title: String::new(),
+        });
+    }
+    if source_settings.github_enabled {
+        items.push(source_status_item("bi-github", "GitHub", "Enabled"));
+    }
+    if source_settings.keeper_enabled {
+        items.push(source_status_item("bi-shield-lock", "Keeper", "Enabled"));
+    }
+    if source_settings.local_files_enabled {
+        items.push(source_status_item(
+            "bi-folder2-open",
+            "Local Files",
+            "Enabled",
+        ));
+    }
+    if source_settings.s3_enabled {
+        let value = if source_settings.s3_remote_name.is_empty() {
+            "Enabled".to_string()
+        } else {
+            source_settings.s3_remote_name.clone()
+        };
+        items.push(source_status_item("bi-bucket", "S3", &value));
+    }
+
+    items.push(StatusItem {
+        icon: "bi-database",
+        label: "Metadata",
+        value: metadata_value,
+        value_class: metadata_class,
+        value_url: String::new(),
+        spinner: metadata_spinner,
+        age_timestamp: match metadata_state {
+            MetadataState::Synchronized(summary) => summary.completed_at.clone(),
+            _ => String::new(),
         },
-        StatusItem {
-            icon: "bi-key",
-            label: "ClientID",
-            value: client_id_value,
-            value_class: client_id_value_class,
-            value_url: String::new(),
-            spinner: false,
-            age_timestamp: String::new(),
-            title: String::new(),
-        },
-        StatusItem {
-            icon: "bi-cloud",
-            label: "Remotes",
-            value: remote_value,
-            value_class: remote_class,
-            value_url: String::new(),
-            spinner: false,
-            age_timestamp: String::new(),
-            title: String::new(),
-        },
-        StatusItem {
-            icon: "bi-database",
-            label: "Metadata",
-            value: metadata_value,
-            value_class: metadata_class,
-            value_url: String::new(),
-            spinner: metadata_spinner,
-            age_timestamp: match metadata_state {
-                MetadataState::Synchronized(summary) => summary.completed_at.clone(),
-                _ => String::new(),
-            },
-            title: String::new(),
-        },
-        build_download_status_item(download_state),
-        StatusItem {
-            icon: "bi-arrow-left-right",
-            label: "Migrations",
-            value: "Checking…".to_string(),
-            value_class: "text-body-secondary",
-            value_url: "/migrations".to_string(),
-            spinner: false,
-            age_timestamp: String::new(),
-            title: "Open migration progress and history".to_string(),
-        },
-        StatusItem {
-            icon: "bi-info-circle",
-            label: "BOREAL",
-            value: boreal_version_label(),
-            value_class: if matches!(update_state, crate::update::UpdateState::Available { .. }) {
-                "text-warning fw-semibold"
-            } else {
-                "text-success"
-            },
-            value_url: "/update".to_string(),
-            spinner: false,
-            age_timestamp: String::new(),
-            title: match update_state {
-                crate::update::UpdateState::Available { release } => {
-                    format!("BOREAL v{} is available", release.version)
-                }
-                crate::update::UpdateState::Checking => "Checking for BOREAL updates".to_string(),
-                crate::update::UpdateState::Current { .. } => {
-                    "BOREAL is up to date. Open Update page.".to_string()
-                }
-                crate::update::UpdateState::Error(_) => {
-                    "Open the Update page to retry the version check".to_string()
-                }
-            },
-        },
-    ]
+        title: String::new(),
+    });
+
+    if matches!(state.download_state(), DownloadState::Running { .. }) {
+        items.push(build_download_status_item(&state.download_state()));
+    }
+    if let Some(item) = build_migration_status_item(state) {
+        items.push(item);
+    }
+    items
+}
+
+fn source_status_item(icon: &'static str, label: &'static str, value: &str) -> StatusItem {
+    StatusItem {
+        icon,
+        label,
+        value: value.to_string(),
+        value_class: "text-success",
+        value_url: String::new(),
+        spinner: false,
+        age_timestamp: String::new(),
+        title: String::new(),
+    }
 }
 
 fn boreal_version_label() -> String {
@@ -6356,17 +7181,12 @@ fn build_download_status_item(download_state: &DownloadState) -> StatusItem {
     }
 }
 
-fn build_migration_status_item(state: &AppState) -> StatusItem {
+fn build_migration_status_item(state: &AppState) -> Option<StatusItem> {
     let summary = state.database().and_then(|database| {
         database::migration::active_summary(&database).map_err(|error| error.to_string())
     });
     let (value, value_class, spinner, title) = match summary {
-        Ok(summary) if summary.count == 0 => (
-            "Idle".to_string(),
-            "text-body-secondary",
-            false,
-            "No active migrations".to_string(),
-        ),
+        Ok(summary) if summary.count == 0 => return None,
         Ok(summary) => {
             let percent = if summary.bytes_total > 0 {
                 summary.bytes_copied.saturating_mul(100) / summary.bytes_total
@@ -6390,14 +7210,12 @@ fn build_migration_status_item(state: &AppState) -> StatusItem {
                 ),
             )
         }
-        Err(error) => (
-            "Unavailable".to_string(),
-            "text-danger",
-            false,
-            format!("Unable to read migration progress: {error}"),
-        ),
+        Err(error) => {
+            log::warn!("Unable to read active migration status: {error}");
+            return None;
+        }
     };
-    StatusItem {
+    Some(StatusItem {
         icon: "bi-arrow-left-right",
         label: "Migrations",
         value,
@@ -6406,7 +7224,7 @@ fn build_migration_status_item(state: &AppState) -> StatusItem {
         spinner,
         age_timestamp: String::new(),
         title,
-    }
+    })
 }
 
 fn render_template<T>(template: &T) -> Result<Html<String>, StatusCode>
@@ -6429,7 +7247,7 @@ mod tests {
     fn persons_csv_template_has_supported_import_columns() {
         assert_eq!(
             PERSONS_CSV_TEMPLATE,
-            "name,email,organization,type,status,departure_date,notes,tags\r\n"
+            "name,username,email,organization,type,status,departure_date,notes,tags\r\n"
         );
     }
 
@@ -6455,6 +7273,38 @@ mod tests {
     }
 
     #[test]
+    fn identifies_only_get_health_and_ui_requests_as_routine_polls() {
+        assert!(is_routine_poll("GET", "/status"));
+        assert!(is_routine_poll("GET", "/ui/status"));
+        assert!(!is_routine_poll("POST", "/ui/status"));
+        assert!(!is_routine_poll("GET", "/settings"));
+    }
+
+    #[test]
+    fn formats_rclone_download_progress_for_the_status_bar() {
+        assert_eq!(
+            rclone_download_progress(10 * 1024 * 1024, Some(30 * 1024 * 1024)),
+            "33% (10 of 30 MiB)"
+        );
+        assert_eq!(
+            rclone_download_progress(5 * 1024 * 1024, None),
+            "5 MiB downloaded"
+        );
+    }
+
+    #[test]
+    fn extracts_a_shared_drive_root_id_from_its_url() {
+        assert_eq!(
+            google_drive_folder_id(
+                "https://drive.google.com/drive/u/0/folders/0AExampleSharedDrive123"
+            )
+            .expect("Shared Drive URL should parse"),
+            "0AExampleSharedDrive123"
+        );
+        assert!(google_drive_folder_id("https://example.com/not-a-drive").is_err());
+    }
+
+    #[test]
     fn active_scope_progress_does_not_replace_my_drive_summary() {
         let my_drive = database::inventory::InventorySummary {
             completed_at: "2026-08-30 12:00:00".to_string(),
@@ -6468,10 +7318,13 @@ mod tests {
             selection: crate::app::MetadataUpdateSelection {
                 my_drive: false,
                 shared_drives: true,
+                specific_shared_drive: false,
                 shared_with_me: false,
                 directory_info: false,
                 github: false,
                 keeper: false,
+                local_files: false,
+                s3: false,
             },
             phase: "Scanning Shared Drive 1 of 1: Research".to_string(),
             files_scanned: 500,
@@ -6507,5 +7360,48 @@ mod tests {
         assert!(!complete.spinner);
         assert_eq!(complete.value, "Complete: Research");
         assert_eq!(complete.value_class, "text-success");
+    }
+
+    #[test]
+    fn local_file_action_redirect_preserves_explorer_state() {
+        let redirect = local_files_redirect(&LocalFilesQuery {
+            root: 2,
+            path: "Reports/Annual".to_string(),
+            q: "budget review".to_string(),
+            name: "Budget".to_string(),
+            path_filter: "Annual".to_string(),
+            item_type: "PDF".to_string(),
+            size: "2.2 MB".to_string(),
+            modified: ">=2026-01-01".to_string(),
+            owner: "jsmith".to_string(),
+            group: "research".to_string(),
+            tag: "needs-review".to_string(),
+            duplicates: true,
+            sort: "modified".to_string(),
+            direction: "desc".to_string(),
+            ..LocalFilesQuery::default()
+        });
+
+        for expected in [
+            "root=2",
+            "path=Reports%2FAnnual",
+            "q=budget%20review",
+            "name=Budget",
+            "path_filter=Annual",
+            "item_type=PDF",
+            "size=2.2%20MB",
+            "modified=%3E%3D2026-01-01",
+            "owner=jsmith",
+            "group=research",
+            "tag=needs-review",
+            "duplicates=true",
+            "sort=modified",
+            "direction=desc",
+        ] {
+            assert!(
+                redirect.contains(expected),
+                "missing preserved state: {expected}"
+            );
+        }
     }
 }

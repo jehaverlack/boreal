@@ -2,14 +2,11 @@ use std::{
     env,
     ffi::OsStr,
     fs::{self, File},
-    io,
+    io::{self, Read, Write},
     path::{Path, PathBuf},
-    process::Command,
+    time::Duration,
     time::{SystemTime, UNIX_EPOCH},
 };
-
-#[cfg(target_os = "linux")]
-use std::process::Stdio;
 
 use zip::ZipArchive;
 
@@ -27,7 +24,10 @@ use super::{RcloneError, command, executable_path};
 /// - use a system package manager
 /// - modify PATH
 /// - modify a system Rclone installation
-pub fn install(runtime: &Runtime) -> Result<PathBuf, RcloneError> {
+pub fn install<F>(runtime: &Runtime, progress: F) -> Result<PathBuf, RcloneError>
+where
+    F: FnMut(u64, Option<u64>),
+{
     let destination = executable_path(runtime)?;
 
     let bin_dir = destination
@@ -56,7 +56,7 @@ pub fn install(runtime: &Runtime) -> Result<PathBuf, RcloneError> {
 
     remove_if_exists(&extracted_path)?;
 
-    if let Err(error) = download(&download_url, &archive_path) {
+    if let Err(error) = download(&download_url, &archive_path, progress) {
         let _ = remove_if_exists(&archive_path);
 
         let _ = remove_if_exists(&extracted_path);
@@ -125,126 +125,81 @@ fn rclone_platform() -> Result<&'static str, RcloneError> {
     }
 }
 
-fn download(url: &str, destination: &Path) -> Result<(), RcloneError> {
-    #[cfg(target_os = "windows")]
-    {
-        return download_windows(url, destination);
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        return download_macos(url, destination);
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        return download_linux(url, destination);
-    }
-
-    #[allow(unreachable_code)]
-    Err("Unsupported operating system for Rclone download".into())
-}
-
-#[cfg(target_os = "linux")]
-fn download_linux(url: &str, destination: &Path) -> Result<(), RcloneError> {
-    if command_exists("curl") {
-        let status = Command::new("curl")
-            .arg("--fail")
-            .arg("--location")
-            .arg("--silent")
-            .arg("--show-error")
-            .arg("--output")
-            .arg(destination)
-            .arg(url)
-            .status()
-            .map_err(|error| format!("Unable to execute curl: {error}"))?;
-
-        if status.success() {
-            return Ok(());
-        }
-
-        eprintln!("curl was unable to download Rclone; trying wget.");
-    }
-
-    if command_exists("wget") {
-        let status = Command::new("wget")
-            .arg("--quiet")
-            .arg("--output-document")
-            .arg(destination)
-            .arg(url)
-            .status()
-            .map_err(|error| format!("Unable to execute wget: {error}"))?;
-
-        if status.success() {
-            return Ok(());
-        }
-
-        return Err("wget was unable to download Rclone".into());
-    }
-
-    Err(
-        "BOREAL could not download Rclone because neither curl nor wget \
-         is available"
-            .into(),
-    )
-}
-
-#[cfg(target_os = "macos")]
-fn download_macos(url: &str, destination: &Path) -> Result<(), RcloneError> {
-    let curl = Path::new("/usr/bin/curl");
-
-    if !curl.is_file() {
-        return Err("macOS system curl was not found at /usr/bin/curl".into());
-    }
-
-    let status = Command::new(curl)
-        .arg("--fail")
-        .arg("--location")
-        .arg("--silent")
-        .arg("--show-error")
-        .arg("--output")
-        .arg(destination)
-        .arg(url)
-        .status()
-        .map_err(|error| format!("Unable to execute macOS curl: {error}"))?;
-
-    if !status.success() {
-        return Err("curl was unable to download Rclone".into());
-    }
-
+fn download<F>(url: &str, destination: &Path, progress: F) -> Result<(), RcloneError>
+where
+    F: FnMut(u64, Option<u64>),
+{
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        // Large downloads over institutional proxies can be slow. Allow a
+        // generous total window while retaining a ceiling for stalled jobs.
+        .timeout(Duration::from_secs(30 * 60))
+        .user_agent(concat!("BOREAL/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|error| format!("Unable to initialize the Rclone downloader: {error}"))?;
+    let mut response = client
+        .get(url)
+        .send()
+        .map_err(|error| format!("Unable to download Rclone from {url}: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Rclone download returned an error: {error}"))?;
+    let mut output = File::create(destination).map_err(|error| {
+        format!(
+            "Unable to create Rclone download {}: {error}",
+            destination.display()
+        )
+    })?;
+    let expected_bytes = response.content_length();
+    copy_download(&mut response, &mut output, expected_bytes, progress)?;
+    output
+        .sync_all()
+        .map_err(|error| format!("Unable to finish writing the Rclone download: {error}"))?;
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
-fn download_windows(url: &str, destination: &Path) -> Result<(), RcloneError> {
-    let script = concat!(
-        "$ErrorActionPreference = 'Stop'; ",
-        "$ProgressPreference = 'SilentlyContinue'; ",
-        "Invoke-WebRequest ",
-        "-Uri $env:BOREAL_RCLONE_URL ",
-        "-OutFile $env:BOREAL_RCLONE_DEST"
-    );
-
-    let status = Command::new("powershell.exe")
-        .arg("-NoLogo")
-        .arg("-NoProfile")
-        .arg("-NonInteractive")
-        .arg("-ExecutionPolicy")
-        .arg("Bypass")
-        .arg("-Command")
-        .arg(script)
-        .env("BOREAL_RCLONE_URL", url)
-        .env("BOREAL_RCLONE_DEST", destination)
-        .status()
-        .map_err(|error| {
-            format!("Unable to start Windows PowerShell to download Rclone: {error}")
-        })?;
-
-    if !status.success() {
-        return Err("PowerShell was unable to download Rclone".into());
+fn copy_download(
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+    expected_bytes: Option<u64>,
+    mut progress: impl FnMut(u64, Option<u64>),
+) -> Result<u64, RcloneError> {
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut copied = 0_u64;
+    let mut next_report = 5 * 1024 * 1024;
+    loop {
+        let count = reader
+            .read(&mut buffer)
+            .map_err(|error| format!("Rclone download was interrupted: {error}"))?;
+        if count == 0 {
+            break;
+        }
+        writer
+            .write_all(&buffer[..count])
+            .map_err(|error| format!("Unable to write the Rclone download: {error}"))?;
+        copied = copied.saturating_add(count as u64);
+        progress(copied, expected_bytes);
+        if copied >= next_report {
+            match expected_bytes.filter(|total| *total > 0) {
+                Some(total) => println!(
+                    "==> Rclone download: {:.0}% ({} of {} MiB)",
+                    copied as f64 * 100.0 / total as f64,
+                    copied / 1024 / 1024,
+                    total / 1024 / 1024,
+                ),
+                None => println!("==> Rclone download: {} MiB", copied / 1024 / 1024),
+            }
+            next_report = copied.saturating_add(5 * 1024 * 1024);
+        }
     }
-
-    Ok(())
+    if let Some(expected) = expected_bytes {
+        if copied != expected {
+            return Err(format!(
+                "Rclone download ended early: received {copied} of {expected} bytes"
+            )
+            .into());
+        }
+    }
+    Ok(copied)
 }
 
 fn extract_rclone(archive_path: &Path, destination: &Path) -> Result<(), RcloneError> {
@@ -323,16 +278,6 @@ fn set_executable_permissions(_path: &Path) -> Result<(), RcloneError> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
-fn command_exists(command: &str) -> bool {
-    Command::new(command)
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok()
-}
-
 fn temporary_archive_path() -> PathBuf {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -367,5 +312,29 @@ fn remove_if_exists(path: &Path) -> Result<(), RcloneError> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
 
         Err(error) => Err(format!("Unable to remove {}: {error}", path.display()).into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::copy_download;
+    use std::io::Cursor;
+
+    #[test]
+    fn copies_download_bytes_without_an_external_command() {
+        let expected = b"rclone archive bytes";
+        let mut reader = Cursor::new(expected);
+        let mut actual = Vec::new();
+
+        let copied = copy_download(
+            &mut reader,
+            &mut actual,
+            Some(expected.len() as u64),
+            |_, _| {},
+        )
+        .expect("download should copy");
+
+        assert_eq!(copied, expected.len() as u64);
+        assert_eq!(actual, expected);
     }
 }

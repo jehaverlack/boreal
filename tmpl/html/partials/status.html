@@ -14,17 +14,15 @@
         class="container-fluid py-2 d-flex align-items-center flex-wrap gap-3"
     >
 
-        <span
-            class="small fw-semibold text-body"
-        >
-            Status
-        </span>
-
         {% for item in status_items %}
 
         <span
             class="small text-body d-inline-flex align-items-center"
             data-status-label="{{ item.label }}"
+            {% if item.label == "BOREAL" %}
+            id="boreal-version-status"
+            hx-preserve="true"
+            {% endif %}
             {% if item.label == "Download" && item.spinner %}
             hx-get="/ui/download-status-item"
             hx-trigger="every 1s"
@@ -41,6 +39,15 @@
                 role="status"
                 aria-hidden="true"
             ></span>
+            {% else if item.label == "BOREAL" %}
+            <svg class="boreal-status-icon me-1" viewBox="0 0 16 16" aria-hidden="true">
+                <rect x="1" y="1" width="14" height="14" rx="3" fill="#0084c1"/>
+                <path fill="white" d="M5.062 12h3.475c1.804 0 2.888-.908 2.888-2.396 0-1.108-.756-1.927-1.786-2.068v-.05c.846-.145 1.497-.897 1.497-1.798 0-1.315-.957-2.188-2.407-2.188H5.062zm1.374-4.875V4.658h1.78c.915 0 1.438.45 1.438 1.204 0 .813-.587 1.263-1.65 1.263zm0 3.717V8.187h1.898c1.184 0 1.731.439 1.731 1.296 0 .875-.553 1.359-1.582 1.359z"/>
+            </svg>
+            {% else if item.label == "Rclone" %}
+            <img class="boreal-service-icon me-1" src="/assets/rclone-logo.svg" alt="" aria-hidden="true">
+            {% else if item.label == "GDrive" %}
+            <img class="boreal-service-icon me-1" src="/assets/google-drive-logo.svg" alt="" aria-hidden="true">
             {% else %}
             <i class="bi {{ item.icon }} me-1"></i>
             {% endif %}
@@ -51,6 +58,16 @@
 
             {% if item.value_url.is_empty() %}
 
+            {% if item.label == "Metadata" %}
+            <button
+                type="button"
+                class="btn btn-link btn-sm p-0 border-0 text-decoration-none {{ item.value_class }}"
+                data-bs-toggle="modal"
+                data-bs-target="#metadataUpdateModal"
+                title="Open metadata update status"
+                {% if item.age_timestamp.len() > 0 %}data-synchronized-at="{{ item.age_timestamp }}"{% endif %}
+            >{{ item.value }}</button>
+            {% else %}
             <span
                 class="{{ item.value_class }}"
                 {% if item.age_timestamp.len() > 0 %}
@@ -60,6 +77,7 @@
             >
                 {{ item.value }}
             </span>
+            {% endif %}
 
             {% else %}
 
@@ -85,12 +103,12 @@
 
         <a
             class="small text-body text-decoration-none ms-auto"
-            href="https://github.com/jehaverlack/uaf-boreal"
+            href="https://github.com/jehaverlack/boreal"
             target="_blank"
             rel="noopener noreferrer"
         >
             <i class="bi bi-github me-1"></i>
-            github.com/jehaverlack/uaf-boreal
+            github.com/jehaverlack/boreal
         </a>
 
     </div>

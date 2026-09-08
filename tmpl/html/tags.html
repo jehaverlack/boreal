@@ -9,9 +9,10 @@
             <h1 class="h3 mb-1">Tags</h1>
             <p class="text-body-secondary mb-0">Create and edit local BOREAL tags used to organize Drive inventory items.</p>
         </div>
-        <button class="btn btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#addTagModal">
-            <i class="bi bi-plus-circle me-1"></i>Add Tag
-        </button>
+        <div class="d-flex gap-2">
+            <button id="save-tag-scopes" class="btn btn-primary" type="submit" form="tag-scopes-form" disabled><i class="bi bi-save me-1"></i>Save Changes</button>
+            <button class="btn btn-outline-primary" type="button" data-bs-toggle="modal" data-bs-target="#addTagModal"><i class="bi bi-plus-circle me-1"></i>Add Tag</button>
+        </div>
     </div>
 
     {% if saved %}
@@ -20,7 +21,7 @@
     </div>
     {% endif %}
 
-    <div class="card flex-grow-1 overflow-hidden">
+    <form id="tag-scopes-form" method="post" action="/tags/scopes" class="card flex-grow-1 overflow-hidden">
         <div class="table-responsive boreal-explorer-table">
             <table class="table table-hover align-middle mb-0">
                 <thead class="table-light">
@@ -32,6 +33,7 @@
                         <th scope="col" class="text-center">Shared with me</th>
                         <th scope="col" class="text-center">GitHub Repositories</th>
                         <th scope="col" class="text-center">Keeper</th>
+                        <th scope="col" class="text-center">Local Files</th>
                         <th scope="col" class="text-end">Actions</th>
                     </tr>
                 </thead>
@@ -39,25 +41,16 @@
                     {% for tag in tags %}
                     <tr data-tag-scope-row>
                         <td>
-                            <form id="tag-scope-form-{{ loop.index }}" method="post" action="/tags/update">
-                                <input type="hidden" name="slug" value="{{ tag.slug }}">
-                                <input type="hidden" name="name" value="{{ tag.name }}">
-                                <input type="hidden" name="description" value="{{ tag.description }}">
-                                <input type="hidden" name="color" value="{{ tag.color }}">
-                            </form>
                             <span class="badge rounded-pill px-3 py-2" style="background-color: {{ tag.color }}; color: #fff;" title="{{ tag.description }}">{{ tag.name }}</span>
                         </td>
-                        <td class="text-center"><input class="form-check-input tag-scope-checkbox" type="checkbox" name="directory" form="tag-scope-form-{{ loop.index }}" {% if tag.directory %}checked{% endif %} aria-label="Make {{ tag.name }} available for Persons"></td>
-                        <td class="text-center"><input class="form-check-input tag-scope-checkbox" type="checkbox" name="my_drive" form="tag-scope-form-{{ loop.index }}" {% if tag.my_drive %}checked{% endif %} aria-label="Make {{ tag.name }} available for My Drive"></td>
-                        <td class="text-center"><input class="form-check-input tag-scope-checkbox" type="checkbox" name="shared_drives" form="tag-scope-form-{{ loop.index }}" {% if tag.shared_drives %}checked{% endif %} aria-label="Make {{ tag.name }} available for Shared Drives"></td>
-                        <td class="text-center"><input class="form-check-input tag-scope-checkbox" type="checkbox" name="shared_with_me" form="tag-scope-form-{{ loop.index }}" {% if tag.shared_with_me %}checked{% endif %} aria-label="Make {{ tag.name }} available for Shared with me"></td>
-                        <td class="text-center"><input class="form-check-input tag-scope-checkbox" type="checkbox" name="github_repositories" form="tag-scope-form-{{ loop.index }}" {% if tag.github_repositories %}checked{% endif %} aria-label="Make {{ tag.name }} available for GitHub repositories"></td>
-                        <td class="text-center"><input class="form-check-input tag-scope-checkbox" type="checkbox" name="keeper_shared_folders" form="tag-scope-form-{{ loop.index }}" {% if tag.keeper_shared_folders %}checked{% endif %} aria-label="Make {{ tag.name }} available for Keeper shared folders"></td>
+                        <td class="text-center"><input class="form-check-input tag-scope-checkbox" type="checkbox" name="directory__{{ tag.slug }}" {% if tag.directory %}checked{% endif %} aria-label="Make {{ tag.name }} available for Persons"></td>
+                        <td class="text-center"><input class="form-check-input tag-scope-checkbox" type="checkbox" name="my_drive__{{ tag.slug }}" {% if tag.my_drive %}checked{% endif %} aria-label="Make {{ tag.name }} available for My Drive"></td>
+                        <td class="text-center"><input class="form-check-input tag-scope-checkbox" type="checkbox" name="shared_drives__{{ tag.slug }}" {% if tag.shared_drives %}checked{% endif %} aria-label="Make {{ tag.name }} available for Shared Drives"></td>
+                        <td class="text-center"><input class="form-check-input tag-scope-checkbox" type="checkbox" name="shared_with_me__{{ tag.slug }}" {% if tag.shared_with_me %}checked{% endif %} aria-label="Make {{ tag.name }} available for Shared with me"></td>
+                        <td class="text-center"><input class="form-check-input tag-scope-checkbox" type="checkbox" name="github_repositories__{{ tag.slug }}" {% if tag.github_repositories %}checked{% endif %} aria-label="Make {{ tag.name }} available for GitHub repositories"></td>
+                        <td class="text-center"><input class="form-check-input tag-scope-checkbox" type="checkbox" name="keeper_shared_folders__{{ tag.slug }}" {% if tag.keeper_shared_folders %}checked{% endif %} aria-label="Make {{ tag.name }} available for Keeper shared folders"></td>
+                        <td class="text-center"><input class="form-check-input tag-scope-checkbox" type="checkbox" name="local_files__{{ tag.slug }}" {% if tag.local_files %}checked{% endif %} aria-label="Make {{ tag.name }} available for Local Files"></td>
                         <td class="text-end">
-                            <button class="btn btn-sm btn-primary me-1 tag-scope-save" type="submit"
-                                    form="tag-scope-form-{{ loop.index }}" disabled>
-                                <i class="bi bi-save me-1"></i>Save
-                            </button>
                             <button class="btn btn-sm btn-outline-primary" type="button"
                                     data-bs-toggle="modal" data-bs-target="#editTagModal{{ loop.index }}">
                                 <i class="bi bi-pencil me-1"></i>Edit
@@ -66,12 +59,12 @@
                     </tr>
                     {% endfor %}
                     {% if tags.is_empty() %}
-                    <tr><td colspan="8" class="text-body-secondary text-center py-4">No tags have been created.</td></tr>
+                    <tr><td colspan="9" class="text-body-secondary text-center py-4">No tags have been created.</td></tr>
                     {% endif %}
                 </tbody>
             </table>
         </div>
-    </div>
+    </form>
 
 </div>
 
@@ -111,6 +104,7 @@
                             <div class="form-check"><input class="form-check-input" id="new-tag-shared-with-me" type="checkbox" name="shared_with_me" checked><label class="form-check-label" for="new-tag-shared-with-me">Shared with me</label></div>
                             <div class="form-check"><input class="form-check-input" id="new-tag-github" type="checkbox" name="github_repositories"><label class="form-check-label" for="new-tag-github">GitHub Repositories</label></div>
                             <div class="form-check"><input class="form-check-input" id="new-tag-keeper" type="checkbox" name="keeper_shared_folders"><label class="form-check-label" for="new-tag-keeper">Keeper Shared Folders</label></div>
+                            <div class="form-check"><input class="form-check-input" id="new-tag-local-files" type="checkbox" name="local_files"><label class="form-check-label" for="new-tag-local-files">Local Files</label></div>
                         </div>
                     </fieldset>
                 </div>
@@ -162,6 +156,7 @@
                             <div class="form-check"><input class="form-check-input" id="tag-shared-with-me-{{ loop.index }}" type="checkbox" name="shared_with_me" {% if tag.shared_with_me %}checked{% endif %}><label class="form-check-label" for="tag-shared-with-me-{{ loop.index }}">Shared with me</label></div>
                             <div class="form-check"><input class="form-check-input" id="tag-github-{{ loop.index }}" type="checkbox" name="github_repositories" {% if tag.github_repositories %}checked{% endif %}><label class="form-check-label" for="tag-github-{{ loop.index }}">GitHub Repositories</label></div>
                             <div class="form-check"><input class="form-check-input" id="tag-keeper-{{ loop.index }}" type="checkbox" name="keeper_shared_folders" {% if tag.keeper_shared_folders %}checked{% endif %}><label class="form-check-label" for="tag-keeper-{{ loop.index }}">Keeper Shared Folders</label></div>
+                            <div class="form-check"><input class="form-check-input" id="tag-local-files-{{ loop.index }}" type="checkbox" name="local_files" {% if tag.local_files %}checked{% endif %}><label class="form-check-label" for="tag-local-files-{{ loop.index }}">Local Files</label></div>
                         </div>
                     </fieldset>
                 </div>
@@ -201,26 +196,23 @@
             });
         });
 
-        document.querySelectorAll("[data-tag-scope-row]").forEach((row) => {
-            const checkboxes = Array.from(row.querySelectorAll(".tag-scope-checkbox"));
-            const saveButton = row.querySelector(".tag-scope-save");
-            const initialState = checkboxes.map((checkbox) => checkbox.checked).join(",");
-
-            const updateSaveState = () => {
-                const currentState = checkboxes.map((checkbox) => checkbox.checked).join(",");
-                saveButton.disabled = currentState === initialState;
-                checkboxes.forEach((checkbox) => checkbox.setCustomValidity(""));
-            };
-
-            checkboxes.forEach((checkbox) => checkbox.addEventListener("change", updateSaveState));
-
-            const form = document.getElementById(saveButton.getAttribute("form"));
-            form.addEventListener("submit", (event) => {
-                if (checkboxes.some((checkbox) => checkbox.checked)) return;
+        const scopeForm = document.getElementById("tag-scopes-form");
+        const scopeSave = document.getElementById("save-tag-scopes");
+        const scopeBoxes = Array.from(scopeForm.querySelectorAll(".tag-scope-checkbox"));
+        const initialState = scopeBoxes.map((checkbox) => checkbox.checked).join(",");
+        scopeBoxes.forEach((checkbox) => checkbox.addEventListener("change", () => {
+            scopeSave.disabled = scopeBoxes.map((item) => item.checked).join(",") === initialState;
+            checkbox.setCustomValidity("");
+        }));
+        scopeForm.addEventListener("submit", (event) => {
+            for (const row of scopeForm.querySelectorAll("[data-tag-scope-row]")) {
+                const rowBoxes = Array.from(row.querySelectorAll(".tag-scope-checkbox"));
+                if (rowBoxes.some((checkbox) => checkbox.checked)) continue;
                 event.preventDefault();
-                checkboxes[0].setCustomValidity("Select at least one tag location.");
-                checkboxes[0].reportValidity();
-            });
+                rowBoxes[0].setCustomValidity("Select at least one tag location.");
+                rowBoxes[0].reportValidity();
+                return;
+            }
         });
     })();
 </script>

@@ -154,6 +154,36 @@ const MIGRATIONS: &[Migration] = &[
         name: "keeper_inventory",
         sql: include_str!("migrations/0029_keeper_inventory.sql"),
     },
+    Migration {
+        version: 30,
+        name: "local_file_inventory",
+        sql: include_str!("migrations/0030_local_file_inventory.sql"),
+    },
+    Migration {
+        version: 31,
+        name: "local_file_tags",
+        sql: include_str!("migrations/0031_local_file_tags.sql"),
+    },
+    Migration {
+        version: 32,
+        name: "s3_inventory",
+        sql: include_str!("migrations/0032_s3_inventory.sql"),
+    },
+    Migration {
+        version: 33,
+        name: "local_file_ownership",
+        sql: include_str!("migrations/0033_local_file_ownership.sql"),
+    },
+    Migration {
+        version: 34,
+        name: "local_file_details_and_tag_scopes",
+        sql: include_str!("migrations/0034_local_file_details_and_tag_scopes.sql"),
+    },
+    Migration {
+        version: 35,
+        name: "metadata_timing_history",
+        sql: include_str!("migrations/0035_metadata_timing_history.sql"),
+    },
 ];
 
 pub fn apply(connection: &mut Connection) -> Result<(), DatabaseError> {

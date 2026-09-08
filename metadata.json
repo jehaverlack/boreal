@@ -5,15 +5,15 @@
     "description": "Browser-based Organizer for Rclone Exploration, Audit and Lookup",
     "abbr": "BOREAL",
     "icon": "fa-solid fa-cloud-bolt",
-    "version": "1.1.0",
-    "version_date": "2026-09-03",
+    "version": "1.1.1",
+    "version_date": "2026-09-08",
     "maturity": "STABLE",
     "author": "John Haverlack",
     "copyright": "2026 University of Alaska Fairbanks",
     "license": "MIT",
     "license_url": "https://opensource.org/license/MIT",
-    "homepage": "https://github.com/jehaverlack/uaf-boreal",
-    "git_repo": "https://github.com/jehaverlack/uaf-boreal.git"
+    "homepage": "https://github.com/jehaverlack/boreal",
+    "git_repo": "https://github.com/jehaverlack/boreal.git"
   },
   "BUILD_TARGETS": {
     "x86_64-unknown-linux-gnu": true,
