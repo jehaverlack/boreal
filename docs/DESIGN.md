@@ -350,6 +350,23 @@ GitHub token files and Keeper Commander configuration are private local credenti
 
 Loopback binding prevents network exposure but does not provide browser authentication or CSRF protection. The current model assumes a single trusted user and workstation. If BOREAL ever binds beyond loopback or becomes multi-user, authentication, authorization, CSRF protection, session isolation, and stronger secret storage become mandatory architectural requirements.
 
+### Dependency advisory assessment (2026-09-08)
+
+[RUSTSEC-2024-0429 / GHSA-wrw7-89jp-8q8g](https://rustsec.org/advisories/RUSTSEC-2024-0429.html)
+affects `glib::VariantStrIter` in `glib` before 0.20.0. `Cargo.lock` contains
+`glib 0.18.5` through Tao's GTK dependencies. BOREAL enables Tao only on Windows
+and macOS, where its GTK backend is not compiled; Linux uses `ksni` instead.
+
+`cargo tree --locked --target <target> -i glib` reports no active dependency for
+each release target: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
+`armv7-unknown-linux-gnueabihf`, `x86_64-pc-windows-gnu`,
+`x86_64-apple-darwin`, and `aarch64-apple-darwin`.
+The affected crate is therefore absent from these builds. Dependabot alert #1
+can be dismissed as "Vulnerable code is not actually used", with this assessment
+as the rationale. Recheck this conclusion when changing desktop dependencies,
+features, or supported targets. Keep the transitive entries in Cargo.lock so
+Cargo can continue to resolve the complete dependency graph.
+
 ## Migration and download scope
 
 ### Current status

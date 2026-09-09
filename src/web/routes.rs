@@ -2238,11 +2238,7 @@ async fn add_github_connection(
             inventory_settings.github_login = account.login;
             settings::save(&database, &inventory_settings)
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            log::info!(
-                "GitHub connection added: resource_owner={}, account_id={}",
-                form.resource_owner.trim(),
-                account.id
-            );
+            log::info!("GitHub connection added");
             Ok(Redirect::to("/settings?saved=true").into_response())
         }
         Err(error) => {
@@ -2284,10 +2280,7 @@ async fn delete_github_connection(
         settings::save(&database, &inventory_settings)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
-    log::info!(
-        "GitHub connection removed: resource_owner={}",
-        form.resource_owner.trim()
-    );
+    log::info!("GitHub connection removed");
     Ok(Redirect::to("/settings?saved=true").into_response())
 }
 

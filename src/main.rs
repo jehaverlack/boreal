@@ -102,13 +102,7 @@ async fn run_boreal() -> Result<(), Box<dyn Error>> {
         env!("CARGO_PKG_VERSION")
     );
 
-    println!("BOREAL home: {}", runtime.boreal_home.display());
-
-    println!("Configured directories:");
-
-    for (name, path) in &runtime.directories {
-        println!("  {:<12} {}", name, path.display());
-    }
+    log::info!("BOREAL runtime directories initialized");
 
     let state = Arc::new(AppState::new(runtime));
     desktop::register_state(&state);

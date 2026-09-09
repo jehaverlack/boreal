@@ -33,7 +33,6 @@ pub struct ConnectionSummary {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Account {
-    pub id: i64,
     pub login: String,
 }
 
