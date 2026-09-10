@@ -39,6 +39,7 @@ impl RemoteKind {
 pub enum RemoteState {
     Waiting,
     NotConfigured,
+    #[allow(dead_code)] // Retained while legacy status UI migrates to shared Google authorization.
     Configuring,
     Ready,
     Conflict(String),
@@ -53,6 +54,29 @@ pub struct ConfiguredRemote {
 
 /// List configured remotes without reading or exposing their credentials.
 pub fn list_configured(
+    runtime: &Runtime,
+    executable: &Path,
+) -> Result<Vec<ConfiguredRemote>, RcloneError> {
+    let mut remotes = list_legacy_configured(runtime, executable)?;
+    if crate::google::auth::configured(runtime) {
+        for (name, scope) in [
+            ("my-drive-ro", crate::google::auth::DRIVE_READ),
+            ("my-drive-rw", crate::google::auth::DRIVE_WRITE),
+        ] {
+            if crate::google::auth::granted(runtime, scope)
+                && !remotes.iter().any(|r| r.name == name)
+            {
+                remotes.push(ConfiguredRemote {
+                    name: name.into(),
+                    backend: "drive".into(),
+                });
+            }
+        }
+    }
+    Ok(remotes)
+}
+
+fn list_legacy_configured(
     runtime: &Runtime,
     executable: &Path,
 ) -> Result<Vec<ConfiguredRemote>, RcloneError> {
@@ -111,6 +135,7 @@ pub fn detect(
     }
 }
 
+#[cfg(test)]
 pub fn configure(
     runtime: &Runtime,
     executable: &Path,
@@ -174,6 +199,7 @@ pub fn configure(
 
 /// Reapply the managed connection settings and authorize again at the user's request.
 /// Updates only this remote, preserving every other configured connection.
+#[cfg(test)]
 pub fn reconnect(
     runtime: &Runtime,
     executable: &Path,
@@ -237,6 +263,7 @@ pub fn reconnect(
 
 /// Translate known diagnostics to fixed messages. Never echo OAuth output:
 /// it can contain tokens, client secrets or authorization URLs.
+#[cfg(test)]
 fn authorization_failure(output: &std::process::Output) -> String {
     let diagnostic = format!(
         "{}\n{}",
@@ -354,6 +381,7 @@ fn check_value(
 }
 
 #[cfg(unix)]
+#[cfg(test)]
 fn protect_config(path: &Path) -> Result<(), RcloneError> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
@@ -361,6 +389,7 @@ fn protect_config(path: &Path) -> Result<(), RcloneError> {
 }
 
 #[cfg(not(unix))]
+#[cfg(test)]
 fn protect_config(_path: &Path) -> Result<(), RcloneError> {
     Ok(())
 }

@@ -3,6 +3,11 @@
 September 2026. Scope: first launch, Settings, Google setup, account connections,
 service setup helpers, dashboard, update entry points, and navigation consistency.
 
+The replacement for the separate Google authorizations is documented in
+[One Google connection for Boreal](GOOGLE-CONNECTION-STRATEGY.md). It separates
+one-time deployment setup from ordinary user sign-in and metadata updates. The
+findings below describe the earlier implementation. See [Google auth migration](GOOGLE-AUTH-MIGRATION.md) for the current shared connection and its validation limits.
+
 ## Findings and changes
 
 | Surface | Problem | Result |

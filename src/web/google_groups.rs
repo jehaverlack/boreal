@@ -30,7 +30,6 @@ struct GroupsTemplate {
     status_items: Vec<StatusItem>,
     poll_rclone: bool,
     account: String,
-    configured: bool,
     connection_issue: String,
     enabled: bool,
     summary: database::google_groups::Summary,
@@ -189,7 +188,6 @@ pub(super) async fn page(
             &state.update_state(),
         ),
         poll_rclone: should_poll_ui(&rclone_state, &remotes, &metadata),
-        configured: matches!(google_client_state, GoogleClientState::Ready(_)),
         connection_issue: google::groups::connection_issue(&state.runtime)
             .unwrap_or_default()
             .into(),
@@ -203,22 +201,8 @@ pub(super) async fn page(
         query,
     })
 }
-pub(super) async fn connect(State(state): State<Arc<AppState>>) -> Result<Redirect, StatusCode> {
-    if !google_groups_enabled(&state) {
-        return Ok(Redirect::to("/settings#google-groups-settings"));
-    }
-    let result = tokio::task::spawn_blocking(move || {
-        google::groups::connect(&state.runtime, || *state.shutdown_receiver().borrow())
-    })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(match result {
-        Ok(()) => Redirect::to("/google-groups?connected=true"),
-        Err(error) => Redirect::to(&format!(
-            "/google-groups?error={}",
-            encode_query_value(&error.to_string())
-        )),
-    })
+pub(super) async fn connect(State(_state): State<Arc<AppState>>) -> Result<Redirect, StatusCode> {
+    Ok(Redirect::to("/google"))
 }
 pub(super) fn summary(state: &AppState) -> database::google_groups::Summary {
     google::groups::connected_email(&state.runtime)
@@ -243,7 +227,6 @@ mod tests {
             status_items: vec![],
             poll_rclone: false,
             account: String::new(),
-            configured: true,
             connection_issue: String::new(),
             enabled: true,
             summary: Default::default(),
@@ -254,13 +237,13 @@ mod tests {
             members_unavailable: false,
         };
         let setup = template.render().unwrap();
-        assert!(setup.contains("Connect Google Groups"));
-        assert!(setup.contains("Admin SDK API"));
+        assert!(setup.contains("Google connection"));
+        assert!(setup.contains("My Groups helper"));
         template.account = "me@example.test".into();
         template.connection_issue = "Google Client ID changed. Reconnect Google Groups.".into();
         let stale = template.render().unwrap();
         assert!(stale.contains("Google Client ID changed"));
-        assert!(stale.contains("Reconnect / switch account"));
+        assert!(stale.contains("Google connection"));
         assert!(!stale.contains(">Update metadata</button>"));
         template.connection_issue.clear();
         template.groups.push(google::groups::Group {

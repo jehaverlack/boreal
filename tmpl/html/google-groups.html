@@ -3,14 +3,14 @@
 <div class="d-flex justify-content-between align-items-center mb-3"><h1 class="h4 mb-0"><i class="bi bi-people-fill boreal-google-drive-color me-2"></i>Google Groups</h1><div class="d-flex gap-2"><a class="btn btn-sm btn-outline-secondary{% if query.group.is_empty() %} disabled{% endif %}" href="/google-groups"><i class="bi bi-arrow-up me-1"></i>Up</a><a class="btn btn-sm btn-outline-primary" href="/google-groups">Base</a></div></div>
 {% if !enabled %}<div class="alert alert-info">Google Groups is disabled. <a href="/settings#google-groups-settings">Enable it in Settings</a> to connect or update. Existing inventory is preserved.</div>{% endif %}
 {% if !query.error.is_empty() %}<div class="alert alert-danger" role="alert">{{ query.error }}</div>{% endif %}
-{% if enabled && !connection_issue.is_empty() %}<div class="alert alert-warning" role="alert">{{ connection_issue }} Use the Connect / Reconnect button below.</div>{% endif %}
+{% if enabled && !connection_issue.is_empty() %}<div class="alert alert-warning" role="alert">{{ connection_issue }} Open Google connection below.</div>{% endif %}
 {% if query.connected %}<div class="alert alert-success" role="status">Google Groups connected. Use Update to import your groups and visible members.</div>{% endif %}
 <div class="card mb-3"><div class="card-body">
     <div class="d-flex flex-wrap gap-3 align-items-center"><div class="flex-grow-1">{% if account.is_empty() %}<strong>Connect your Workspace account</strong>{% else %}<strong>{{ account }}</strong><div class="small text-body-secondary">{{ summary.groups }} groups · {{ summary.members }} visible memberships · {{ summary.restricted }} restricted member lists{% if !summary.completed_at.is_empty() %} · Updated <span class="boreal-data-age" data-synchronized-at="{{ summary.completed_at }}">{{ summary.completed_at }}</span>{% endif %}</div>{% endif %}</div>
-    <form method="post" action="/google-groups/connect" id="google-groups-connect"><button type="submit" class="btn btn-sm btn-outline-primary"{% if !configured || !enabled %} disabled{% endif %}>{% if account.is_empty() %}Connect Google Groups{% else %}Reconnect / switch account{% endif %}</button></form>
+    <a class="btn btn-sm btn-outline-primary" href="/google">Google connection</a>
     {% if !account.is_empty() && enabled && connection_issue.is_empty() %}<button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#metadataUpdateModal">Update metadata</button>{% endif %}</div>
     <p class="small text-body-secondary mb-0 mt-2">Read-only group details and direct member lists for groups you belong to. Nested groups are listed as members; their membership is not expanded. Group conversations and messages are not imported.</p>
-    {% if account.is_empty() %}<p class="small mt-2 mb-0">Enable <a href="https://console.cloud.google.com/apis/library/admin.googleapis.com" target="_blank" rel="noopener noreferrer">Admin SDK API</a> in the project for your Boreal Google Desktop Client ID. Sign in with Workspace group-read privileges and grant both read-only group and membership permissions.{% if !configured %} Configure your <a href="/google-client">Google Client ID</a> first.{% endif %}</p>{% endif %}
+    <p class="small mt-2 mb-0">My Groups helper: configure it once in <a href="/google">Google connection</a>. It reads direct and pending memberships using your account. Member lists may omit users without Google accounts; counts are returned members, not authoritative totals.</p>
 </div></div>
 {% if !account.is_empty() %}
 <form method="get" action="/google-groups" id="groups-filter" class="d-flex flex-wrap gap-2 mb-2">
@@ -36,7 +36,7 @@
         if (button.dataset.groupsSort === (form.elements.sort.value || (form.elements.group.value ? 'email' : 'name'))) button.textContent += form.elements.direction.value === 'desc' ? ' ↓' : ' ↑';
         button.addEventListener('click',()=>{const column=button.dataset.groupsSort;form.elements.direction.value=(form.elements.sort.value || (form.elements.group.value ? 'email' : 'name'))===column && form.elements.direction.value!=='desc'?'desc':'asc';form.elements.sort.value=column;form.requestSubmit();});
     });
-    document.getElementById('google-groups-connect').addEventListener('submit',event=>{const button=event.target.querySelector('button');button.disabled=true;button.textContent='Complete sign-in in the Google tab…';});
+
 })();
 </script>
 {% endblock %}

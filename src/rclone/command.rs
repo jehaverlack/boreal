@@ -19,15 +19,37 @@ where
         return Err(format!("Rclone executable does not exist: {}", executable.display()).into());
     }
 
-    let output = Command::new(executable)
-        .args(args)
-        .output()
-        .map_err(|error| {
-            format!(
-                "Unable to execute Rclone at {}: {error}",
-                executable.display()
-            )
-        })?;
+    let args = args
+        .into_iter()
+        .map(|a| a.as_ref().to_owned())
+        .collect::<Vec<_>>();
+    let mut command = Command::new(executable);
+    command.args(&args);
+    let config = args
+        .windows(2)
+        .find(|a| a[0] == "--config")
+        .map(|a| Path::new(&a[1]));
+    let google = args.iter().any(|a| {
+        let a = a.to_string_lossy();
+        a.starts_with("my-drive-ro:")
+            || a.starts_with("my-drive-rw:")
+            || a.starts_with("my-drive-ro,")
+            || a.starts_with("my-drive-rw,")
+    });
+    let _bridge = if google && args.first().is_some_and(|a| a != "config") {
+        config
+            .map(|p| crate::google::bridge::Bridge::attach(&mut command, p))
+            .transpose()?
+            .flatten()
+    } else {
+        None
+    };
+    let output = command.output().map_err(|error| {
+        format!(
+            "Unable to execute Rclone at {}: {error}",
+            executable.display()
+        )
+    })?;
 
     Ok(output)
 }

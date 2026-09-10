@@ -84,6 +84,7 @@ pub fn copy_item(request: DownloadRequest<'_>) -> Result<(), RcloneError> {
         command.args(["--drive-team-drive", drive_id, "--drive-root-folder-id", ""]);
     }
 
+    let _bridge = crate::google::bridge::Bridge::attach(&mut command, request.config_path)?;
     let output = command
         .output()
         .map_err(|error| format!("Unable to start Rclone download: {error}"))?;

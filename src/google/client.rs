@@ -1,7 +1,4 @@
-use std::{
-    fmt, fs,
-    path::{Path, PathBuf},
-};
+use std::{fmt, fs, path::PathBuf};
 
 use serde::Deserialize;
 
@@ -88,8 +85,8 @@ pub fn detect(runtime: &Runtime) -> Result<Option<GoogleClientConfig>, GoogleErr
 
 /// Validate a Google Desktop OAuth credentials JSON file.
 pub fn validate(data: &[u8]) -> Result<GoogleClientConfig, GoogleError> {
-    let credentials: GoogleCredentialsFile = serde_json::from_slice(data)
-        .map_err(|error| format!("Invalid Google client JSON: {error}"))?;
+    let credentials: GoogleCredentialsFile =
+        serde_json::from_slice(data).map_err(|_| "Invalid Google Desktop client JSON")?;
 
     let installed = credentials.installed;
 
@@ -131,7 +128,18 @@ pub fn validate(data: &[u8]) -> Result<GoogleClientConfig, GoogleError> {
 /// The original Google-generated JSON is preserved.
 pub fn import(runtime: &Runtime, data: &[u8]) -> Result<GoogleClientConfig, GoogleError> {
     let config = validate(data)?;
-
+    let profile: serde_json::Value =
+        serde_json::from_slice(data).map_err(|_| "Invalid Google project profile")?;
+    let shared_setup = profile
+        .get("boreal_google")
+        .map(|value| {
+            serde_json::from_value::<super::auth::Setup>(value.clone())
+                .map_err(|_| "Invalid Boreal Google profile options")
+        })
+        .transpose()?;
+    if let Some(setup) = &shared_setup {
+        setup.validate()?;
+    }
     let config_path = path(runtime)?;
 
     let parent = config_path
@@ -140,37 +148,38 @@ pub fn import(runtime: &Runtime, data: &[u8]) -> Result<GoogleClientConfig, Goog
 
     fs::create_dir_all(parent)?;
 
-    fs::write(&config_path, data).map_err(|error| {
-        format!(
-            "Unable to save Google client configuration {}: {error}",
-            config_path.display()
-        )
-    })?;
-
-    set_private_permissions(&config_path)?;
-
-    println!(
-        "Google OAuth client configuration saved: {}",
-        config_path.display()
-    );
+    super::auth::private_write(&config_path, data)?;
+    if let Some(mut setup) = shared_setup {
+        // The profile supplies deployment information; users choose write access locally.
+        setup.migration_access = super::auth::setup(runtime)
+            .unwrap_or_default()
+            .migration_access;
+        super::auth::save_setup(runtime, &setup)?;
+    }
 
     Ok(config)
 }
 
-#[cfg(unix)]
-fn set_private_permissions(path: &Path) -> Result<(), GoogleError> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let mut permissions = fs::metadata(path)?.permissions();
-
-    permissions.set_mode(0o600);
-
-    fs::set_permissions(path, permissions)?;
-
-    Ok(())
-}
-
-#[cfg(windows)]
-fn set_private_permissions(_path: &Path) -> Result<(), GoogleError> {
-    Ok(())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn reusable_profile_imports_helper_without_replacing_user_authorization() {
+        let runtime = crate::google::auth::tests::fixture();
+        let conf = crate::google::auth::conf(&runtime).unwrap();
+        let account = fs::read(conf.join("google-account.json")).unwrap();
+        let mut profile: serde_json::Value =
+            serde_json::from_slice(&fs::read(path(&runtime).unwrap()).unwrap()).unwrap();
+        profile["boreal_google"] = serde_json::json!({"groups_deployment":"deployment_123","directory_admin":false,"migration_access":true});
+        import(&runtime, profile.to_string().as_bytes()).unwrap();
+        let setup = crate::google::auth::setup(&runtime).unwrap();
+        assert_eq!(setup.groups_deployment, "deployment_123");
+        assert!(!setup.migration_access);
+        assert_eq!(fs::read(conf.join("google-account.json")).unwrap(), account);
+        let before = fs::read(path(&runtime).unwrap()).unwrap();
+        profile["boreal_google"]["groups_deployment"] = "https://wrong.invalid".into();
+        assert!(import(&runtime, profile.to_string().as_bytes()).is_err());
+        assert_eq!(fs::read(path(&runtime).unwrap()).unwrap(), before);
+        fs::remove_dir_all(&runtime.boreal_home).unwrap();
+    }
 }

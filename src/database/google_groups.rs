@@ -43,6 +43,16 @@ pub fn synchronize(db: &Database, snapshot: &Snapshot) -> Result<(), DatabaseErr
     }
     let mut c = db.connect()?;
     let tx = c.transaction()?;
+    // Preserve stable links when changing from Directory numeric IDs to helper email IDs.
+    let old_ids = {
+        let mut statement =
+            tx.prepare("SELECT lower(email),group_id FROM google_groups WHERE account=?1")?;
+        statement
+            .query_map([&snapshot.account], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?
+            .collect::<Result<std::collections::HashMap<_, _>, _>>()?
+    };
     tx.execute(
         "DELETE FROM google_groups WHERE account=?1",
         [&snapshot.account],
@@ -54,16 +64,19 @@ pub fn synchronize(db: &Database, snapshot: &Snapshot) -> Result<(), DatabaseErr
         {
             return Err("Invalid Google Groups report".into());
         }
+        let group_id = old_ids
+            .get(&group.email.to_lowercase())
+            .unwrap_or(&group.id);
         let mut aliases = group.aliases.clone();
         aliases.extend(group.non_editable_aliases.clone());
         aliases.sort();
         aliases.dedup();
-        tx.execute("INSERT INTO google_groups(account,group_id,email,name,description,direct_members_count,aliases_json,members_unavailable) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![snapshot.account,group.id,group.email,group.name,group.description,group.direct_members_count,serde_json::to_string(&aliases)?,group.members_unavailable])?;
+        tx.execute("INSERT INTO google_groups(account,group_id,email,name,description,direct_members_count,aliases_json,members_unavailable) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![snapshot.account,group_id,group.email,group.name,group.description,group.direct_members_count,serde_json::to_string(&aliases)?,group.members_unavailable])?;
         for member in &group.members {
             if member.id.is_empty() {
                 return Err("Google Groups member ID is missing".into());
             }
-            tx.execute("INSERT INTO google_group_members(account,group_id,member_id,email,role,kind,status) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![snapshot.account,group.id,member.id,member.email,member.role,member.kind,member.status])?;
+            tx.execute("INSERT INTO google_group_members(account,group_id,member_id,email,role,kind,status) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![snapshot.account,group_id,member.id,member.email,member.role,member.kind,member.status])?;
         }
     }
     tx.execute("INSERT INTO google_groups_sync(account) VALUES(?1) ON CONFLICT(account) DO UPDATE SET completed_at=CURRENT_TIMESTAMP",[&snapshot.account])?;

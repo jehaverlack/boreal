@@ -1,4 +1,4 @@
-<p class="small">Persons is an independent local dataset. <a href="/directory">Add people or import a CSV</a> without enabling Google Drive. Linking a Google Sheet below is optional and requires a read-only Google connection.</p>
+<p class="small">Persons is an independent local dataset. <a href="/directory">Add people or import a CSV</a> without enabling Google Drive. Linking a Google Sheet below is optional and uses the shared Google connection. The Sheet can remain private; Drive inventory does not need to be enabled.</p>
                     <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
                         <span class="small text-body-secondary">Need a persons spreadsheet?</span>
                         <a class="btn btn-sm btn-outline-success"
@@ -34,4 +34,4 @@
                         <div class="text-body-secondary">Last attempted {{ directory_source.last_attempt_at }} UTC</div>
                         {% endif %}
                     </div>
-                    {% endif %}<div class="mt-3 d-flex flex-wrap gap-2"><a class="btn btn-sm btn-outline-secondary" href="/remotes">Manage Google connection</a><button type="submit" class="btn btn-sm btn-outline-primary" formaction="/settings/directory/test">Save and test Sheet access</button></div>
+                    {% endif %}<div class="mt-3 d-flex flex-wrap gap-2"><a class="btn btn-sm btn-outline-secondary" href="/google">Manage Google connection</a><button type="submit" class="btn btn-sm btn-outline-primary" formaction="/settings/directory/test">Save and test Sheet access</button></div>

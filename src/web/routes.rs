@@ -1,3 +1,5 @@
+#[path = "google_connection.rs"]
+mod google_connection_routes;
 #[path = "google_groups.rs"]
 mod google_groups_routes;
 
@@ -1471,13 +1473,6 @@ struct RemoteQuery {
     error: String,
 }
 
-#[derive(serde::Deserialize)]
-struct AddRemoteForm {
-    remote_kind: String,
-    #[serde(default)]
-    reconnect: bool,
-}
-
 #[derive(Default, serde::Deserialize)]
 struct MigrationListQuery {
     #[serde(default)]
@@ -1555,6 +1550,22 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/ui/google-drive-launcher", get(ui_google_drive_launcher))
         .route("/ui/github-launcher", get(ui_github_launcher))
+        .route("/google", get(google_connection_routes::page))
+        .route(
+            "/google/configure",
+            post(google_connection_routes::configure),
+        )
+        .route("/google/connect", post(google_connection_routes::connect))
+        .route("/google/verify", post(google_connection_routes::verify))
+        .route("/google/profile", get(google_connection_routes::profile))
+        .route(
+            "/google/helper/Code.gs",
+            get(google_connection_routes::helper_code),
+        )
+        .route(
+            "/google/helper/appsscript.json",
+            get(google_connection_routes::helper_manifest),
+        )
         .route("/google-groups", get(google_groups_routes::page))
         .route(
             "/google-groups/connect",
@@ -2546,6 +2557,7 @@ async fn test_directory_sheet(
     let url = inventory_settings.directory_sheet_url.clone();
     let rclone_path = match state.rclone_state() {
         RcloneState::Ready(status) => status.path,
+        _ if google::auth::configured(&state.runtime) => PathBuf::new(),
         _ => {
             return render_settings(
                 &state,
@@ -2558,8 +2570,10 @@ async fn test_directory_sheet(
         }
     };
     let result: Result<(), String> = tokio::task::spawn_blocking(move || {
-        crate::rclone::identity::fetch_read_only_account(&worker_state.runtime, &rclone_path)
-            .map_err(|error| error.to_string())?;
+        if !google::auth::configured(&worker_state.runtime) {
+            crate::rclone::identity::fetch_read_only_account(&worker_state.runtime, &rclone_path)
+                .map_err(|error| error.to_string())?;
+        }
         let (_, csv) =
             crate::rclone::identity::download_google_sheet_csv(&worker_state.runtime, &url)
                 .map_err(|error| error.to_string())?;
@@ -2695,7 +2709,7 @@ fn render_settings(
             if !client_ready {
                 "Prepare Google setup, then connect your account."
             } else if !drive_ready {
-                "Connect or repair your read-only connection."
+                "Open Google connection and approve your selected services."
             } else {
                 "Choose Drive sources in Update. Write access is optional."
             },
@@ -2712,7 +2726,7 @@ fn render_settings(
             if groups_ready {
                 "Choose Google Groups in Update."
             } else {
-                "Enable Admin SDK, then connect your Workspace account."
+                "Configure the My Groups helper and shared Google connection."
             },
         ),
         service(
@@ -3648,7 +3662,7 @@ async fn remotes_page(
                     .map(|remote| {
                         let (access, purpose, status, status_class) = match remote.name.as_str() {
                             "my-drive-ro" => (
-                                "Read only",
+                                if google::auth::granted(&state.runtime,google::auth::DRIVE_WRITE) {"Read/write grant; inventory reads only"} else {"Read only"},
                                 "Metadata inventory",
                                 remote_state_label(&google_remotes_state.ro),
                                 remote_state_class(&google_remotes_state.ro),
@@ -3731,23 +3745,8 @@ async fn remotes_page(
     render_template(&template)
 }
 
-async fn add_remote(
-    State(state): State<Arc<AppState>>,
-    Form(form): Form<AddRemoteForm>,
-) -> Result<Redirect, StatusCode> {
-    let kind = match form.remote_kind.as_str() {
-        "my-drive-ro" => RemoteKind::MyDriveRo,
-        "my-drive-rw" => RemoteKind::MyDriveRw,
-        _ => return Err(StatusCode::BAD_REQUEST),
-    };
-    if let Err(error) = AppState::configure_google_remote_action(state, kind, form.reconnect) {
-        log::warn!("Unable to start Google connection setup");
-        return Ok(Redirect::to(&format!(
-            "/remotes?error={}",
-            encode_query_value(&error)
-        )));
-    }
-    Ok(Redirect::to("/remotes"))
+async fn add_remote(State(_state): State<Arc<AppState>>) -> Result<Redirect, StatusCode> {
+    Ok(Redirect::to("/google"))
 }
 
 async fn my_drive_page(
@@ -7364,6 +7363,11 @@ async fn import_google_client(
     }
 
     let data = credentials.ok_or(StatusCode::BAD_REQUEST)?;
+    if !state.active_job_descriptions().is_empty() {
+        return Ok(Redirect::to(
+            "/google?error=Wait%20for%20active%20jobs%20before%20replacing%20Google%20project%20setup.",
+        ));
+    }
 
     match google::client::import(&state.runtime, &data) {
         Ok(config) => {
@@ -7373,7 +7377,7 @@ async fn import_google_client(
 
             state.refresh_google_remotes_if_ready();
 
-            Ok(Redirect::to("/settings#google-setup"))
+            Ok(Redirect::to("/google"))
         }
 
         Err(error) => {
@@ -7381,9 +7385,10 @@ async fn import_google_client(
 
             eprintln!("Google Client ID import failed: {message}");
 
-            state.set_google_client_state(GoogleClientState::Error(message));
-
-            Ok(Redirect::to("/settings#google-setup"))
+            Ok(Redirect::to(&format!(
+                "/google?error={}",
+                encode_query_value(&message)
+            )))
         }
     }
 }
@@ -7427,13 +7432,8 @@ async fn save_setup_directory(
     Ok(Redirect::to("/"))
 }
 
-fn start_remote_setup(state: Arc<AppState>, kind: RemoteKind) -> Result<Redirect, StatusCode> {
-    AppState::configure_google_remote(state, kind).map_err(|error| {
-        eprintln!("Unable to start {} setup: {error}", kind.label());
-        StatusCode::CONFLICT
-    })?;
-
-    Ok(Redirect::to("/"))
+fn start_remote_setup(_state: Arc<AppState>, _kind: RemoteKind) -> Result<Redirect, StatusCode> {
+    Ok(Redirect::to("/google"))
 }
 
 async fn start_metadata_update(
@@ -7644,6 +7644,9 @@ fn build_alerts(
 }
 
 fn authenticated_google_email(state: &AppState) -> String {
+    if let Some(email) = google::auth::email(&state.runtime) {
+        return email;
+    }
     state
         .database()
         .ok()
@@ -8176,8 +8179,8 @@ mod tests {
         }
         .render()
         .unwrap();
-        assert!(remotes.contains("Repair / reconnect"));
-        assert!(remotes.contains("name=\"reconnect\" value=\"true\""));
+        assert!(remotes.contains("href=\"/google\""));
+        assert!(!remotes.contains("action=\"/remotes/add\""));
         assert!(remotes.contains("Add another connection"));
         if let Ok(directory) = std::env::var("BOREAL_UI_FIXTURE_DIR") {
             std::fs::create_dir_all(&directory).unwrap();

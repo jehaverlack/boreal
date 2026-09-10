@@ -27,9 +27,9 @@
 <td class="text-end"><button class="btn btn-sm btn-outline-primary text-nowrap" type="button" data-bs-toggle="modal" data-bs-target="#service-{{ service.key }}" aria-label="Configure {{ service.name }}"><i class="bi bi-gear me-1"></i>Configure</button></td>
 </tr>{% endfor %}</tbody></table></div></div>
 <p class="small text-body-secondary mt-3">Each service saves independently. Turning a service off preserves its connections and imported data. Persons works without any connected service.</p>
-<div class="d-flex flex-wrap gap-2"><button type="button" class="btn btn-outline-success" data-bs-toggle="modal" data-bs-target="#googleSetupModal"><img class="boreal-service-icon me-1" src="/assets/google-g.png" alt="">Google setup guide</button><button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#metadataUpdateModal"><i class="bi bi-arrow-repeat me-1"></i>Update metadata</button></div>
+<div class="d-flex flex-wrap gap-2"><a class="btn btn-success" href="/google"><img class="boreal-service-icon me-1" src="/assets/google-g.png" alt="">Google connection</a><button type="button" class="btn btn-outline-success" data-bs-toggle="modal" data-bs-target="#googleSetupModal"><img class="boreal-service-icon me-1" src="/assets/google-g.png" alt="">Google setup guide</button><button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#metadataUpdateModal"><i class="bi bi-arrow-repeat me-1"></i>Update metadata</button></div>
 </div>
-<form id="settings-google-groups-connect" method="post" action="/google-groups/connect"></form>
+
 <div class="modal fade" id="service-google-drive" tabindex="-1" aria-labelledby="service-google-drive-title" aria-hidden="true">
 <div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
 <div class="modal-header"><h2 class="modal-title fs-5" id="service-google-drive-title">Configure Google Drive</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>

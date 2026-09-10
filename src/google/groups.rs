@@ -1,26 +1,13 @@
-//! Read-only Workspace groups for the connected user. Credentials never enter inventory data.
-use super::{GoogleError, client};
+//! Metadata-only Google Groups. My Groups uses the user-scoped Apps Script helper.
+use super::{GoogleError, auth};
 use crate::bootstrap::Runtime;
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
-    fs,
-    io::{Read, Write},
-    net::TcpListener,
-    path::PathBuf,
-    sync::{
-        Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::{Duration, Instant},
+    io::Read,
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
 };
-
-const GROUP_SCOPE: &str = "https://www.googleapis.com/auth/admin.directory.group.readonly";
-const MEMBER_SCOPE: &str = "https://www.googleapis.com/auth/admin.directory.group.member.readonly";
-static CREDENTIAL_LOCK: Mutex<()> = Mutex::new(());
-
 #[derive(Clone, Default, Deserialize, Serialize)]
 pub struct Member {
     pub id: String,
@@ -71,307 +58,54 @@ struct MemberPage {
     #[serde(default, rename = "nextPageToken")]
     next: String,
 }
-#[derive(Deserialize, Serialize)]
-struct Credentials {
-    client_id: String,
-    email: String,
-    refresh_token: String,
-}
-#[derive(Deserialize)]
-struct Token {
-    access_token: String,
-    #[serde(default)]
-    refresh_token: String,
-    #[serde(default)]
-    scope: String,
-}
 
-fn token_path(runtime: &Runtime) -> Result<PathBuf, GoogleError> {
-    Ok(runtime
-        .directories
-        .get("CONF")
-        .ok_or("BOREAL configuration directory is unavailable")?
-        .join("google-groups-token.json"))
-}
-fn credentials(runtime: &Runtime) -> Result<Credentials, GoogleError> {
-    let bytes = fs::read(token_path(runtime)?).map_err(|_| "Connect Google Groups first")?;
-    serde_json::from_slice(&bytes)
-        .map_err(|_| "Google Groups connection could not be read; reconnect".into())
-}
 pub fn connected_email(runtime: &Runtime) -> Option<String> {
-    credentials(runtime).ok().map(|c| c.email)
+    auth::email(runtime).or_else(|| {
+        // Read only the legacy identity to keep cached inventory browsable.
+        let bytes =
+            std::fs::read(auth::conf(runtime).ok()?.join("google-groups-token.json")).ok()?;
+        let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        value.get("email")?.as_str().map(str::to_string)
+    })
 }
-/// Local readiness only. Keep the saved account identity available for browsing
-/// existing inventory, even when its authorization needs to be replaced.
 pub fn connection_issue(runtime: &Runtime) -> Option<&'static str> {
-    let Ok(saved) = credentials(runtime) else {
-        return Some("Connect Google Groups to import your Workspace groups and visible members.");
+    let Ok(setup) = auth::setup(runtime) else {
+        return Some("Review Google connection setup in Settings.");
     };
-    let Ok(Some(config)) = client::detect(runtime) else {
-        return Some(
-            "Configure Google app credentials in Settings → Google setup guide, then reconnect Google Groups.",
-        );
-    };
-    credential_issue(&saved, &config.client_id)
-}
-
-fn credential_issue(saved: &Credentials, current_client_id: &str) -> Option<&'static str> {
-    if saved.client_id != current_client_id {
+    if setup.directory_admin {
+        auth::issue(runtime, &[auth::DIRECTORY_GROUPS, auth::DIRECTORY_MEMBERS])
+    } else if setup.groups_deployment.is_empty() {
         Some(
-            "Google Client ID changed. Reconnect Google Groups to authorize the current Google app. Reconnecting Drive does not reconnect Groups.",
+            "My Groups needs the shared Groups helper. Open Settings → Google connection to configure its deployment once. Workspace admin privileges are not needed for My Groups.",
         )
-    } else if saved.refresh_token.trim().is_empty() {
-        Some("Google Groups authorization is missing. Reconnect Google Groups.")
     } else {
-        None
+        auth::issue(runtime, &[auth::GROUPS])
     }
 }
-
 pub fn connection_ready(runtime: &Runtime) -> bool {
     connection_issue(runtime).is_none()
 }
-
-fn http() -> Result<reqwest::blocking::Client, GoogleError> {
-    Ok(reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?)
-}
-fn random_secret() -> Result<String, GoogleError> {
-    let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes).map_err(|_| "Unable to create secure Google sign-in state")?;
-    Ok(URL_SAFE_NO_PAD.encode(bytes))
-}
-fn challenge(verifier: &str) -> String {
-    URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
-}
-fn callback_code(target: &str, expected_state: &str) -> Result<String, GoogleError> {
-    let url = reqwest::Url::parse(&format!("http://127.0.0.1{target}"))
-        .map_err(|_| "Invalid Google sign-in callback")?;
-    let pairs = url.query_pairs().collect::<Vec<_>>();
-    if url.path() != "/"
-        || pairs.iter().filter(|(k, _)| k == "state").count() != 1
-        || !pairs
-            .iter()
-            .any(|(k, v)| k == "state" && v == expected_state)
-    {
-        return Err("Google sign-in state did not match".into());
-    }
-    if pairs.iter().any(|(k, _)| k == "error") {
-        return Err("Google Groups sign-in was canceled or denied".into());
-    }
-    let codes = pairs
-        .iter()
-        .filter(|(k, v)| k == "code" && !v.is_empty())
-        .collect::<Vec<_>>();
-    if codes.len() != 1 {
-        return Err("Google did not return a sign-in code".into());
-    }
-    Ok(codes[0].1.to_string())
-}
-fn save_credentials(runtime: &Runtime, value: &Credentials) -> Result<(), GoogleError> {
-    let path = token_path(runtime)?;
-    let parent = path.parent().ok_or("Invalid connection directory")?;
-    fs::create_dir_all(parent)
-        .map_err(|_| "Unable to create Google Groups connection directory")?;
-    // Create a fresh private file before replacing the previous connection.
-    let temp = parent.join(format!(".google-groups-{}.tmp", random_secret()?));
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let result = (|| -> Result<(), GoogleError> {
-        let mut file = options
-            .open(&temp)
-            .map_err(|_| "Unable to save Google Groups connection")?;
-        file.write_all(&serde_json::to_vec(value)?)
-            .map_err(|_| "Unable to save Google Groups connection")?;
-        file.sync_all()
-            .map_err(|_| "Unable to save Google Groups connection")?;
-        fs::rename(&temp, &path).map_err(|_| "Unable to replace Google Groups connection")?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-    result
-}
-
-pub fn connect(runtime: &Runtime, canceled: impl Fn() -> bool) -> Result<(), GoogleError> {
-    let _guard = CREDENTIAL_LOCK
-        .try_lock()
-        .map_err(|_| "Google Groups is already connecting or updating")?;
-    let config = client::detect(runtime)?.ok_or("Configure your Google Desktop Client ID first")?;
-    let listener =
-        TcpListener::bind("127.0.0.1:0").map_err(|_| "Unable to start Google sign-in callback")?;
-    listener.set_nonblocking(true)?;
-    let redirect = format!("http://127.0.0.1:{}/", listener.local_addr()?.port());
-    let state = random_secret()?;
-    let verifier = random_secret()?;
-    let mut url = reqwest::Url::parse("https://accounts.google.com/o/oauth2/v2/auth")?;
-    url.query_pairs_mut().extend_pairs([
-        ("client_id", config.client_id.as_str()),
-        ("redirect_uri", redirect.as_str()),
-        ("response_type", "code"),
-        (
-            "scope",
-            &format!("openid email {GROUP_SCOPE} {MEMBER_SCOPE}"),
-        ),
-        ("state", state.as_str()),
-        ("code_challenge", challenge(&verifier).as_str()),
-        ("code_challenge_method", "S256"),
-        ("access_type", "offline"),
-        ("prompt", "consent select_account"),
-    ]);
-    webbrowser::open(url.as_str()).map_err(|_| "Unable to open Google sign-in in your browser")?;
-    let deadline = Instant::now() + Duration::from_secs(180);
-    let code = loop {
-        if canceled() {
-            return Err("Google Groups sign-in canceled during shutdown".into());
-        }
-        if Instant::now() > deadline {
-            return Err("Google Groups sign-in timed out; try connecting again".into());
-        }
-        let (mut stream, _) = match listener.accept() {
-            Ok(value) => value,
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(100));
-                continue;
-            }
-            Err(_) => return Err("Google sign-in callback failed".into()),
-        };
-        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-        stream.set_write_timeout(Some(Duration::from_secs(2)))?;
-        let mut request = Vec::new();
-        let mut byte = [0u8; 1];
-        while request.len() < 8192 {
-            if stream.read(&mut byte).unwrap_or(0) == 0 {
-                break;
-            }
-            request.push(byte[0]);
-            if request.ends_with(b"\r\n") {
-                break;
-            }
-        }
-        let line = String::from_utf8_lossy(&request);
-        let mut parts = line.split_whitespace();
-        if parts.next() != Some("GET") {
-            continue;
-        }
-        let target = parts.next().unwrap_or("");
-        // Unrelated requests must not terminate the pending login.
-        if !target.starts_with("/?") {
-            continue;
-        }
-        let result = callback_code(target, &state);
-        let message = if result.is_ok() {
-            "Google sign-in received. Return to Boreal to finish connecting."
-        } else {
-            "Sign-in callback was not accepted. Return to Boreal and try again."
-        };
-        let _ = write!(
-            stream,
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",
-            message.len(),
-            message
-        );
-        break result?;
-    };
-    let http = http()?;
-    let response = http
-        .post("https://oauth2.googleapis.com/token")
-        .form(&[
-            ("client_id", config.client_id.as_str()),
-            ("client_secret", config.client_secret.as_str()),
-            ("code", code.as_str()),
-            ("code_verifier", verifier.as_str()),
-            ("redirect_uri", redirect.as_str()),
-            ("grant_type", "authorization_code"),
-        ])
-        .send()
-        .map_err(|_| "Google Groups token exchange could not connect")?;
-    if !response.status().is_success() {
-        return Err("Google Groups sign-in could not be completed; reconnect".into());
-    }
-    let token: Token = response
-        .json()
-        .map_err(|_| "Invalid Google Groups sign-in response")?;
-    if token.refresh_token.is_empty()
-        || ![GROUP_SCOPE, MEMBER_SCOPE]
-            .iter()
-            .all(|scope| token.scope.split_whitespace().any(|s| s == *scope))
-    {
-        return Err("Google Groups needs both read-only group and membership permissions; reconnect and grant both".into());
-    }
-    #[derive(Deserialize)]
-    struct Identity {
-        email: String,
-        email_verified: bool,
-    }
-    let response = http
-        .get("https://openidconnect.googleapis.com/v1/userinfo")
-        .bearer_auth(&token.access_token)
-        .send()
-        .map_err(|_| "Unable to verify connected Google account")?;
-    if !response.status().is_success() {
-        return Err("Unable to verify connected Google account".into());
-    }
-    let identity: Identity = response
-        .json()
-        .map_err(|_| "Invalid Google account identity response")?;
-    if !identity.email_verified {
-        return Err("Google account email is not verified".into());
-    }
-    save_credentials(
-        runtime,
-        &Credentials {
-            client_id: config.client_id,
-            email: identity.email,
-            refresh_token: token.refresh_token,
-        },
-    )
-}
-
 pub fn snapshot(runtime: &Runtime, cancel: &AtomicBool) -> Result<Snapshot, GoogleError> {
-    let _guard = CREDENTIAL_LOCK
-        .try_lock()
-        .map_err(|_| "Google Groups is already connecting or updating")?;
-    let mut credentials = credentials(runtime)?;
-    let config = client::detect(runtime)?.ok_or("Configure your Google Desktop Client ID first")?;
-    if let Some(issue) = credential_issue(&credentials, &config.client_id) {
+    if let Some(issue) = connection_issue(runtime) {
         return Err(issue.into());
     }
-    let http = http()?;
-    let response = http
-        .post("https://oauth2.googleapis.com/token")
-        .form(&[
-            ("client_id", config.client_id.as_str()),
-            ("client_secret", config.client_secret.as_str()),
-            ("refresh_token", credentials.refresh_token.as_str()),
-            ("grant_type", "refresh_token"),
-        ])
-        .send()
-        .map_err(|_| "Unable to connect to Google Groups; try again")?;
-    if !response.status().is_success() {
-        return Err("Google Groups authorization expired or was revoked; reconnect".into());
+    let setup = auth::setup(runtime)?;
+    let account = auth::email(runtime).ok_or("Connect Google in Settings")?;
+    if setup.directory_admin {
+        let token = auth::access_token(runtime, auth::DIRECTORY_GROUPS)?;
+        let http = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()?;
+        fetch_snapshot(
+            &http,
+            &token,
+            &account,
+            "https://admin.googleapis.com/admin/directory/v1",
+            cancel,
+        )
+    } else {
+        super::my_groups::snapshot(runtime, &setup.groups_deployment, &account, cancel)
     }
-    let token: Token = response
-        .json()
-        .map_err(|_| "Invalid Google Groups authorization response")?;
-    if !token.refresh_token.is_empty() {
-        credentials.refresh_token = token.refresh_token;
-        save_credentials(runtime, &credentials)?;
-    }
-    fetch_snapshot(
-        &http,
-        &token.access_token,
-        &credentials.email,
-        "https://admin.googleapis.com/admin/directory/v1",
-        cancel,
-    )
 }
 fn get(
     http: &reqwest::blocking::Client,
@@ -544,6 +278,10 @@ fn fetch_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{io::Write, net::TcpListener};
+    fn http() -> Result<reqwest::blocking::Client, GoogleError> {
+        Ok(reqwest::blocking::Client::new())
+    }
     #[test]
     fn directory_denials_distinguish_setup_causes_without_disclosing_provider_data() {
         use serde_json::json;
@@ -588,55 +326,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn changed_google_client_requires_groups_reauthorization() {
-        let mut saved = Credentials {
-            client_id: "old-client".into(),
-            email: "person@example.test".into(),
-            refresh_token: "synthetic-token".into(),
-        };
-        assert!(
-            credential_issue(&saved, "new-client")
-                .unwrap()
-                .contains("Reconnect Google Groups")
-        );
-        assert_eq!(
-            saved.email, "person@example.test",
-            "keep the account identity for cached inventory"
-        );
-        assert!(credential_issue(&saved, "old-client").is_none());
-        saved.refresh_token.clear();
-        assert!(
-            credential_issue(&saved, "old-client")
-                .unwrap()
-                .contains("authorization is missing")
-        );
-    }
-
-    #[test]
-    fn oauth_pkce_and_callback_validate_state() {
-        assert_eq!(
-            challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
-            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
-        );
-        assert_eq!(
-            callback_code("/?state=expected&code=code%2Bvalue", "expected").unwrap(),
-            "code+value"
-        );
-        for callback in [
-            "/?state=wrong&code=secret",
-            "/?code=secret",
-            "/?state=expected&state=other&code=secret",
-            "/?state=expected&error=access_denied",
-            "/?state=expected&code=a&code=b",
-        ] {
-            let error = callback_code(callback, "expected").unwrap_err().to_string();
-            assert!(!error.contains("secret"));
-        }
-        let one = random_secret().unwrap();
-        assert_eq!(one.len(), 43);
-        assert_ne!(one, random_secret().unwrap());
-    }
     fn serve(
         responses: Vec<(u16, &'static str)>,
     ) -> (String, std::thread::JoinHandle<Vec<String>>) {

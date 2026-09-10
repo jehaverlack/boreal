@@ -1,13 +1,7 @@
 <div class="form-check form-switch mb-3">
-    <input class="form-check-input" type="checkbox" id="googleGroupsEnabled" name="google_groups_enabled" value="true" {% if settings.google_groups_enabled %}checked{% endif %}>
-    <label class="form-check-label" for="googleGroupsEnabled">Enable Google Groups metadata</label>
-</div>
-<p class="small">Import groups you belong to and visible member lists. Google Groups has its own sign-in, separate from Drive. Disabling preserves the connection and inventory.</p>
+<input class="form-check-input" type="checkbox" id="googleGroupsEnabled" name="google_groups_enabled" value="true" {% if settings.google_groups_enabled %}checked{% endif %}>
+<label class="form-check-label" for="googleGroupsEnabled">Enable Google Groups metadata</label></div>
+<p class="small">My Groups uses your shared Google connection and the project’s Groups helper. Ordinary users do not need a Workspace administrator role. Disabling preserves inventory.</p>
 {% if settings.google_groups_enabled && !groups_connection_issue.is_empty() %}<div class="alert alert-warning" role="alert">{{ groups_connection_issue }}</div>{% endif %}
-{% if !settings.google_groups_enabled %}<p class="small">Enable this service and save changes, then return here to connect.</p>{% endif %}
-<details class="mb-3"><summary>Connected, but Google denies access?</summary><p class="small mt-2">Ask your Workspace administrator to check <strong>Admin console → Account → Admin roles</strong> and verify the connected account's <strong>Admin API privileges → Groups → Read</strong> assignment, or the <strong>Groups Reader</strong> role. Owning a group or administering the Google Cloud project is not sufficient. If your organization restricts app access, also review Security → API controls.</p><a href="https://knowledge.workspace.google.com/admin/users/administrator-privilege-definitions" target="_blank" rel="noopener noreferrer">Google's administrator privilege guide</a></details>
-<div class="d-flex flex-wrap gap-2">
-    <button type="submit" form="settings-google-groups-connect" class="btn btn-primary" {% if !settings.google_groups_enabled || !google_client_ready %}disabled{% endif %}>Connect / reconnect Google Groups</button>
-    <a href="/google-groups" class="btn btn-outline-secondary">Browse saved groups</a>
-    <button type="button" data-bs-toggle="modal" data-bs-target="#googleSetupModal" class="btn btn-outline-secondary">Setup guide</button>
-</div>
+<p class="small">Save changes, then open Google connection to configure the helper and approve any missing permission.</p>
+<div class="d-flex gap-2"><a class="btn btn-primary" href="/google">Google connection</a><a class="btn btn-outline-secondary" href="/google-groups">Browse saved groups</a></div>
