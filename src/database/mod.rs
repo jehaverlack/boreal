@@ -1,5 +1,6 @@
 pub mod directory;
 pub mod github;
+pub mod google_groups;
 pub mod inventory;
 pub mod keeper;
 pub mod local_files;
@@ -231,7 +232,7 @@ mod tests {
             })
             .expect("migration count should be readable");
 
-        assert_eq!(migration_count, 36,);
+        assert_eq!(migration_count, 37,);
 
         let safe_to_delete_scope_count: i64 = connection
             .query_row(

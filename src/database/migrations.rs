@@ -189,6 +189,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "keeper_vault",
         sql: include_str!("migrations/0036_keeper_vault.sql"),
     },
+    Migration {
+        version: 37,
+        name: "google_groups",
+        sql: include_str!("migrations/0037_google_groups.sql"),
+    },
 ];
 
 pub fn apply(connection: &mut Connection) -> Result<(), DatabaseError> {

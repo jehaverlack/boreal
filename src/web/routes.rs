@@ -1,3 +1,6 @@
+#[path = "google_groups.rs"]
+mod google_groups_routes;
+
 use std::{
     collections::HashMap,
     path::{Path as FsPath, PathBuf},
@@ -154,6 +157,8 @@ struct DashboardTemplate {
     github_summary: database::github::Summary,
     keeper_enabled: bool,
     keeper_summary: database::keeper::Summary,
+    google_groups_connected: bool,
+    google_groups_summary: database::google_groups::Summary,
     local_files_enabled: bool,
     local_files_summary: database::local_files::Summary,
     directory_summary: database::directory::DirectorySummary,
@@ -798,6 +803,7 @@ struct MetadataUpdateModalTemplate {
     directory_available: bool,
     github_available: bool,
     keeper_available: bool,
+    google_groups_available: bool,
     local_files_available: bool,
     s3_available: bool,
     directory_estimate: MetadataTimingView,
@@ -807,6 +813,7 @@ struct MetadataUpdateModalTemplate {
     specific_shared_drive_estimate: MetadataTimingView,
     github_estimate: MetadataTimingView,
     keeper_estimate: MetadataTimingView,
+    google_groups_estimate: MetadataTimingView,
     local_files_estimate: MetadataTimingView,
     s3_estimate: MetadataTimingView,
 }
@@ -839,6 +846,8 @@ struct DriveSummariesTemplate {
     github_summary: database::github::Summary,
     keeper_enabled: bool,
     keeper_summary: database::keeper::Summary,
+    google_groups_connected: bool,
+    google_groups_summary: database::google_groups::Summary,
     local_files_enabled: bool,
     local_files_summary: database::local_files::Summary,
     directory_summary: database::directory::DirectorySummary,
@@ -1245,6 +1254,8 @@ struct MetadataUpdateForm {
     #[serde(default)]
     keeper: Option<String>,
     #[serde(default)]
+    google_groups: Option<String>,
+    #[serde(default)]
     local_files: Option<String>,
     #[serde(default)]
     s3: Option<String>,
@@ -1449,6 +1460,11 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/ui/google-drive-launcher", get(ui_google_drive_launcher))
         .route("/ui/github-launcher", get(ui_github_launcher))
+        .route("/google-groups", get(google_groups_routes::page))
+        .route(
+            "/google-groups/connect",
+            post(google_groups_routes::connect),
+        )
         .route("/keeper", get(keeper_page))
         .route("/keeper/export.xlsx", get(export_keeper))
         .route("/keeper/tags", post(apply_keeper_tag))
@@ -1783,6 +1799,7 @@ async fn index(State(state): State<Arc<AppState>>) -> Result<Html<String>, Statu
         initial_setup_complete,
         modules_enabled: setup_settings.google_drive_enabled
             || github_is_enabled
+            || google::groups::connected_email(&state.runtime).is_some()
             || keeper_is_enabled
             || local_files_is_enabled
             || setup_settings.s3_enabled,
@@ -1803,6 +1820,8 @@ async fn index(State(state): State<Arc<AppState>>) -> Result<Html<String>, Statu
         github_summary,
         keeper_enabled: keeper_is_enabled,
         keeper_summary,
+        google_groups_connected: google::groups::connected_email(&state.runtime).is_some(),
+        google_groups_summary: google_groups_routes::summary(&state),
         local_files_enabled: local_files_is_enabled,
         local_files_summary,
         directory_summary,
@@ -6637,6 +6656,8 @@ async fn ui_drive_summaries(
         github_summary,
         keeper_enabled: keeper_is_enabled,
         keeper_summary,
+        google_groups_connected: google::groups::connected_email(&state.runtime).is_some(),
+        google_groups_summary: google_groups_routes::summary(&state),
         local_files_enabled: local_files_is_enabled,
         local_files_summary,
         directory_summary: state
@@ -6693,6 +6714,7 @@ async fn ui_metadata_update_modal(
         .and_then(|database| database::settings::load(&database).ok())
         .unwrap_or_default();
     let available = matches!(remotes.ro, RemoteState::Ready)
+        || google::groups::connected_email(&state.runtime).is_some()
         || enabled_settings.github_enabled
         || enabled_settings.keeper_enabled
         || enabled_settings.local_files_enabled
@@ -6727,6 +6749,7 @@ async fn ui_metadata_update_modal(
             .is_some_and(|settings| settings.github_enabled)
             && crate::github::client::configured(&state.runtime),
         keeper_available: keeper_enabled(&state),
+        google_groups_available: google::groups::connected_email(&state.runtime).is_some(),
         local_files_available: state
             .database()
             .ok()
@@ -6744,6 +6767,7 @@ async fn ui_metadata_update_modal(
         specific_shared_drive_estimate: metadata_timing_view(&state, "specific-shared-drive"),
         github_estimate: metadata_timing_view(&state, "github"),
         keeper_estimate: metadata_timing_view(&state, "keeper"),
+        google_groups_estimate: metadata_timing_view(&state, "google-groups"),
         local_files_estimate: metadata_timing_view(&state, "local-files"),
         s3_estimate: metadata_timing_view(&state, "s3"),
     })
@@ -6880,6 +6904,16 @@ fn metadata_scope_progress_views(
             shared_drives,
         ),
         ("GitHub", selection.github, "github", github),
+        (
+            "Google Groups",
+            selection.google_groups,
+            "google-groups",
+            if phase == "Fetching Google Groups metadata" {
+                (true, false, 60, phase.to_string())
+            } else {
+                (false, false, 0, "Waiting".to_string())
+            },
+        ),
         ("Keeper", selection.keeper, "keeper", keeper),
         (
             "Local Files",
@@ -7148,6 +7182,7 @@ async fn start_metadata_update(
         directory_info: form.directory_info.is_some(),
         github: form.github.is_some(),
         keeper: form.keeper.is_some(),
+        google_groups: form.google_groups.is_some(),
         local_files: form.local_files.is_some(),
         s3: form.s3.is_some(),
     };
@@ -7831,6 +7866,7 @@ mod tests {
                 directory_info: false,
                 github: false,
                 keeper: false,
+                google_groups: false,
                 local_files: false,
                 s3: false,
             },

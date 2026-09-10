@@ -393,6 +393,7 @@
 
                 <ul class="navbar-nav me-auto mb-2 mb-lg-0">
 
+
                     <li class="nav-item">
 
                         <a
@@ -424,6 +425,7 @@
                     </li>
 
                     <li id="google-drive-primary-navigation" hx-get="/ui/google-drive-primary-nav" hx-trigger="load" hx-swap="outerHTML"></li>
+                    <li class="nav-item"><a class="nav-link{% if active_page == "google-groups" %} active{% endif %}" href="/google-groups" title="Explore Google Groups and visible members"><i class="bi bi-people-fill boreal-google-drive-color me-1"></i>Groups</a></li>
 
                     <li id="github-primary-navigation" hx-get="/ui/github-primary-nav" hx-trigger="load" hx-swap="outerHTML"></li>
                     <li id="keeper-primary-navigation" hx-get="/ui/keeper-primary-nav" hx-trigger="load" hx-swap="outerHTML"></li>
@@ -1157,6 +1159,7 @@
         })();
     </script>
 
+{% include "partials/column-widths.html" %}
 </body>
 
 </html>

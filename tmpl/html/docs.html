@@ -89,6 +89,7 @@
                     <li>Click a folder name to browse it inside BOREAL.</li>
                     <li>Click the Google Drive icon or a file name to open the item in Google Drive.</li>
                     <li>Use column fields to filter by name, type, size, date, owner, or permission.</li>
+                    <li>Drag the right edge of a column header to adjust its width. Widths are remembered in this browser for each explorer, including after sorting, filtering, or changing tags. Use <strong>Reset widths</strong> above the table to restore the default layout. You can also Tab to a column edge and use Left/Right arrows; hold Shift for larger adjustments. Printed reports retain their default layout.</li>
                     <li>Click a hollow tag pill to require that tag. Click the solid pill again to exclude that tag; click the red “Not” pill to clear it.</li>
                     <li>Additional tags narrow results with AND: for example, <strong>Keep</strong> and <strong>Not Needs Review</strong> require Keep and exclude Needs Review. The same three-click cycle works for item and user tags in every explorer. The Any/All pill clears that tag group; Keeper calls its vault-tag reset <strong>Any Folder</strong>.</li>
                     <li>Use <strong>No tags</strong> to find records with no assigned tags.</li>
@@ -97,6 +98,14 @@
                 </ul>
                 <p class="mb-0">Filters combine: an item must satisfy the active column and tag filters. Use <strong>Clear filters</strong> to reset the view.</p>
             </div></div>
+        </section>
+
+        <section id="google-groups" class="mb-4" data-doc-entry>
+            <h2 class="h4">Google Groups</h2>
+            <p>Under Google Resources, open Google Groups and connect your Workspace account. Enable the Admin SDK API in the same project as your Google Desktop Client ID, use an account with group-read privileges, and grant both read-only group and membership permissions. Groups uses a separate connection from Drive; your Drive authorization stays unchanged.</p>
+            <p>Select Google Groups and visible members in Update. Boreal imports groups you belong to, names, email addresses and aliases, descriptions, direct-member counts, and visible member identities, roles, types, and statuses. Open a group to browse its members; use Up or Base to return. Search, role filters, sorting, adjustable column widths, and matching Persons pills work in this viewer.</p>
+            <p>Restricted member lists are marked unavailable, not empty. Nested groups appear as members without recursively expanding them. Messages and conversation archives are not imported. Failed fetches retain the previous inventory, and snapshots are kept separately for each connected account.</p>
+            <p class="small">Google reference: <a href="https://developers.google.com/workspace/admin/directory/v1/guides/manage-groups" target="_blank" rel="noopener noreferrer">Groups API</a> and <a href="https://developers.google.com/workspace/admin/directory/reference/rest/v1/members/list" target="_blank" rel="noopener noreferrer">member lists</a>.</p>
         </section>
 
         <section id="tags" class="mb-4" data-doc-entry>

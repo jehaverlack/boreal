@@ -145,6 +145,7 @@ pub struct MetadataUpdateSelection {
     pub directory_info: bool,
     pub github: bool,
     pub keeper: bool,
+    pub google_groups: bool,
     pub local_files: bool,
     pub s3: bool,
 }
@@ -809,6 +810,7 @@ impl AppState {
             && !selection.shared_with_me
             && !selection.directory_info
             && !selection.github
+            && !selection.google_groups
             && !selection.keeper
             && !selection.local_files
             && !selection.s3
@@ -869,6 +871,10 @@ impl AppState {
             return Err(
                 "Directory Info requires a configured directory spreadsheet URL".to_string(),
             );
+        }
+        if selection.google_groups && crate::google::groups::connected_email(&state.runtime).is_none() {
+            state.finish_metadata_job();
+            return Err("Connect Google Groups first".into());
         }
         if selection.keeper
             && (!inventory_settings.keeper_enabled
@@ -1305,6 +1311,18 @@ impl AppState {
                         let _ = database.record_metadata_timing("github", timing_started.elapsed().as_secs());
                         log::info!("GitHub repository metadata updated: repositories={}", repositories.len());
                     }
+                    if selection.google_groups {
+                        let timing_started = Instant::now();
+                        worker_state.set_metadata_state(MetadataState::Updating(MetadataProgress {
+                            selection, phase: "Fetching Google Groups metadata".into(),
+                            files_scanned: 0, folders_scanned: 0, permissions_scanned: 0, bytes_discovered: 0, errors: 0,
+                        }));
+                        let snapshot = crate::google::groups::snapshot(&worker_state.runtime, &worker_state.job_cancellation)?;
+                        if worker_state.job_cancellation.load(std::sync::atomic::Ordering::Relaxed) { return Err("Google Groups update canceled".into()); }
+                        database::google_groups::synchronize(&database, &snapshot)?;
+                        let _ = database.record_metadata_timing("google-groups", timing_started.elapsed().as_secs());
+                        log::info!("Google Groups metadata updated: groups={}", snapshot.groups.len());
+                    }
                     if selection.keeper {
                         let timing_started = Instant::now();
                         worker_state.set_metadata_state(MetadataState::Updating(MetadataProgress {
@@ -1483,6 +1501,7 @@ impl AppState {
             directory_info: false,
             github: false,
             keeper: false,
+            google_groups: false,
             local_files: false,
             s3: false,
         };

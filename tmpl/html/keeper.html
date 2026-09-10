@@ -45,7 +45,7 @@
 </form>
 {% endif %}
     <div class="table-responsive border rounded" style="max-height: calc(100vh - 20rem); overflow-y:auto;">
-        <table class="boreal-keeper-table table table-sm table-hover align-middle mb-0">
+        <table data-column-widths="keeper" class="boreal-keeper-table table table-sm table-hover align-middle mb-0">
             <thead class="sticky-top bg-body"><tr>
                 <th class="boreal-report-hide"><input type="checkbox" class="form-check-input" id="keeper-select-all" aria-label="Select all visible items"></th>
                 <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="name">Name</button><input class="form-control form-control-sm mt-1 boreal-report-hide" form="keeper-filter-form" name="name" value="{{ query.name }}" placeholder="Search name" aria-label="Search name"></th>

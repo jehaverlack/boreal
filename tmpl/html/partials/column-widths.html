@@ -1,0 +1,133 @@
+<style>
+    .boreal-column-controls { flex-shrink: 0; }
+    .boreal-column-controls, .boreal-column-resizer { display: none; }
+    @media screen {
+        body:not(.boreal-print-report) .boreal-column-controls { display: flex; justify-content: flex-end; }
+        body:not(.boreal-print-report) .boreal-column-resizer {
+            display: block; position: absolute; right: 0; top: 0; bottom: 0;
+            width: 10px; cursor: col-resize; touch-action: none; z-index: 3;
+            border-right: 2px solid transparent;
+        }
+        .boreal-column-resizer:hover, .boreal-column-resizer:focus-visible {
+            border-right-color: var(--bs-primary, #0d6efd); outline: none;
+        }
+        th.boreal-resize-header { position: relative; }
+        body.boreal-resizing, body.boreal-resizing * { cursor: col-resize !important; user-select: none !important; }
+        body:not(.boreal-print-report) table.boreal-columns-sized {
+            table-layout: fixed !important; width: var(--boreal-table-width) !important;
+            min-width: var(--boreal-table-width) !important; max-width: none !important;
+        }
+        body:not(.boreal-print-report) .boreal-columns-sized col { width: var(--boreal-column-width) !important; }
+        body:not(.boreal-print-report) .boreal-columns-sized th,
+        body:not(.boreal-print-report) .boreal-columns-sized td {
+            width: auto !important; overflow: hidden; overflow-wrap: anywhere;
+        }
+    }
+</style>
+<script>
+(() => {
+    if (document.body.classList.contains('boreal-print-report')) return;
+    document.querySelectorAll('table[data-column-widths]').forEach((table, tableIndex) => {
+        const headers = Array.from(table.tHead?.rows[0]?.cells || []);
+        if (!headers.length || headers.some(header => header.colSpan !== 1)) return;
+        const key = 'boreal.columnWidths.v1:' + window.location.pathname + ':'
+            + table.dataset.columnWidths + ':' + (new URLSearchParams(window.location.search).get('drive') || '');
+        const minimum = headers.map(header => header.querySelector('input[type="checkbox"]') ? 36 : 80);
+        const clamp = (width, index) => Math.min(2000, Math.max(minimum[index], Math.round(width)));
+        const defaults = headers.map((header, index) => clamp(header.getBoundingClientRect().width, index));
+        let widths = [...defaults];
+        let cols = Array.from(table.querySelectorAll(':scope > colgroup > col'));
+        if (!cols.length) {
+            const group = document.createElement('colgroup');
+            cols = headers.map(() => group.appendChild(document.createElement('col')));
+            table.insertBefore(group, table.tHead);
+        }
+        if (cols.length !== headers.length) return;
+        const handles = [];
+        const render = () => {
+            table.classList.add('boreal-columns-sized');
+            table.style.setProperty('--boreal-table-width', widths.reduce((a, b) => a + b, 0) + 'px');
+            cols.forEach((col, index) => col.style.setProperty('--boreal-column-width', widths[index] + 'px'));
+            handles.forEach((handle, index) => handle.setAttribute('aria-valuenow', widths[index]));
+        };
+        const save = () => { try { localStorage.setItem(key, JSON.stringify(widths)); } catch (_) {} };
+        try {
+            const saved = JSON.parse(localStorage.getItem(key));
+            if (Array.isArray(saved) && saved.length === headers.length && saved.every(width => Number.isFinite(width) && width > 0)) {
+                widths = saved.map(clamp);
+                render();
+            }
+        } catch (_) {}
+        const toolbar = document.createElement('div');
+        toolbar.className = 'boreal-column-controls boreal-report-hide';
+        const reset = toolbar.appendChild(document.createElement('button'));
+        reset.type = 'button';
+        reset.className = 'btn btn-sm btn-link';
+        reset.textContent = 'Reset widths';
+        reset.title = 'Drag a column edge to resize. Use arrow keys on a focused edge. Widths are saved for this view.';
+        reset.addEventListener('click', () => {
+            table.classList.remove('boreal-columns-sized');
+            table.style.removeProperty('--boreal-table-width');
+            cols.forEach(col => col.style.removeProperty('--boreal-column-width'));
+            widths = headers.map((header, index) => clamp(header.getBoundingClientRect().width, index));
+            handles.forEach((handle, index) => handle.setAttribute('aria-valuenow', widths[index]));
+            try { localStorage.removeItem(key); } catch (_) {}
+        });
+        table.parentElement.before(toolbar);
+        if (!table.id) table.id = 'boreal-resizable-table-' + tableIndex;
+        headers.forEach((header, index) => {
+            const label = header.innerText.trim().split('\n')[0] || 'Selection';
+            if (getComputedStyle(header).position === 'static') header.classList.add('boreal-resize-header');
+            const handle = document.createElement('span');
+            handle.className = 'boreal-column-resizer boreal-report-hide';
+            handle.tabIndex = 0;
+            handle.setAttribute('role', 'separator');
+            handle.setAttribute('aria-orientation', 'vertical');
+            handle.setAttribute('aria-label', 'Resize ' + label + ' column');
+            handle.setAttribute('aria-controls', table.id);
+            handle.setAttribute('aria-valuemin', minimum[index]);
+            handle.setAttribute('aria-valuemax', 2000);
+            handle.setAttribute('aria-valuenow', widths[index]);
+            handle.title = 'Drag to resize; arrow keys adjust width';
+            header.appendChild(handle);
+            handles.push(handle);
+            let drag = null;
+            handle.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); });
+            handle.addEventListener('pointerdown', event => {
+                if (event.button !== 0 || drag) return;
+                event.preventDefault(); event.stopPropagation();
+                if (!table.classList.contains('boreal-columns-sized')) {
+                    widths = headers.map((cell, i) => clamp(cell.getBoundingClientRect().width, i));
+                }
+                drag = {x: event.clientX, widths: [...widths], pointer: event.pointerId};
+                handle.setPointerCapture(event.pointerId);
+                document.body.classList.add('boreal-resizing');
+            });
+            handle.addEventListener('pointermove', event => {
+                if (!drag || event.pointerId !== drag.pointer) return;
+                widths[index] = clamp(drag.widths[index] + event.clientX - drag.x, index);
+                render();
+            });
+            const finish = event => {
+                if (!drag || event.pointerId !== drag.pointer) return;
+                if (event.type === 'pointercancel') { widths = drag.widths; render(); }
+                drag = null;
+                document.body.classList.remove('boreal-resizing');
+                save();
+            };
+            handle.addEventListener('pointerup', finish);
+            handle.addEventListener('pointercancel', finish);
+            handle.addEventListener('lostpointercapture', finish);
+            handle.addEventListener('keydown', event => {
+                if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+                event.preventDefault(); event.stopPropagation();
+                if (!table.classList.contains('boreal-columns-sized')) {
+                    widths = headers.map((cell, i) => clamp(cell.getBoundingClientRect().width, i));
+                }
+                widths[index] = clamp(widths[index] + (event.key === 'ArrowRight' ? 1 : -1) * (event.shiftKey ? 50 : 10), index);
+                render(); save();
+            });
+        });
+    });
+})();
+</script>

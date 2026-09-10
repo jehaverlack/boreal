@@ -1,4 +1,5 @@
 pub mod client;
+pub mod groups;
 
 use std::error::Error;
 
