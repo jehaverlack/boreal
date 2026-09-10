@@ -39,6 +39,7 @@
         </div>
         {% else if metadata.errors > 0 %}
         <p class="mb-0 text-danger">{{ metadata.phase }}</p>
+        {% if !google_groups_connection_issue.is_empty() %}<p class="mt-2 mb-0"><a href="/settings#google-groups-settings">Configure / reconnect Google Groups</a></p>{% endif %}
         {% else %}
         <p class="mb-2">Choose the sources to refresh. Your last selection is remembered; other inventories stay as they are.</p>
         <div class="small text-body-secondary mb-3"><i class="bi bi-clock-history me-1"></i><span id="metadata-selected-estimate">Select a metadata source</span></div>
@@ -49,6 +50,7 @@
         {% if github_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="github" value="true" data-estimated-seconds="{{ github_estimate.seconds }}" title="{{ github_estimate.label }}">GitHub repositories</label>{% endif %}
         {% if s3_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="s3" value="true" data-estimated-seconds="{{ s3_estimate.seconds }}" title="{{ s3_estimate.label }}">S3-compatible storage</label>{% endif %}
         </div>
+        {% if !google_groups_connection_issue.is_empty() %}<div class="alert alert-warning small">{{ google_groups_connection_issue }} <a href="/settings#google-groups-settings">Configure Google Groups</a></div>{% endif %}
         {% if google_available || google_groups_available %}<h3 class="h6">Google Resources</h3><div class="list-group mb-3">
         {% if google_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="my_drive" value="true" data-estimated-seconds="{{ my_drive_estimate.seconds }}" title="{{ my_drive_estimate.label }}">My Drive</label>{% endif %}
         {% if google_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="shared_with_me" value="true" data-estimated-seconds="{{ shared_with_me_estimate.seconds }}" title="{{ shared_with_me_estimate.label }}">Shared with me</label>{% endif %}

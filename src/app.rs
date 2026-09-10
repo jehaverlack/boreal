@@ -902,12 +902,16 @@ impl AppState {
                 "Directory Info requires a configured directory spreadsheet URL".to_string(),
             );
         }
-        if selection.google_groups
-            && (!inventory_settings.google_groups_enabled
-                || crate::google::groups::connected_email(&state.runtime).is_none())
-        {
-            state.finish_metadata_job();
-            return Err("Connect Google Groups first".into());
+        if selection.google_groups {
+            let issue = if !inventory_settings.google_groups_enabled {
+                Some("Enable Google Groups in Settings first.")
+            } else {
+                crate::google::groups::connection_issue(&state.runtime)
+            };
+            if let Some(issue) = issue {
+                state.finish_metadata_job();
+                return Err(issue.into());
+            }
         }
         if selection.keeper
             && (!inventory_settings.keeper_enabled

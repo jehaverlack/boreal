@@ -31,6 +31,7 @@ struct GroupsTemplate {
     poll_rclone: bool,
     account: String,
     configured: bool,
+    connection_issue: String,
     enabled: bool,
     summary: database::google_groups::Summary,
     query: GroupsQuery,
@@ -189,6 +190,9 @@ pub(super) async fn page(
         ),
         poll_rclone: should_poll_ui(&rclone_state, &remotes, &metadata),
         configured: matches!(google_client_state, GoogleClientState::Ready(_)),
+        connection_issue: google::groups::connection_issue(&state.runtime)
+            .unwrap_or_default()
+            .into(),
         enabled: google_groups_enabled(&state),
         account,
         summary,
@@ -240,6 +244,7 @@ mod tests {
             poll_rclone: false,
             account: String::new(),
             configured: true,
+            connection_issue: String::new(),
             enabled: true,
             summary: Default::default(),
             query: Default::default(),
@@ -252,6 +257,12 @@ mod tests {
         assert!(setup.contains("Connect Google Groups"));
         assert!(setup.contains("Admin SDK API"));
         template.account = "me@example.test".into();
+        template.connection_issue = "Google Client ID changed. Reconnect Google Groups.".into();
+        let stale = template.render().unwrap();
+        assert!(stale.contains("Google Client ID changed"));
+        assert!(stale.contains("Reconnect / switch account"));
+        assert!(!stale.contains(">Update metadata</button>"));
+        template.connection_issue.clear();
         template.groups.push(google::groups::Group {
             id: "g".into(),
             name: "<script>alert(1)</script>".into(),

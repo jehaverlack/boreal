@@ -101,6 +101,36 @@ fn credentials(runtime: &Runtime) -> Result<Credentials, GoogleError> {
 pub fn connected_email(runtime: &Runtime) -> Option<String> {
     credentials(runtime).ok().map(|c| c.email)
 }
+/// Local readiness only. Keep the saved account identity available for browsing
+/// existing inventory, even when its authorization needs to be replaced.
+pub fn connection_issue(runtime: &Runtime) -> Option<&'static str> {
+    let Ok(saved) = credentials(runtime) else {
+        return Some("Connect Google Groups to import your Workspace groups and visible members.");
+    };
+    let Ok(Some(config)) = client::detect(runtime) else {
+        return Some(
+            "Configure Google app credentials in Settings → Google setup guide, then reconnect Google Groups.",
+        );
+    };
+    credential_issue(&saved, &config.client_id)
+}
+
+fn credential_issue(saved: &Credentials, current_client_id: &str) -> Option<&'static str> {
+    if saved.client_id != current_client_id {
+        Some(
+            "Google Client ID changed. Reconnect Google Groups to authorize the current Google app. Reconnecting Drive does not reconnect Groups.",
+        )
+    } else if saved.refresh_token.trim().is_empty() {
+        Some("Google Groups authorization is missing. Reconnect Google Groups.")
+    } else {
+        None
+    }
+}
+
+pub fn connection_ready(runtime: &Runtime) -> bool {
+    connection_issue(runtime).is_none()
+}
+
 fn http() -> Result<reqwest::blocking::Client, GoogleError> {
     Ok(reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(30))
@@ -311,8 +341,8 @@ pub fn snapshot(runtime: &Runtime, cancel: &AtomicBool) -> Result<Snapshot, Goog
         .map_err(|_| "Google Groups is already connecting or updating")?;
     let mut credentials = credentials(runtime)?;
     let config = client::detect(runtime)?.ok_or("Configure your Google Desktop Client ID first")?;
-    if config.client_id != credentials.client_id {
-        return Err("Google Client ID changed; reconnect Google Groups".into());
+    if let Some(issue) = credential_issue(&credentials, &config.client_id) {
+        return Err(issue.into());
     }
     let http = http()?;
     let response = http
@@ -367,17 +397,67 @@ fn get(
     }
     unreachable!()
 }
-fn require_success(response: &reqwest::blocking::Response) -> Result<(), GoogleError> {
+fn require_success(
+    response: reqwest::blocking::Response,
+    operation: &str,
+) -> Result<reqwest::blocking::Response, GoogleError> {
     if response.status().is_success() {
-        return Ok(());
+        return Ok(response);
     }
-    Err(match response.status().as_u16() {
-        401=>"Google Groups authorization expired; reconnect",
-        403=>"Google Groups access denied. Enable the Admin SDK API in your Google project and verify group-read privileges and both read-only scopes.",
-        429=>"Google Groups rate limit reached; retry later",
-        _=>"Google Groups could not be queried; retry the update",
-    }.into())
+    let status = response.status().as_u16();
+    // Inspect a bounded error body only for known categories. Provider messages
+    // can contain account details; never copy them into logs or the WebUI.
+    let mut body = Vec::new();
+    let _ = response.take(65_536).read_to_end(&mut body);
+    let body = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+    Err(format!(
+        "{} ({operation}; HTTP {status}.)",
+        api_error_message(status, &body)
+    )
+    .into())
 }
+
+fn api_error_message(status: u16, body: &serde_json::Value) -> &'static str {
+    let error = &body["error"];
+    let reasons = error["errors"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .chain(error["details"].as_array().into_iter().flatten())
+        .filter_map(|item| item["reason"].as_str())
+        .collect::<Vec<_>>();
+    let has = |reason: &str| reasons.contains(&reason);
+    match status {
+        401 => "Google Groups authorization expired; reconnect Google Groups in Settings.",
+        403 if has("SERVICE_DISABLED") || has("accessNotConfigured") => {
+            "Admin SDK API is disabled or has not been enabled for this Google app's project. Enable it in Google Cloud Console using the project associated with Boreal's Google Client ID, then retry the update."
+        }
+        403 if has("ACCESS_TOKEN_SCOPE_INSUFFICIENT") || has("insufficientPermissions") => {
+            "Google Groups authorization is missing required scopes. Reconnect Google Groups in Settings and grant both read-only group and membership permissions."
+        }
+        403 if has("domainPolicy") || has("ORG_RESTRICTION_VIOLATION") => {
+            "Your Workspace policy blocks this Google app. Ask your Workspace administrator to review the app's access under Security → API controls."
+        }
+        403 if has("rateLimitExceeded") || has("userRateLimitExceeded") || has("quotaExceeded") => {
+            "Google Groups rate limit or quota reached; retry later."
+        }
+        403 if has("forbidden")
+            && error["message"].as_str().is_some_and(|message| {
+                message
+                    .to_ascii_lowercase()
+                    .contains("not authorized to access this resource")
+            }) =>
+        {
+            "Google denied Workspace Directory access for the connected account. Ask your Workspace administrator to verify its Admin API privileges → Groups → Read role assignment (or Groups Reader role). Being a group owner or a Google Cloud project administrator alone does not grant this Directory API access. Then retry the update."
+        }
+        403 => {
+            "Google denied this Directory API request. Ask your Workspace administrator to check the connected account's Groups → Read API privilege and the Google app's access policy. This response does not identify a disabled API or missing OAuth scope."
+        }
+        429 => "Google Groups rate limit reached; retry later.",
+        _ => "Google Groups could not be queried; retry the update.",
+    }
+}
+
 fn fetch_snapshot(
     http: &reqwest::blocking::Client,
     token: &str,
@@ -396,7 +476,7 @@ fn fetch_snapshot(
         let mut url = reqwest::Url::parse(&format!("{base}/groups"))?;
         url.query_pairs_mut().extend_pairs([("userKey",email),("maxResults","200"),("pageToken",page.as_str()),("fields","nextPageToken,groups(id,email,name,description,directMembersCount,aliases,nonEditableAliases)")]);
         let response = get(http, token, url, cancel)?;
-        require_success(&response)?;
+        let response = require_success(response, "groups.list")?;
         let response: GroupPage = response
             .json()
             .map_err(|_| "Invalid Google Groups report; previous inventory was retained")?;
@@ -439,7 +519,7 @@ fn fetch_snapshot(
                 group.members_unavailable = true;
                 break;
             }
-            require_success(&response)?;
+            let response = require_success(response, "members.list")?;
             let response: MemberPage = response.json().map_err(
                 |_| "Invalid Google Groups member report; previous inventory was retained",
             )?;
@@ -464,6 +544,75 @@ fn fetch_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn directory_denials_distinguish_setup_causes_without_disclosing_provider_data() {
+        use serde_json::json;
+        for (body, expected) in [
+            (
+                json!({"error":{"errors":[{"reason":"forbidden"}],"message":"Not Authorized to access this resource/api: private-account@example.test"}}),
+                "Admin API privileges",
+            ),
+            (
+                json!({"error":{"details":[{"reason":"SERVICE_DISABLED"}],"message":"private-project"}}),
+                "Admin SDK API is disabled",
+            ),
+            (
+                json!({"error":{"errors":[{"reason":"accessNotConfigured"}]}}),
+                "Admin SDK API is disabled",
+            ),
+            (
+                json!({"error":{"details":[{"reason":"ACCESS_TOKEN_SCOPE_INSUFFICIENT"}]}}),
+                "missing required scopes",
+            ),
+            (
+                json!({"error":{"errors":[{"reason":"insufficientPermissions"}]}}),
+                "missing required scopes",
+            ),
+            (
+                json!({"error":{"errors":[{"reason":"domainPolicy"}]}}),
+                "Workspace policy",
+            ),
+            (
+                json!({"error":{"errors":[{"reason":"rateLimitExceeded"}]}}),
+                "rate limit",
+            ),
+            (
+                json!({"error":{"message":"unknown private-provider-message"}}),
+                "does not identify",
+            ),
+            (serde_json::Value::Null, "does not identify"),
+        ] {
+            let message = api_error_message(403, &body);
+            assert!(message.contains(expected), "{message}");
+            assert!(!message.contains("private-"));
+        }
+    }
+
+    #[test]
+    fn changed_google_client_requires_groups_reauthorization() {
+        let mut saved = Credentials {
+            client_id: "old-client".into(),
+            email: "person@example.test".into(),
+            refresh_token: "synthetic-token".into(),
+        };
+        assert!(
+            credential_issue(&saved, "new-client")
+                .unwrap()
+                .contains("Reconnect Google Groups")
+        );
+        assert_eq!(
+            saved.email, "person@example.test",
+            "keep the account identity for cached inventory"
+        );
+        assert!(credential_issue(&saved, "old-client").is_none());
+        saved.refresh_token.clear();
+        assert!(
+            credential_issue(&saved, "old-client")
+                .unwrap()
+                .contains("authorization is missing")
+        );
+    }
+
     #[test]
     fn oauth_pkce_and_callback_validate_state() {
         assert_eq!(

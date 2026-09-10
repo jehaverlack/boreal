@@ -203,6 +203,7 @@ struct SettingsTemplate {
     google_client_ready: bool,
     google_client_error: String,
     s3_connections: Vec<String>,
+    groups_connection_issue: String,
 }
 
 #[allow(dead_code)]
@@ -824,6 +825,7 @@ struct MetadataUpdateModalTemplate {
     github_available: bool,
     keeper_available: bool,
     google_groups_available: bool,
+    google_groups_connection_issue: String,
     local_files_available: bool,
     s3_available: bool,
     directory_estimate: MetadataTimingView,
@@ -1906,8 +1908,7 @@ async fn index(State(state): State<Arc<AppState>>) -> Result<Html<String>, Statu
         initial_setup_complete,
         modules_enabled: setup_settings.google_drive_enabled
             || github_is_enabled
-            || google_groups_enabled(&state)
-                && google::groups::connected_email(&state.runtime).is_some()
+            || google_groups_enabled(&state) && google::groups::connection_ready(&state.runtime)
             || keeper_is_enabled
             || local_files_is_enabled
             || setup_settings.s3_enabled,
@@ -1930,7 +1931,7 @@ async fn index(State(state): State<Arc<AppState>>) -> Result<Html<String>, Statu
         keeper_summary,
         google_groups_enabled: google_groups_enabled(&state),
         google_groups_connected: google_groups_enabled(&state)
-            && google::groups::connected_email(&state.runtime).is_some(),
+            && google::groups::connection_ready(&state.runtime),
         google_groups_summary: google_groups_routes::summary(&state),
         local_files_enabled: local_files_is_enabled,
         local_files_summary,
@@ -2615,7 +2616,7 @@ fn render_settings(
     let keeper_setup_command = keeper_command.to_string();
     let drive_ready = matches!(google_remotes_state.ro, RemoteState::Ready);
     let client_ready = matches!(google_client_state, GoogleClientState::Ready(_));
-    let groups_ready = crate::google::groups::connected_email(&state.runtime).is_some();
+    let groups_ready = crate::google::groups::connection_ready(&state.runtime);
     let github_ready = crate::github::client::configured(&state.runtime);
     let s3_connections: Vec<String> = match &rclone_state {
         RcloneState::Ready(status) => {
@@ -2792,6 +2793,9 @@ fn render_settings(
             _ => String::new(),
         },
         s3_connections,
+        groups_connection_issue: google::groups::connection_issue(&state.runtime)
+            .unwrap_or_default()
+            .into(),
     };
 
     render_template(&template)
@@ -6929,7 +6933,7 @@ async fn ui_drive_summaries(
         keeper_summary,
         google_groups_enabled: google_groups_enabled(&state),
         google_groups_connected: google_groups_enabled(&state)
-            && google::groups::connected_email(&state.runtime).is_some(),
+            && google::groups::connection_ready(&state.runtime),
         google_groups_summary: google_groups_routes::summary(&state),
         local_files_enabled: local_files_is_enabled,
         local_files_summary,
@@ -6992,8 +6996,7 @@ async fn ui_metadata_update_modal(
         .and_then(|database| database::settings::load(&database).ok())
         .unwrap_or_default();
     let available = matches!(remotes.ro, RemoteState::Ready)
-        || google_groups_enabled(&state)
-            && google::groups::connected_email(&state.runtime).is_some()
+        || google_groups_enabled(&state) && google::groups::connection_ready(&state.runtime)
         || enabled_settings.github_enabled
         || enabled_settings.keeper_enabled
         || enabled_settings.local_files_enabled
@@ -7029,7 +7032,14 @@ async fn ui_metadata_update_modal(
             && crate::github::client::configured(&state.runtime),
         keeper_available: keeper_enabled(&state),
         google_groups_available: google_groups_enabled(&state)
-            && google::groups::connected_email(&state.runtime).is_some(),
+            && google::groups::connection_ready(&state.runtime),
+        google_groups_connection_issue: if enabled_settings.google_groups_enabled {
+            google::groups::connection_issue(&state.runtime)
+                .unwrap_or_default()
+                .into()
+        } else {
+            String::new()
+        },
         local_files_available: state
             .database()
             .ok()
@@ -8125,6 +8135,7 @@ mod tests {
             google_client_ready: true,
             google_client_error: String::new(),
             s3_connections: vec!["archive-storage".into()],
+            groups_connection_issue: "Google Client ID changed. Reconnect Google Groups.".into(),
         };
         let html = template.render().unwrap();
         assert_eq!(html.matches("data-service-form=").count(), 7);

@@ -73,3 +73,37 @@ then exercises create, missing-token reconnect, and existing-token reconnect wit
 it. The test uses only synthetic credentials and a temporary config, stubs browser
 launch, and verifies that the additional connection is preserved. Rclone's local
 callback port 53682 must be available.
+
+## Google setup modal and Groups connection recovery
+
+Settings dialogs must remain siblings. A missing closing tag in the S3 partial
+previously nested the Google guide inside the hidden S3 dialog, displaying only a
+backdrop. Validate rendered Settings after template edits:
+
+```sh
+BOREAL_UI_FIXTURE_DIR=/tmp/boreal-ui cargo test settings_dialogs_render_independent_forms_and_connections_offer_repair
+python3 tools/test-settings-layout.py /tmp/boreal-ui/settings.html
+```
+
+Also exercise the Settings guide button, Drive's Prepare your Google project link,
+the guide-to-upload transition, the direct setup hash link, and backdrop cleanup.
+
+Groups maintains authorization separately from Drive. Replacing the Desktop OAuth
+Client ID invalidates the saved Groups authorization for future imports. Settings,
+the Groups viewer and Update now report that local mismatch and offer a dedicated
+Groups reconnect action. The account identity and cached group inventory remain
+available for browsing while reconnecting. Readiness does not imply that a live
+Google API request has succeeded.
+
+## Directory API access denials
+
+Do not map every HTTP 403 to API enablement. Groups responses now distinguish
+`SERVICE_DISABLED`/`accessNotConfigured`, missing OAuth scopes, Workspace resource
+authorization, app policy restrictions and quota errors. Only known categories are
+shown; raw provider error messages and account details stay out of the UI and logs.
+The failing operation is identified as `groups.list` or `members.list`.
+
+For a `forbidden` / resource-authorization response, verify the signed-in user's
+Workspace Admin API Groups → Read privilege or Groups Reader role. Cloud project
+administration and group ownership are separate from Directory API authorization.
+See Google's [administrator privilege definitions](https://knowledge.workspace.google.com/admin/users/administrator-privilege-definitions).
