@@ -985,6 +985,20 @@ struct ApplyPrincipalTagForm {
     #[serde(default)]
     selected_principal_ids: String,
     tag: String,
+    #[serde(default)]
+    name_filter: String,
+    #[serde(default)]
+    email_filter: String,
+    #[serde(default)]
+    type_filter: String,
+    #[serde(default)]
+    status_filter: String,
+    #[serde(default)]
+    departure_filter: String,
+    #[serde(default)]
+    organization_filter: String,
+    #[serde(default)]
+    tag_filter: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -1139,6 +1153,8 @@ struct GitHubTagForm {
     sort: String,
     #[serde(default)]
     direction: String,
+    #[serde(default)]
+    include_inaccessible: bool,
 }
 
 #[derive(Clone, Default, serde::Deserialize)]
@@ -5725,8 +5741,12 @@ fn change_github_tag(
             log::error!("Unable to change GitHub repository tag: {error}");
             StatusCode::BAD_REQUEST
         })?;
-    let url = format!(
-        "/github?q={}&owner={}&visibility={}&permission={}&language={}&size_filter={}&pushed_filter={}&tag={}&sort={}&direction={}&{}={changed}",
+    Ok(Redirect::to(&github_tag_return_url(&form, remove, changed)))
+}
+
+fn github_tag_return_url(form: &GitHubTagForm, remove: bool, changed: usize) -> String {
+    format!(
+        "/github?q={}&owner={}&visibility={}&permission={}&language={}&size_filter={}&pushed_filter={}&tag={}&sort={}&direction={}&include_inaccessible={}&{}={changed}",
         encode_query_value(&form.q),
         encode_query_value(&form.owner),
         encode_query_value(&form.visibility),
@@ -5737,9 +5757,9 @@ fn change_github_tag(
         encode_query_value(&form.tag_filter),
         encode_query_value(&form.sort),
         encode_query_value(&form.direction),
+        form.include_inaccessible,
         if remove { "untagged" } else { "tagged" }
-    );
-    Ok(Redirect::to(&url))
+    )
 }
 
 async fn tags_page(
@@ -5875,6 +5895,19 @@ async fn directory_page(
     })
 }
 
+fn directory_tag_return_url(form: &ApplyPrincipalTagForm) -> String {
+    format!(
+        "/directory?name_filter={}&email_filter={}&type_filter={}&status_filter={}&departure_filter={}&organization_filter={}&tag_filter={}",
+        encode_query_value(&form.name_filter),
+        encode_query_value(&form.email_filter),
+        encode_query_value(&form.type_filter),
+        encode_query_value(&form.status_filter),
+        encode_query_value(&form.departure_filter),
+        encode_query_value(&form.organization_filter),
+        encode_query_value(&form.tag_filter),
+    )
+}
+
 async fn apply_directory_tag(
     State(state): State<Arc<AppState>>,
     Form(form): Form<ApplyPrincipalTagForm>,
@@ -5893,7 +5926,7 @@ async fn apply_directory_tag(
             StatusCode::BAD_REQUEST
         },
     )?;
-    Ok(Redirect::to("/directory"))
+    Ok(Redirect::to(&directory_tag_return_url(&form)))
 }
 
 async fn remove_directory_tag(
@@ -5910,7 +5943,7 @@ async fn remove_directory_tag(
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     database::directory::remove_principal_tag(&database, &principal_ids, &form.tag)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    Ok(Redirect::to("/directory"))
+    Ok(Redirect::to(&directory_tag_return_url(&form)))
 }
 
 async fn apply_principal_tag(
@@ -7835,6 +7868,53 @@ mod tests {
         assert!(!complete.spinner);
         assert_eq!(complete.value, "Complete: Research");
         assert_eq!(complete.value_class, "text-success");
+    }
+
+    #[test]
+    fn tag_action_redirects_preserve_directory_and_github_filters() {
+        let person_form: ApplyPrincipalTagForm = serde_json::from_value(serde_json::json!({
+            "tag": "keep", "selected_principal_ids": "1",
+            "name_filter": "A & B", "email_filter": "person+alias@example.test",
+            "type_filter": "person", "status_filter": "active", "departure_filter": ">2026-01-01",
+            "organization_filter": "Research", "tag_filter": "keep,!needs-review"
+        }))
+        .unwrap();
+        let uri = directory_tag_return_url(&person_form).parse().unwrap();
+        let Query(query) = Query::<DirectoryQuery>::try_from_uri(&uri).unwrap();
+        assert_eq!(query.name_filter, person_form.name_filter);
+        assert_eq!(query.email_filter, person_form.email_filter);
+        assert_eq!(query.type_filter, person_form.type_filter);
+        assert_eq!(query.status_filter, person_form.status_filter);
+        assert_eq!(query.departure_filter, person_form.departure_filter);
+        assert_eq!(query.organization_filter, person_form.organization_filter);
+        assert_eq!(query.tag_filter, person_form.tag_filter);
+
+        let github_form: GitHubTagForm = serde_json::from_value(serde_json::json!({
+            "tag": "keep", "selected_repository_ids": "1", "q": "A & B",
+            "owner": "org", "visibility": "private", "permission": "admin",
+            "language": "Rust", "size_filter": ">50", "pushed_filter": "<2026-01-01",
+            "tag_filter": "keep,!needs-review", "sort": "size", "direction": "desc",
+            "include_inaccessible": true
+        }))
+        .unwrap();
+        for remove in [false, true] {
+            let uri = github_tag_return_url(&github_form, remove, 1)
+                .parse()
+                .unwrap();
+            let Query(query) = Query::<GitHubQuery>::try_from_uri(&uri).unwrap();
+            assert_eq!(query.q, github_form.q);
+            assert_eq!(query.owner, github_form.owner);
+            assert_eq!(query.visibility, github_form.visibility);
+            assert_eq!(query.permission, github_form.permission);
+            assert_eq!(query.language, github_form.language);
+            assert_eq!(query.size_filter, github_form.size_filter);
+            assert_eq!(query.pushed_filter, github_form.pushed_filter);
+            assert_eq!(query.tag, github_form.tag_filter);
+            assert_eq!(query.sort, github_form.sort);
+            assert_eq!(query.direction, github_form.direction);
+            assert!(query.include_inaccessible);
+            assert_eq!(if remove { query.untagged } else { query.tagged }, 1);
+        }
     }
 
     #[test]

@@ -128,6 +128,13 @@
         {% endfor %}
     </div>
     <form id="directory-tag-form" method="post" action="/directory/tags" class="d-flex align-items-center gap-2 mb-2 boreal-report-hide">
+        <input type="hidden" name="name_filter" value="{{ name_filter }}">
+        <input type="hidden" name="email_filter" value="{{ email_filter }}">
+        <input type="hidden" name="type_filter" value="{{ type_filter }}">
+        <input type="hidden" name="status_filter" value="{{ status_filter }}">
+        <input type="hidden" name="departure_filter" value="{{ departure_filter }}">
+        <input type="hidden" name="organization_filter" value="{{ organization_filter }}">
+        <input type="hidden" name="tag_filter" value="{{ tag_filter }}">
         <input type="hidden" id="directory-selected-principal-ids" name="selected_principal_ids" value="">
         <label class="small fw-semibold" for="directory-apply-tag">Apply Person tag:</label>
         <select id="directory-apply-tag" class="form-select form-select-sm w-auto" name="tag" required>
