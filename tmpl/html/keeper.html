@@ -1,32 +1,39 @@
 {% extends "base.html" %}
 {% block content %}
+{% if query.print %}
+<div class="boreal-print-actions d-flex justify-content-end mb-3"><button class="btn btn-primary" type="button" onclick="window.print()"><i class="bi bi-printer me-1"></i>Print / Save PDF</button></div>
+<p class="small">View: {% if query.all %}All folders{% else %}{{ current_path }}{% endif %}. Name: {{ query.name }} · Path: {{ query.path }} · Shared with: {{ query.shared_to }} · Permissions: {{ query.permission }} · Tag: {{ query.tag }} · User tag: {{ query.user_tag }} · Include inaccessible: {{ query.include_inaccessible }} · Sort: {{ query.sort }} {{ query.direction }}</p>
+{% endif %}
 <div class="d-flex justify-content-between align-items-center mb-2">
-    <div><h1 class="h3 mb-0"><i class="bi bi-shield-lock-fill me-2"></i>Keeper Explorer</h1><div class="small text-body-secondary">Folder and record metadata only. Credentials, record fields, notes and attachment contents stay in Keeper.</div></div>
-    <div class="d-flex gap-2">
+    <div><h1 class="h3 mb-0"><img class="boreal-service-icon me-2" src="/assets/keeper-logo.svg" alt="">Keeper Explorer</h1><div class="small text-body-secondary">Folder and record metadata only. Credentials, record fields, notes and attachment contents stay in Keeper.</div></div>
+    <div class="d-flex gap-2 boreal-report-hide">
     {% if !query.folder.is_empty() && !query.all %}<a href="{{ parent_url }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-up me-1"></i>Up</a>{% else %}<button type="button" class="btn btn-sm btn-outline-secondary" disabled><i class="bi bi-arrow-up me-1"></i>Up</button>{% endif %}
     <a href="/keeper" class="btn btn-sm btn-outline-primary" title="Browse My Vault base"><i class="bi bi-house-door me-1"></i>Base</a>
     <a class="btn btn-sm btn-outline-secondary" href="https://keepersecurity.com/vault/" target="_blank" rel="noopener noreferrer"><i class="bi bi-box-arrow-up-right me-1"></i>Open Keeper</a></div>
 </div>
 {% if query.tagged > 0 %}<div class="alert alert-success py-2">Updated {{ query.tagged }} tag assignments.</div>{% endif %}
 {% if query.untagged > 0 %}<div class="alert alert-success py-2">Removed {{ query.untagged }} tag assignments.</div>{% endif %}
-<nav aria-label="Keeper folders" class="d-flex align-items-center gap-2 mb-2">
+<nav aria-label="Keeper folders" class="boreal-report-hide d-flex align-items-center gap-2 mb-2">
     <form action="/keeper" method="get" class="d-flex gap-2"><label for="keeper-folder" class="visually-hidden">Go to folder</label><select id="keeper-folder" name="folder" class="form-select form-select-sm"><option value="">My Vault /</option>{% for location in locations %}{% if !location.uid.is_empty() %}<option value="{{ location.uid }}"{% if location.uid == query.folder %} selected{% endif %}>{{ location.path }}</option>{% endif %}{% endfor %}</select><button class="btn btn-sm btn-outline-primary">Go</button></form>
     <span class="small text-body-secondary">{% if query.all %}All folders and records{% else %}{{ current_path }}{% endif %}</span>
 </nav>
-<form method="get" action="/keeper" id="keeper-filter-form">
+<form method="get" action="/keeper" id="keeper-filter-form" class="boreal-report-hide">
     <input type="hidden" name="folder" value="{{ query.folder }}"><input type="hidden" name="tag" value="{{ query.tag }}">
     <div class="d-flex flex-wrap gap-1 mb-2">
         {% for tag in filter_tags %}
         <button type="button" data-keeper-tag="{{ tag.slug }}" class="btn btn-sm rounded-pill" title="{{ tag.description }} (click to include; right-click to exclude)" style="border-color: {{ tag.color }};{% if tag.selected %} background:{{ tag.color }};color:{{ tag.text_color }};{% else if tag.excluded %} background:repeating-linear-gradient(135deg,transparent,transparent 4px,{{ tag.color }} 4px,{{ tag.color }} 7px);{% else %} color:{{ tag.color }};{% endif %}">{{ tag.name }}</button>
         {% endfor %}
     </div>
+    <input type="hidden" name="user_tag" value="{{ query.user_tag }}">
+    <div class="d-flex flex-wrap gap-1 align-items-center mb-2"><span class="small fw-semibold text-body-secondary">User tags:</span><button type="button" class="btn btn-sm rounded-pill {% if query.user_tag.is_empty() %}btn-secondary{% else %}btn-outline-secondary{% endif %}" data-keeper-user-tag="">Any user</button>
+    {% for tag in user_filter_tags %}<button type="button" data-keeper-user-tag="{{ tag.slug }}" class="btn btn-sm rounded-pill" title="{{ tag.description }} (click to include; right-click to exclude)" style="border-color:{{ tag.color }};{% if tag.selected %}background:{{ tag.color }};color:{{ tag.text_color }};{% else %}color:{{ tag.color }};{% endif %}">{% if tag.excluded %}Not {% endif %}{{ tag.name }}</button>{% endfor %}</div>
     <input type="hidden" name="sort" value="{{ query.sort }}"><input type="hidden" name="direction" value="{{ query.direction }}">
     <div class="d-flex gap-3 mb-2 small"><label><input type="checkbox" name="all" value="true"{% if query.all %} checked{% endif %}> Search all folders and records</label><label><input type="checkbox" name="include_inaccessible" value="true"{% if query.include_inaccessible %} checked{% endif %}> Include previously indexed items</label></div>
-    <div class="d-flex gap-2 mb-2"><button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel me-1"></i>Apply filters</button><a class="btn btn-sm btn-outline-secondary" href="/keeper?folder={{ query.folder }}">Clear filters</a></div>
+    <div class="d-flex gap-2 mb-2"><button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel me-1"></i>Apply filters</button><button class="btn btn-sm btn-outline-success" type="submit" formaction="/keeper/export.xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Export Excel</button><button class="btn btn-sm btn-outline-danger" type="submit" name="print" value="true" formtarget="_blank"><i class="bi bi-file-earmark-pdf me-1"></i>Print to PDF</button><a class="btn btn-sm btn-outline-secondary" href="/keeper?folder={{ query.folder }}">Clear filters</a></div>
 </form>
 {% if !tags.is_empty() %}
-<form method="post" action="/keeper/tags" id="keeper-tag-form" class="d-flex flex-wrap gap-2 align-items-center mb-2">
-    <input type="hidden" name="selected_folder_uids"><input type="hidden" name="selected_record_uids">
+<form method="post" action="/keeper/tags" id="keeper-tag-form" class="boreal-report-hide d-flex flex-wrap gap-2 align-items-center mb-2">
+    <input type="hidden" name="user_tag" value="{{ query.user_tag }}"><input type="hidden" name="selected_folder_uids"><input type="hidden" name="selected_record_uids">
     <input type="hidden" name="folder" value="{{ query.folder }}"><input type="hidden" name="all" value="{{ query.all }}"><input type="hidden" name="include_inaccessible" value="{{ query.include_inaccessible }}">
     <input type="hidden" name="name" value="{{ query.name }}"><input type="hidden" name="path" value="{{ query.path }}"><input type="hidden" name="shared_to" value="{{ query.shared_to }}"><input type="hidden" name="permission" value="{{ query.permission }}"><input type="hidden" name="tag_filter" value="{{ query.tag }}"><input type="hidden" name="sort" value="{{ query.sort }}"><input type="hidden" name="direction" value="{{ query.direction }}">
     <label for="keeper-apply-tag" class="small fw-semibold">Apply Keeper tag:</label>
@@ -36,33 +43,33 @@
 </form>
 {% endif %}
     <div class="table-responsive border rounded" style="max-height: calc(100vh - 20rem); overflow-y:auto;">
-        <table class="table table-sm table-hover align-middle mb-0">
+        <table class="boreal-keeper-table table table-sm table-hover align-middle mb-0">
             <thead class="sticky-top bg-body"><tr>
-                <th><input type="checkbox" class="form-check-input" id="keeper-select-all" aria-label="Select all visible items"></th>
-                <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="name">Name</button><input class="form-control form-control-sm mt-1" form="keeper-filter-form" name="name" value="{{ query.name }}" placeholder="Search name" aria-label="Search name"></th>
+                <th class="boreal-report-hide"><input type="checkbox" class="form-check-input" id="keeper-select-all" aria-label="Select all visible items"></th>
+                <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="name">Name</button><input class="form-control form-control-sm mt-1 boreal-report-hide" form="keeper-filter-form" name="name" value="{{ query.name }}" placeholder="Search name" aria-label="Search name"></th>
                 <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="type">Type</button></th>
-                <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="path">Path</button><input class="form-control form-control-sm mt-1" form="keeper-filter-form" name="path" value="{{ query.path }}" placeholder="Search path" aria-label="Search path"></th>
+                <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="path">Path</button><input class="form-control form-control-sm mt-1 boreal-report-hide" form="keeper-filter-form" name="path" value="{{ query.path }}" placeholder="Search path" aria-label="Search path"></th>
                 <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="modified">Modified (UTC)</button></th>
                 <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="attachments">Attachments</button></th>
                 <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="size">File / attachment bytes</button></th>
-                <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="shared">Folder shared with</button><input class="form-control form-control-sm mt-1" form="keeper-filter-form" name="shared_to" value="{{ query.shared_to }}" placeholder="Person or team" aria-label="Filter sharing"></th>
-                <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="permission">Folder permissions</button><input class="form-control form-control-sm mt-1" form="keeper-filter-form" name="permission" value="{{ query.permission }}" placeholder="Search permission" aria-label="Filter permissions"></th>
+                <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="permission">Permissions</button><div class="d-flex gap-1 mt-1 boreal-report-hide"><input class="form-control form-control-sm" form="keeper-filter-form" name="shared_to" value="{{ query.shared_to }}" placeholder="Person or team" aria-label="Filter users"><input class="form-control form-control-sm" form="keeper-filter-form" name="permission" value="{{ query.permission }}" placeholder="Permission" aria-label="Filter permissions"></div></th>
             </tr></thead>
             <tbody>
-            {% for entry in entries %}<tr{% if !entry.is_accessible %} class="opacity-50"{% endif %}>
-                <td><input class="form-check-input keeper-select" type="checkbox" value="{{ entry.uid }}" data-kind="{% if entry.is_folder %}folder{% else %}record{% endif %}" aria-label="Select {{ entry.name }}"></td>
-                <td><div class="fw-semibold">{% if entry.is_folder %}<a href="/keeper?folder={{ entry.uid }}"><i class="bi bi-folder me-1"></i>{{ entry.name }}</a>{% else %}<i class="bi bi-file-earmark-lock me-1"></i>{{ entry.name }}{% endif %}</div><details class="small text-body-secondary"><summary>UID</summary>{{ entry.uid }}</details>{% for tag in entry.tags %}<span class="badge rounded-pill me-1" title="{{ tag.description }}" style="background:{{ tag.color }}">{{ tag.name }}</span>{% endfor %}</td>
-                <td class="small">{{ entry.item_type }}</td><td class="small">{{ entry.folder_path }}</td>
-                <td class="small text-nowrap">{% if entry.modified.is_empty() %}—{% else %}{{ entry.modified }}{% endif %}</td>
-                <td class="small">{% if entry.is_folder %}—{% else %}{{ entry.attachment_count }}{% endif %}</td>
-                <td class="small">{% if entry.size_bytes > 0 %}{{ entry.size_bytes }}{% else %}—{% endif %}</td>
-                <td class="small">{% for access in entry.access %}<div><span class="badge text-bg-secondary me-1">{{ access.target_kind }}</span>{{ access.shared_to }}</div>{% endfor %}</td>
-                <td class="small">{% for access in entry.access %}<div{% if access.permissions.contains("Manage") %} class="fw-semibold text-warning-emphasis"{% endif %}>{{ access.permissions }}</div>{% endfor %}</td>
-            </tr>{% else %}<tr><td colspan="9" class="text-center text-body-secondary py-4">No items match these filters. Run a Keeper metadata update to import vault folders and records.</td></tr>{% endfor %}
+            {% for entry in entries %}<tr{% if !entry.record.is_accessible %} class="opacity-50"{% endif %}>
+                <td class="boreal-report-hide"><input class="form-check-input keeper-select" type="checkbox" value="{{ entry.record.uid }}" data-kind="{% if entry.record.is_folder %}folder{% else %}record{% endif %}" aria-label="Select {{ entry.record.name }}"></td>
+                <td><div class="fw-semibold">{% if entry.record.is_folder %}<a href="/keeper?folder={{ entry.record.uid }}"><i class="bi bi-folder me-1"></i>{{ entry.record.name }}</a>{% else %}<i class="bi bi-file-earmark-lock me-1"></i>{{ entry.record.name }}{% endif %}</div><span class="boreal-print-only small">UID: {{ entry.record.uid }}</span><details class="small text-body-secondary boreal-report-hide"><summary>UID</summary>{{ entry.record.uid }}</details>{% for tag in entry.record.tags %}<span class="badge rounded-pill me-1" title="{{ tag.description }}" style="background:{{ tag.color }}">{{ tag.name }}</span>{% endfor %}</td>
+                <td class="small">{{ entry.record.item_type }}</td><td class="small">{{ entry.record.folder_path }}</td>
+                <td class="small text-nowrap">{% if entry.record.modified.is_empty() %}—{% else %}{{ entry.record.modified }}{% endif %}</td>
+                <td class="small">{% if entry.record.is_folder %}—{% else %}{{ entry.record.attachment_count }}{% endif %}</td>
+                <td class="small">{% if entry.record.size_bytes > 0 %}{{ entry.record.size_bytes }}{% else %}—{% endif %}</td>
+                <td class="small">{% for group in entry.permissions %}<section class="mb-2"><div class="small fw-semibold text-body-secondary mb-1">{{ group.label }}</div><div class="d-flex flex-wrap gap-1">{% for user in group.users %}
+                    {% if user.directory_url.len() > 0 %}<a href="{{ user.directory_url }}" class="badge rounded-pill boreal-unknown-identity text-decoration-none" title="{{ user.label }} — {{ user.tag_details }}. Click to add to Persons"><i class="bi bi-person-question me-1" aria-hidden="true"></i>{{ user.label }}</a>{% else %}<span class="badge rounded-pill {% if user.unknown %}boreal-unknown-identity{% else if !user.tagged %}text-bg-light border text-body{% endif %}" {% if user.tagged %}style="background-color:{{ user.color }};color:{{ user.text_color }}"{% endif %} title="{{ user.label }} — {{ user.tag_details }}">{% if user.unknown %}<i class="bi bi-person-question me-1" aria-hidden="true"></i>{% endif %}{{ user.label }}</span>{% endif %}
+                {% endfor %}</div></section>{% else %}—{% endfor %}</td>
+            </tr>{% else %}<tr><td colspan="8" class="text-center text-body-secondary py-4">No items match these filters. Run a Keeper metadata update to import vault folders and records.</td></tr>{% endfor %}
             </tbody>
         </table>
     </div>
-    <div class="d-flex align-items-center gap-3 mt-2"><span class="small text-body-secondary">{{ entries.len() }} items. Records can appear in multiple folders; their tags apply everywhere. Sharing columns show folder access, not direct record grants.</span></div>
+    <div class="d-flex align-items-center gap-3 mt-2"><span class="small text-body-secondary">{{ entries.len() }} items. Records can appear in multiple folders; their tags apply everywhere. Permissions show folder access, not direct record grants.</span></div>
 
 <script>
 (() => {
@@ -84,6 +91,17 @@
             event.preventDefault();
             const value = (exclude ? '!' : '') + button.dataset.keeperTag;
             form.elements.tag.value = form.elements.tag.value === value ? '' : value;
+            form.requestSubmit();
+        };
+        button.addEventListener('click', event => apply(event, false));
+        button.addEventListener('contextmenu', event => apply(event, true));
+    });
+    document.querySelectorAll('[data-keeper-user-tag]').forEach(button => {
+        const apply = (event, exclude) => {
+            event.preventDefault();
+            const slug = button.dataset.keeperUserTag;
+            const value = (exclude && slug ? '!' : '') + slug;
+            form.elements.user_tag.value = form.elements.user_tag.value === value ? '' : value;
             form.requestSubmit();
         };
         button.addEventListener('click', event => apply(event, false));
@@ -117,4 +135,5 @@
     });
 })();
 </script>
+{% if query.print %}<script>document.body.classList.add("boreal-print-report");</script>{% endif %}
 {% endblock %}

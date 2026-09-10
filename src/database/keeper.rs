@@ -23,6 +23,8 @@ pub struct EntryRow {
 
 #[derive(Debug, Clone)]
 pub struct AccessRow {
+    pub known: bool,
+    pub tags: Vec<Tag>,
     pub shared_to: String,
     pub permissions: String,
     pub target_kind: String,
@@ -128,6 +130,7 @@ pub struct ListOptions<'a> {
     pub shared_to: &'a str,
     pub permission: &'a str,
     pub tag: &'a str,
+    pub user_tag: &'a str,
     pub include_inaccessible: bool,
     pub sort: &'a str,
     pub descending: bool,
@@ -165,6 +168,8 @@ pub fn list(
         Ok((
             r.get::<_, String>(0)?,
             AccessRow {
+                known: false,
+                tags: Vec::new(),
                 shared_to: r.get(1)?,
                 permissions: r.get(2)?,
                 target_kind: r.get(3)?,
@@ -173,6 +178,44 @@ pub fn list(
     })? {
         let (uid, access) = result?;
         access_map.entry(uid).or_default().push(access);
+    }
+    // Resolve primary addresses and aliases, without treating team names as users.
+    let mut known = HashSet::new();
+    let mut user_tags: HashMap<String, Vec<Tag>> = HashMap::new();
+    let directory_tags =
+        super::inventory::list_tags_for_scope(database, super::inventory::TagScope::Directory)?;
+    let directory_tags: HashMap<_, _> = directory_tags
+        .into_iter()
+        .map(|t| (t.slug.clone(), t))
+        .collect();
+    let mut statement = connection.prepare("WITH emails AS (
+        SELECT principal_id, lower(trim(email)) AS email FROM principal_emails
+        UNION SELECT id, lower(trim(primary_email)) FROM principals WHERE primary_email IS NOT NULL)
+        SELECT e.email,t.slug FROM emails e LEFT JOIN principal_tags pt ON pt.principal_id=e.principal_id LEFT JOIN tags t ON t.id=pt.tag_id ORDER BY t.name COLLATE NOCASE")?;
+    for result in statement.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+    })? {
+        let (email, slug) = result?;
+        known.insert(email.clone());
+        if let Some(tag) = slug.and_then(|s| directory_tags.get(&s)) {
+            let tags = user_tags.entry(email).or_default();
+            if !tags.iter().any(|t| t.slug == tag.slug) {
+                tags.push(tag.clone());
+            }
+        }
+    }
+    for access in access_map.values_mut().flatten() {
+        if access.target_kind == "team" {
+            continue;
+        }
+        let email = access
+            .shared_to
+            .strip_prefix("(Team User)")
+            .unwrap_or(&access.shared_to)
+            .trim()
+            .to_lowercase();
+        access.known = known.contains(&email);
+        access.tags = user_tags.get(&email).cloned().unwrap_or_default();
     }
     // Show folder sharing context on records; this is not a claim about direct record grants.
     let inherited_access = |uid: &str| {
@@ -274,8 +317,18 @@ pub fn list(
         .tag
         .strip_prefix('!')
         .map_or((false, options.tag), |s| (true, s));
+    let (exclude_user_tag, user_tag) = options
+        .user_tag
+        .strip_prefix('!')
+        .map_or((false, options.user_tag), |s| (true, s));
     entries.retain(|e| {
-        (options.include_inaccessible || e.is_accessible)
+        (user_tag.is_empty()
+            || (e
+                .access
+                .iter()
+                .any(|a| a.target_kind != "team" && a.tags.iter().any(|t| t.slug == user_tag))
+                != exclude_user_tag))
+            && (options.include_inaccessible || e.is_accessible)
             && (options.all || e.parent_uid == options.folder)
             && contains(&e.name, options.name)
             && contains(&e.folder_path, options.path)
@@ -486,6 +539,92 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn keeper_user_tags_resolve_aliases_and_filter_permission_identities() {
+        let db = TestDb::new();
+        let person = super::super::directory::save_manual_principal(
+            &db.database,
+            None,
+            "person",
+            "primary@example.test",
+            "Person",
+            "person",
+            "active",
+            "",
+            "",
+            "",
+        )
+        .unwrap();
+        db.database
+            .connect()
+            .unwrap()
+            .execute(
+                "INSERT INTO principal_emails(principal_id,email) VALUES(?1,?2)",
+                params![person, "person@example.test"],
+            )
+            .unwrap();
+        db.database.connect().unwrap().execute("INSERT OR IGNORE INTO tag_scopes(tag_id,scope) SELECT id,'directory' FROM tags WHERE slug='needs-review'", []).unwrap();
+        super::super::directory::apply_principal_tag(&db.database, &[person], "needs-review")
+            .unwrap();
+        let mut snapshot = fixture();
+        snapshot.folders[2].access[0].shared_to = "PERSON@EXAMPLE.TEST".into();
+        snapshot.folders[2].access.push(FolderAccess {
+            shared_to: "(Team User) primary@example.test".into(),
+            permissions: "Read Only".into(),
+            target_kind: "team-user".into(),
+        });
+        snapshot.folders[1].access.push(FolderAccess {
+            shared_to: "person@example.test".into(),
+            permissions: "Read Only".into(),
+            target_kind: "team".into(),
+        });
+        synchronize(&db.database, &snapshot).unwrap();
+        let matched = list(
+            &db.database,
+            &ListOptions {
+                all: true,
+                user_tag: "needs-review",
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(matched.len(), 3);
+        assert!(matched.iter().all(|entry| {
+            entry
+                .access
+                .iter()
+                .all(|access| access.known && access.tags[0].slug == "needs-review")
+        }));
+        let excluded = list(
+            &db.database,
+            &ListOptions {
+                all: true,
+                user_tag: "!needs-review",
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(excluded.iter().any(|entry| entry.uid == "personal"));
+        assert!(
+            excluded
+                .iter()
+                .all(|entry| !entry.access.iter().any(|a| !a.tags.is_empty()))
+        );
+        assert!(
+            list(
+                &db.database,
+                &ListOptions {
+                    all: true,
+                    user_tag: "needs-review",
+                    permission: "no-such-permission",
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+            .is_empty()
+        );
     }
 
     #[test]

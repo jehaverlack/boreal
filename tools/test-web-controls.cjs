@@ -74,16 +74,18 @@ function element(extra = {}) {
 const boxes = [element({value: 'folder-a', dataset: {kind: 'folder'}, checked: false}),
     element({value: 'record-b', dataset: {kind: 'record'}, checked: false}),
     element({value: 'record-b', dataset: {kind: 'record'}, checked: false})];
+const userPills = [element({dataset: {keeperUserTag: 'needs-review'}}), element({dataset: {keeperUserTag: ''}})];
+let filterSubmissions = 0;
 const tagForm = element({elements: {selected_folder_uids: {}, selected_record_uids: {}}});
 const controls = {
-    'keeper-filter-form': {elements: {sort: {value: ''}, direction: {value: ''}, tag: {value: ''}}},
+    'keeper-filter-form': {requestSubmit() { filterSubmissions++; }, elements: {sort: {value: ''}, direction: {value: ''}, tag: {value: ''}, user_tag: {value: ''}}},
     'keeper-tag-form': tagForm,
     'keeper-select-all': element({checked: false}),
     'keeper-selected-count': {}, 'keeper-apply': {disabled: true}, 'keeper-remove': {disabled: true},
 };
 vm.runInNewContext(keeperScript, {document: {
     getElementById: id => controls[id],
-    querySelectorAll: selector => selector === '.keeper-select' ? boxes : selector === '.keeper-select:checked' ? boxes.filter(box => box.checked) : [],
+    querySelectorAll: selector => selector === '[data-keeper-user-tag]' ? userPills : selector === '.keeper-select' ? boxes : selector === '.keeper-select:checked' ? boxes.filter(box => box.checked) : [],
 }, alert: () => {} });
 controls['keeper-select-all'].checked = true;
 controls['keeper-select-all'].listeners.change({target: controls['keeper-select-all']});
@@ -98,3 +100,81 @@ assert.equal(controls['keeper-selected-count'].textContent, '0 selected');
 assert.equal(controls['keeper-apply'].disabled, true);
 assert.equal(controls['keeper-remove'].disabled, true);
 console.log('Keeper tag controls: selection, deduplication and submission passed');
+
+userPills[0].listeners.click({preventDefault() {}});
+assert.equal(controls['keeper-filter-form'].elements.user_tag.value, 'needs-review');
+userPills[0].listeners.contextmenu({preventDefault() {}});
+assert.equal(controls['keeper-filter-form'].elements.user_tag.value, '!needs-review');
+userPills[1].listeners.click({preventDefault() {}});
+assert.equal(controls['keeper-filter-form'].elements.user_tag.value, '');
+assert.equal(filterSubmissions, 3);
+console.log('Keeper user-tag controls: include, exclude and clear passed');
+
+const metadataScript = base.slice(base.indexOf('            const metadataModalElement ='), start);
+function metadataDialog({background = false, initial = 'running'} = {}) {
+    const events = {};
+    const state = {status: initial, requests: 0, shows: 0, reloads: 0, poll: null};
+    const content = {
+        innerHTML: 'idle',
+        querySelector(selector) {
+            if (selector !== '#metadata-update-modal-content' || this.innerHTML.includes('Metadata update complete')) return null;
+            return {dataset: {updating: String(this.innerHTML === 'running'), complete: String(this.innerHTML === 'idle')}};
+        },
+    };
+    const modal = {
+        querySelector(selector) { return selector === '.modal-content' ? content : content.querySelector(selector); },
+        addEventListener(event, callback) { events[event] = callback; },
+    };
+    const context = vm.createContext({
+        document: {
+            getElementById: () => modal,
+            querySelector: () => null,
+            createElement: () => ({...content}),
+        },
+        window: {
+            sessionStorage: {getItem: () => String(background), removeItem() {}, setItem() {}},
+            location: {reload() { state.reloads++; }},
+            setInterval(callback) { state.poll = callback; },
+        },
+        bootstrap: {Modal: {getOrCreateInstance: () => ({show() { state.shows++; events['show.bs.modal'](); }})}},
+        fetch: async () => { state.requests++; return {ok: true, text: async () => state.status}; },
+        refreshDataAges() {}, refreshMetadataStatusAge() {},
+    });
+    vm.runInContext(metadataScript, context);
+    state.refresh = () => vm.runInContext('refreshMetadataModal()', context);
+    state.dismiss = () => { events['hide.bs.modal'](); events['hidden.bs.modal'](); };
+    state.content = content;
+    return state;
+}
+(async () => {
+    const settle = () => new Promise(resolve => setImmediate(resolve));
+    for (const background of [false, true]) {
+        const state = metadataDialog({background});
+        await settle();
+        assert.equal(state.shows, background ? 0 : 1);
+        state.status = 'idle';
+        await Promise.all([state.refresh(), state.refresh()]);
+        assert.equal(state.requests, 2, 'overlapping polls must be coalesced');
+        assert.match(state.content.innerHTML, /Metadata update complete/);
+        assert.match(state.content.innerHTML, />Done</);
+        assert.equal(state.shows, background ? 1 : 2, 'completion is shown even in background');
+        state.poll(); await state.refresh();
+        assert.equal(state.requests, 2, 'completion must remain until acknowledged');
+        assert.equal(state.reloads, 0);
+        state.dismiss();
+        assert.equal(state.reloads, 1, 'acknowledgement refreshes viewer data');
+        await state.refresh();
+        assert.equal(state.content.innerHTML, 'idle', 'next opening permits a new update');
+    }
+    const idle = metadataDialog({initial: 'idle'});
+    await settle();
+    assert.equal(idle.shows, 0, 'idle page loads must not announce completion');
+    const resumed = metadataDialog({initial: 'idle', background: true});
+    await settle();
+    assert.match(resumed.content.innerHTML, /Metadata update complete/, 'background completion survives navigation');
+    const failed = metadataDialog({background: true});
+    await settle(); failed.status = 'failed'; await failed.refresh();
+    assert.equal(failed.content.innerHTML, 'failed');
+    assert.equal(failed.shows, 1, 'background failures must be visible');
+    console.log('Metadata dialog: completion, acknowledgement, background updates, failures and polling passed');
+})().catch(error => { console.error(error); process.exitCode = 1; });

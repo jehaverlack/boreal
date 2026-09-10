@@ -588,6 +588,55 @@ struct GitHubTemplate {
     print_view: bool,
 }
 
+struct KeeperEntryView {
+    record: database::keeper::EntryRow,
+    permissions: Vec<KeeperPermissionGroup>,
+}
+
+struct KeeperPermissionGroup {
+    label: String,
+    users: Vec<IdentityDisplay>,
+}
+
+fn keeper_entry_view(record: database::keeper::EntryRow) -> KeeperEntryView {
+    let mut groups = std::collections::BTreeMap::<String, Vec<IdentityDisplay>>::new();
+    for access in &record.access {
+        let label = if access.permissions.trim().is_empty() {
+            "Unspecified"
+        } else {
+            access.permissions.trim()
+        };
+        let name = access
+            .shared_to
+            .strip_prefix("(Team User)")
+            .unwrap_or(&access.shared_to)
+            .trim()
+            .to_string();
+        let mut user = identity_display(
+            name,
+            access.known || access.target_kind == "team",
+            &access.tags,
+        );
+        if access.target_kind == "team-user" {
+            user.tag_details = format!("Team member. {}", user.tag_details);
+        }
+        let users = groups.entry(label.to_string()).or_default();
+        if !users
+            .iter()
+            .any(|existing| existing.label.eq_ignore_ascii_case(&user.label))
+        {
+            users.push(user);
+        }
+    }
+    KeeperEntryView {
+        record,
+        permissions: groups
+            .into_iter()
+            .map(|(label, users)| KeeperPermissionGroup { label, users })
+            .collect(),
+    }
+}
+
 #[derive(Template)]
 #[template(path = "keeper.html", config = "askama.toml")]
 struct KeeperTemplate {
@@ -596,7 +645,8 @@ struct KeeperTemplate {
     alerts: Vec<AlertItem>,
     status_items: Vec<StatusItem>,
     poll_rclone: bool,
-    entries: Vec<database::keeper::EntryRow>,
+    entries: Vec<KeeperEntryView>,
+    user_filter_tags: Vec<TagFilterPill>,
     locations: Vec<database::keeper::FolderLocation>,
     current_path: String,
     parent_url: String,
@@ -1092,6 +1142,10 @@ struct GitHubTagForm {
 #[derive(Clone, Default, serde::Deserialize)]
 struct KeeperQuery {
     #[serde(default)]
+    user_tag: String,
+    #[serde(default)]
+    print: bool,
+    #[serde(default)]
     folder: String,
     #[serde(default)]
     all: bool,
@@ -1119,6 +1173,8 @@ struct KeeperQuery {
 
 #[derive(serde::Deserialize)]
 struct KeeperTagForm {
+    #[serde(default)]
+    user_tag: String,
     #[serde(default)]
     selected_folder_uids: String,
     #[serde(default)]
@@ -1322,6 +1378,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/assets/acep-logo.png", get(acep_logo))
         .route("/assets/rclone-logo.svg", get(rclone_logo))
         .route("/assets/google-drive-logo.svg", get(google_drive_logo))
+        .route("/assets/keeper-logo.svg", get(keeper_logo))
         .route(
             "/assets/google-cloud-project-selection.png",
             get(google_cloud_project_selection),
@@ -1375,6 +1432,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/ui/google-drive-launcher", get(ui_google_drive_launcher))
         .route("/ui/github-launcher", get(ui_github_launcher))
         .route("/keeper", get(keeper_page))
+        .route("/keeper/export.xlsx", get(export_keeper))
         .route("/keeper/tags", post(apply_keeper_tag))
         .route("/keeper/tags/remove", post(remove_keeper_tag))
         .route("/ui/keeper-primary-nav", get(ui_keeper_primary_nav))
@@ -1544,6 +1602,16 @@ async fn google_drive_logo() -> impl IntoResponse {
             (header::CACHE_CONTROL, "public, max-age=86400"),
         ],
         include_bytes!("../../tmpl/html/img/google-drive-logo.svg").as_slice(),
+    )
+}
+
+async fn keeper_logo() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        include_bytes!("../../tmpl/html/img/keeper-logo.svg").as_slice(),
     )
 }
 
@@ -4821,7 +4889,7 @@ fn keeper_enabled(state: &AppState) -> bool {
 
 async fn ui_keeper_primary_nav(State(state): State<Arc<AppState>>) -> Html<String> {
     if keeper_enabled(&state) {
-        Html("<li id=\"keeper-primary-navigation\" class=\"nav-item\"><a class=\"nav-link boreal-keeper-nav\" href=\"/keeper\" title=\"Explore Keeper vault metadata\"><i class=\"bi bi-shield-lock-fill me-1\"></i>Keeper</a></li>".to_string())
+        Html("<li id=\"keeper-primary-navigation\" class=\"nav-item\"><a class=\"nav-link boreal-keeper-nav\" href=\"/keeper\" title=\"Explore Keeper vault metadata\"><img class=\"boreal-service-icon me-1\" src=\"/assets/keeper-logo.svg\" alt=\"\">Keeper</a></li>".to_string())
     } else {
         Html("<li id=\"keeper-primary-navigation\" class=\"d-none\"></li>".to_string())
     }
@@ -4829,7 +4897,7 @@ async fn ui_keeper_primary_nav(State(state): State<Arc<AppState>>) -> Html<Strin
 
 async fn ui_keeper_launcher(State(state): State<Arc<AppState>>) -> Html<String> {
     if keeper_enabled(&state) {
-        Html("<li id=\"keeper-launcher\" class=\"nav-item\"><a class=\"nav-link boreal-keeper-nav\" href=\"https://keepersecurity.com/vault/\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"Open Keeper Web Vault\" aria-label=\"Open Keeper Web Vault\"><i class=\"bi bi-shield-lock-fill\" aria-hidden=\"true\"></i></a></li>".to_string())
+        Html("<li id=\"keeper-launcher\" class=\"nav-item\"><a class=\"nav-link boreal-keeper-nav\" href=\"https://keepersecurity.com/vault/\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"Open Keeper Web Vault\" aria-label=\"Open Keeper Web Vault\"><img class=\"boreal-service-icon\" src=\"/assets/keeper-logo.svg\" alt=\"\" aria-hidden=\"true\"></a></li>".to_string())
     } else {
         Html("<li id=\"keeper-launcher\" class=\"d-none\"></li>".to_string())
     }
@@ -4845,22 +4913,7 @@ async fn keeper_page(
     let database = state
         .database()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let entries = database::keeper::list(
-        &database,
-        &database::keeper::ListOptions {
-            folder: &query.folder,
-            all: query.all,
-            name: &query.name,
-            path: &query.path,
-            shared_to: &query.shared_to,
-            permission: &query.permission,
-            tag: &query.tag,
-            include_inaccessible: query.include_inaccessible,
-            sort: &query.sort,
-            descending: query.direction.eq_ignore_ascii_case("desc"),
-        },
-    )
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let entries = keeper_entries(&database, &query)?;
     let locations = database::keeper::folder_locations(&database)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let current_path = locations
@@ -4898,6 +4951,22 @@ async fn keeper_page(
         })
         .collect::<Vec<_>>();
     filter_tags.push(no_tags_filter_pill(&query.tag));
+    let user_filter_tags = database::inventory::list_tags_for_scope(
+        &database,
+        database::inventory::TagScope::Directory,
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .into_iter()
+    .map(|tag| TagFilterPill {
+        selected: query.user_tag == tag.slug,
+        excluded: query.user_tag.strip_prefix('!') == Some(tag.slug.as_str()),
+        text_color: tag_text_color(&tag.color),
+        slug: tag.slug,
+        name: tag.name,
+        description: tag.description,
+        color: tag.color,
+    })
+    .collect();
     let rclone_state = state.rclone_state();
     let google_client_state = state.google_client_state();
     let google_remotes_state = state.google_remotes_state();
@@ -4921,7 +4990,8 @@ async fn keeper_page(
             &state.update_state(),
         ),
         poll_rclone: should_poll_ui(&rclone_state, &google_remotes_state, &metadata_state),
-        entries,
+        entries: entries.into_iter().map(keeper_entry_view).collect(),
+        user_filter_tags,
         locations,
         current_path,
         parent_url,
@@ -4929,6 +4999,179 @@ async fn keeper_page(
         filter_tags,
         query,
     })
+}
+
+fn keeper_entries(
+    database: &database::Database,
+    query: &KeeperQuery,
+) -> Result<Vec<database::keeper::EntryRow>, StatusCode> {
+    database::keeper::list(
+        database,
+        &database::keeper::ListOptions {
+            folder: &query.folder,
+            all: query.all,
+            name: &query.name,
+            path: &query.path,
+            shared_to: &query.shared_to,
+            permission: &query.permission,
+            tag: &query.tag,
+            user_tag: &query.user_tag,
+            include_inaccessible: query.include_inaccessible,
+            sort: &query.sort,
+            descending: query.direction.eq_ignore_ascii_case("desc"),
+        },
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn export_keeper(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<KeeperQuery>,
+) -> Result<Response<Body>, StatusCode> {
+    if !keeper_enabled(&state) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let database = state
+        .database()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let entries = keeper_entries(&database, &query)?;
+    let bytes = keeper_workbook(&entries, &query).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    xlsx_download(bytes, "boreal-keeper-report.xlsx")
+}
+
+fn keeper_workbook(
+    entries: &[database::keeper::EntryRow],
+    query: &KeeperQuery,
+) -> Result<Vec<u8>, zip::result::ZipError> {
+    let context = vec![
+        ("View".into(), "Keeper vault metadata".into()),
+        ("Folder UID (empty = My Vault)".into(), query.folder.clone()),
+        ("All folders".into(), query.all.to_string()),
+        (
+            "Results (folder memberships)".into(),
+            entries.len().to_string(),
+        ),
+        ("Name".into(), filter_value(&query.name)),
+        ("Path".into(), filter_value(&query.path)),
+        ("Shared with".into(), filter_value(&query.shared_to)),
+        ("Permissions".into(), filter_value(&query.permission)),
+        ("Tag".into(), filter_value(&query.tag)),
+        ("User tag".into(), filter_value(&query.user_tag)),
+        (
+            "Include inaccessible".into(),
+            query.include_inaccessible.to_string(),
+        ),
+        (
+            "Sort".into(),
+            format!(
+                "{} {}",
+                if query.sort.is_empty() {
+                    "name"
+                } else {
+                    &query.sort
+                },
+                if query.direction.eq_ignore_ascii_case("desc") {
+                    "desc"
+                } else {
+                    "asc"
+                }
+            ),
+        ),
+        (
+            "Sharing".into(),
+            "Folder sharing context; not direct record grants".into(),
+        ),
+    ];
+    let rows = entries
+        .iter()
+        .map(|entry| {
+            vec![
+                entry.name.clone().into(),
+                (if entry.is_folder { "Folder" } else { "Record" }).into(),
+                entry.item_type.clone().into(),
+                entry.uid.clone().into(),
+                entry.parent_uid.clone().into(),
+                entry.folder_path.clone().into(),
+                entry.modified.clone().into(),
+                if entry.is_folder {
+                    "".into()
+                } else {
+                    xlsx::Cell::Number(entry.attachment_count.into())
+                },
+                if entry.size_bytes > 0 {
+                    xlsx::Cell::Number(entry.size_bytes as u64)
+                } else {
+                    "".into()
+                },
+                entry
+                    .access
+                    .iter()
+                    .map(|a| a.shared_to.as_str())
+                    .collect::<Vec<_>>()
+                    .join(
+                        "
+",
+                    )
+                    .into(),
+                entry
+                    .access
+                    .iter()
+                    .map(|a| format!("{}: {}", a.shared_to, a.permissions))
+                    .collect::<Vec<_>>()
+                    .join(
+                        "
+",
+                    )
+                    .into(),
+                entry
+                    .access
+                    .iter()
+                    .filter(|a| !a.tags.is_empty())
+                    .map(|a| {
+                        format!(
+                            "{}: {}",
+                            a.shared_to,
+                            a.tags
+                                .iter()
+                                .map(|t| t.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .into(),
+                entry
+                    .tags
+                    .iter()
+                    .map(|t| t.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+                    .into(),
+                (if entry.is_accessible { "Yes" } else { "No" }).into(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    xlsx::workbook(
+        &context,
+        &[
+            "Name",
+            "Kind",
+            "Type",
+            "UID",
+            "Parent / containing folder UID",
+            "Path",
+            "Modified (UTC)",
+            "Attachments",
+            "File / attachment bytes",
+            "Folder shared with",
+            "Folder permissions",
+            "User tags",
+            "Tags",
+            "Accessible",
+        ],
+        &rows,
+    )
 }
 
 fn local_files_enabled(state: &AppState) -> bool {
@@ -5223,7 +5466,8 @@ fn change_keeper_tag(
         StatusCode::BAD_REQUEST
     })?;
     let url = format!(
-        "/keeper?folder={}&all={}&include_inaccessible={}&name={}&path={}&shared_to={}&permission={}&tag={}&sort={}&direction={}&{}={changed}",
+        "/keeper?user_tag={}&folder={}&all={}&include_inaccessible={}&name={}&path={}&shared_to={}&permission={}&tag={}&sort={}&direction={}&{}={changed}",
+        encode_query_value(&form.user_tag),
         encode_query_value(&form.folder),
         form.all,
         form.include_inaccessible,
@@ -7307,13 +7551,14 @@ mod tests {
             keeper_shared_folders: true,
             local_files: false,
         };
-        let html = KeeperTemplate {
+        let mut template = KeeperTemplate {
             title: "Keeper Explorer",
             active_page: "keeper",
             alerts: vec![],
             status_items: vec![],
             poll_rclone: false,
-            entries: vec![database::keeper::EntryRow {
+            user_filter_tags: vec![],
+            entries: vec![keeper_entry_view(database::keeper::EntryRow {
                 uid: "record-one".into(),
                 is_folder: false,
                 name: "<script>alert('title')</script>".into(),
@@ -7325,9 +7570,24 @@ mod tests {
                 modified_ms: 1,
                 attachment_count: 2,
                 size_bytes: 321,
-                access: vec![],
+                access: vec![
+                    database::keeper::AccessRow {
+                        shared_to: "known@example.test".into(),
+                        permissions: "Can Manage Users".into(),
+                        target_kind: "user".into(),
+                        known: true,
+                        tags: vec![tag.clone()],
+                    },
+                    database::keeper::AccessRow {
+                        shared_to: "other@example.test".into(),
+                        permissions: "Read Only".into(),
+                        target_kind: "user".into(),
+                        known: false,
+                        tags: vec![],
+                    },
+                ],
                 tags: vec![tag.clone()],
-            }],
+            })],
             locations: vec![database::keeper::FolderLocation {
                 uid: "personal".into(),
                 path: "/Personal".into(),
@@ -7342,9 +7602,8 @@ mod tests {
                 direction: "desc".into(),
                 ..Default::default()
             },
-        }
-        .render()
-        .unwrap();
+        };
+        let html = template.render().unwrap();
         assert!(!html.contains("<script>alert('title')</script>"));
         for expected in [
             "record-one",
@@ -7359,6 +7618,63 @@ mod tests {
                 "Missing Keeper UI element: {expected}"
             );
         }
+        assert_eq!(template.entries[0].permissions.len(), 2);
+        assert_eq!(template.entries[0].permissions[0].label, "Can Manage Users");
+        assert_eq!(
+            template.entries[0].permissions[0].users[0].label,
+            "known@example.test"
+        );
+        assert!(template.entries[0].permissions[0].users[0].tagged);
+        assert!(template.entries[0].permissions[1].users[0].unknown);
+        assert!(html.contains("User tags:"));
+        assert!(html.contains("/directory/new?email=other%40example.test"));
+        assert!(html.contains("/keeper/export.xlsx"));
+        assert!(html.contains("Print to PDF"));
+        assert!(html.contains("/assets/keeper-logo.svg"));
+        template.query.print = true;
+        let print = template.render().unwrap();
+        assert!(print.contains("Print / Save PDF"));
+        assert!(print.contains("document.body.classList.add(\"boreal-print-report\")"));
+        assert!(print.contains("UID: record-one"));
+        template.entries[0].record.name = "=1+1".into();
+        let bytes = keeper_workbook(
+            &template
+                .entries
+                .iter()
+                .map(|e| e.record.clone())
+                .collect::<Vec<_>>(),
+            &template.query,
+        )
+        .unwrap();
+        let mut workbook = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        use std::io::Read;
+        let mut context = String::new();
+        workbook
+            .by_name("xl/worksheets/sheet1.xml")
+            .unwrap()
+            .read_to_string(&mut context)
+            .unwrap();
+        assert!(context.contains("personal"));
+        assert!(context.contains("modified desc"));
+        let mut rows = String::new();
+        workbook
+            .by_name("xl/worksheets/sheet2.xml")
+            .unwrap()
+            .read_to_string(&mut rows)
+            .unwrap();
+        for value in [
+            "record-one",
+            "Needs review",
+            "2026-09-09 12:34",
+            "=1+1",
+            "<v>321</v>",
+        ] {
+            assert!(rows.contains(value), "Missing export value: {value}");
+        }
+        assert!(
+            !rows.contains("<f>"),
+            "Record values must remain text, not Excel formulas"
+        );
     }
     use crate::app::MetadataProgress;
 

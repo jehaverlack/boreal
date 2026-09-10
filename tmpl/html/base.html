@@ -240,10 +240,10 @@
         .navbar .boreal-local-files-nav.active { color: #36454f !important; }
         .navbar .boreal-local-files-nav:hover,
         .navbar .boreal-local-files-nav:focus { color: #212529 !important; }
-        .navbar .boreal-keeper-nav,
-        .navbar .boreal-keeper-nav.active { color: #daa520; }
-        .navbar .boreal-keeper-nav:hover,
-        .navbar .boreal-keeper-nav:focus { color: #ffda6a; }
+        .navbar .nav-link.boreal-keeper-nav,
+        .navbar .nav-link.boreal-keeper-nav.active,
+        .navbar .nav-link.boreal-keeper-nav:hover,
+        .navbar .nav-link.boreal-keeper-nav:focus { color: #ffc700 !important; }
 
         body.boreal-print-report {
             height: auto !important;
@@ -306,6 +306,13 @@
         body.boreal-print-report .boreal-github-table td.text-nowrap {
             white-space: normal !important;
         }
+
+        body.boreal-print-report .boreal-keeper-table { width: 100%; table-layout: fixed; font-size: 9pt; }
+        body.boreal-print-report .boreal-keeper-table td { overflow-wrap: anywhere; white-space: normal !important; }
+        body.boreal-print-report .boreal-keeper-table thead { position: static !important; }
+        body.boreal-print-report .boreal-keeper-table tr { break-inside: avoid; }
+        body.boreal-print-report .boreal-keeper-table th:last-child { width: 30%; }
+        body.boreal-print-report .boreal-keeper-table .badge { white-space: normal; max-width: 100%; }
 
         @page {
             size: legal landscape;
@@ -832,6 +839,9 @@
                 catch (_error) { return false; }
             })();
             let metadataRefreshPending = false;
+            let metadataPollInFlight = false;
+            let metadataUpdateObserved = metadataModalDismissed || metadataModalElement
+                ?.querySelector("#metadata-update-modal-content")?.dataset.updating === "true";
 
             async function replaceFromEndpoint(url, selector) {
                 const current = document.querySelector(selector);
@@ -900,12 +910,13 @@
             }
 
             async function refreshMetadataModal(autoShow = false) {
-                if (!metadataModalElement) return;
+                if (!metadataModalElement || metadataRefreshPending || metadataPollInFlight) return;
+                metadataPollInFlight = true;
                 try {
                     const response = await fetch("/ui/metadata-update-modal", { cache: "no-store" });
                     if (!response.ok) return;
                     const modalContent = metadataModalElement.querySelector(".modal-content");
-                    const wasUpdating = modalContent
+                    const wasUpdating = metadataUpdateObserved || modalContent
                         .querySelector("#metadata-update-modal-content")
                         ?.dataset.updating === "true";
                     const responseHtml = await response.text();
@@ -914,7 +925,7 @@
                     const isUpdating = parsed
                         .querySelector("#metadata-update-modal-content")
                         ?.dataset.updating === "true";
-                    const wasBackgrounded = metadataModalDismissed;
+                    metadataUpdateObserved = isUpdating;
                     if (!isUpdating) {
                         try { window.sessionStorage.removeItem(metadataBackgroundKey); } catch (_error) {}
                     }
@@ -925,19 +936,20 @@
                     refreshMetadataEstimate();
                     if (wasUpdating && !isUpdating && completed) {
                         metadataModalDismissed = false;
-                        if (wasBackgrounded) {
-                            if (document.querySelector("#boreal-drive-summaries")) refreshMetadataUi();
-                            return;
-                        }
                         metadataRefreshPending = true;
                         modalContent.innerHTML = `
                             <div class="modal-header">
-                                <h2 class="modal-title fs-5"><i class="bi bi-check-circle-fill text-success me-2"></i>Metadata update complete</h2>
+                                <h2 class="modal-title fs-5" id="metadataUpdateModalLabel"><i class="bi bi-check-circle-fill text-success me-2"></i>Metadata update complete</h2>
                                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                             </div>
                             <div class="modal-body">The local metadata inventory has finished updating.</div>
                             <div class="modal-footer"><button type="button" class="btn btn-primary" data-bs-dismiss="modal">Done</button></div>`;
+                        metadataModal.show();
                         return;
+                    }
+                    if (wasUpdating && !isUpdating) {
+                        // Show failures too, including updates continued in the background.
+                        metadataModal.show();
                     }
                     if (!isUpdating) metadataModalDismissed = false;
                     const updating = metadataModalElement
@@ -946,6 +958,8 @@
                     if (updating && autoShow && !metadataModalDismissed) metadataModal.show();
                 } catch (_error) {
                     // The footer heartbeat reports application connectivity failures.
+                } finally {
+                    metadataPollInFlight = false;
                 }
             }
 
@@ -990,6 +1004,7 @@
                             body: new URLSearchParams(new FormData(event.target)),
                         });
                         if (!response.ok) throw new Error("Unable to start metadata update");
+                        metadataUpdateObserved = true;
                         metadataModalDismissed = false;
                         try { window.sessionStorage.removeItem(metadataBackgroundKey); } catch (_error) {}
                         await refreshMetadataModal(false);
@@ -1003,7 +1018,7 @@
                     const updating = metadataModalElement
                         .querySelector("#metadata-update-modal-content")
                         ?.dataset.updating === "true";
-                    if (updating) refreshMetadataModal(false);
+                    if (updating || metadataUpdateObserved) refreshMetadataModal(false);
                 }, 1000);
             }
 
