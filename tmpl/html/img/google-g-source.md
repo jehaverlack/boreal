@@ -1,0 +1,1 @@
+Google G logo downloaded without modification from https://developers.google.com/static/identity/images/g-logo.png, linked by Google's branding guidelines: https://developers.google.com/identity/branding-guidelines (2026-09-10).

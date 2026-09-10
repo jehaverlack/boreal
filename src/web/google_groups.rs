@@ -31,6 +31,7 @@ struct GroupsTemplate {
     poll_rclone: bool,
     account: String,
     configured: bool,
+    enabled: bool,
     summary: database::google_groups::Summary,
     query: GroupsQuery,
     groups: Vec<google::groups::Group>,
@@ -188,6 +189,7 @@ pub(super) async fn page(
         ),
         poll_rclone: should_poll_ui(&rclone_state, &remotes, &metadata),
         configured: matches!(google_client_state, GoogleClientState::Ready(_)),
+        enabled: google_groups_enabled(&state),
         account,
         summary,
         groups,
@@ -198,6 +200,9 @@ pub(super) async fn page(
     })
 }
 pub(super) async fn connect(State(state): State<Arc<AppState>>) -> Result<Redirect, StatusCode> {
+    if !google_groups_enabled(&state) {
+        return Ok(Redirect::to("/settings#google-groups-settings"));
+    }
     let result = tokio::task::spawn_blocking(move || {
         google::groups::connect(&state.runtime, || *state.shutdown_receiver().borrow())
     })
@@ -235,6 +240,7 @@ mod tests {
             poll_rclone: false,
             account: String::new(),
             configured: true,
+            enabled: true,
             summary: Default::default(),
             query: Default::default(),
             groups: vec![],

@@ -192,25 +192,14 @@ pub fn copy_source(
     runtime: &Runtime,
     executable: &Path,
     source_kind: &str,
+    source_scope: &str,
     source: &MigrationSource,
     destination_drive_id: &str,
     destination_folder_id: &str,
     immutable: bool,
 ) -> Result<(), RcloneError> {
     let config_path = config::path(runtime)?;
-    let source_remote = if source_kind == "shared-with-me" {
-        format!(
-            "{},shared_with_me=true:{}",
-            RemoteKind::MyDriveRo.name(),
-            source.relative_path.trim_start_matches('/')
-        )
-    } else {
-        format!(
-            "{}:{}",
-            RemoteKind::MyDriveRo.name(),
-            source.relative_path.trim_start_matches('/')
-        )
-    };
+    let source_remote = source_remote(source_kind, source_scope, &source.relative_path)?;
     let destination_root = destination_remote(destination_drive_id, destination_folder_id);
     let destination = format!("{destination_root}{}", source.name);
     let operation = if source.is_directory {
@@ -244,6 +233,31 @@ pub fn copy_source(
     Ok(())
 }
 
+fn source_remote(kind: &str, scope: &str, path: &str) -> Result<String, RcloneError> {
+    let options = if kind == "shared-drive" {
+        let id = scope
+            .strip_prefix(crate::database::inventory::SHARED_DRIVE_SCOPE_PREFIX)
+            .filter(|id| {
+                !id.is_empty()
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            })
+            .ok_or("Invalid Shared Drive source")?;
+        format!(",team_drive={id}")
+    } else if kind == "shared-with-me" {
+        ",shared_with_me=true".into()
+    } else {
+        String::new()
+    };
+    Ok(format!(
+        "{}{}:{}",
+        RemoteKind::MyDriveRo.name(),
+        options,
+        path.trim_start_matches('/')
+    ))
+}
+
 fn destination_remote(drive_id: &str, folder_id: &str) -> String {
     if drive_id.is_empty() {
         format!(
@@ -255,5 +269,30 @@ fn destination_remote(drive_id: &str, folder_id: &str) -> String {
             "{},team_drive={drive_id},root_folder_id={folder_id}:",
             RemoteKind::MyDriveRw.name()
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn shared_drive_copy_uses_source_drive_and_independent_destination() {
+        assert_eq!(
+            source_remote("shared-drive", "shared-drive:source_1", "Research/Folder").unwrap(),
+            "my-drive-ro,team_drive=source_1:Research/Folder"
+        );
+        assert_eq!(
+            destination_remote("target_2", "folder_3"),
+            "my-drive-rw,team_drive=target_2,root_folder_id=folder_3:"
+        );
+        assert_eq!(
+            destination_remote("", "personal_folder"),
+            "my-drive-rw,root_folder_id=personal_folder:"
+        );
+        assert!(source_remote("shared-drive", "shared-drive:bad,token=value", "Folder").is_err());
+        assert_eq!(
+            source_remote("shared-with-me", "shared-with-me", "Folder").unwrap(),
+            "my-drive-ro,shared_with_me=true:Folder"
+        );
     }
 }

@@ -168,7 +168,7 @@
         <button id="my-drive-update-metadata-button" class="btn btn-sm btn-outline-primary" type="submit" formaction="/metadata/update-selected" disabled>
             <i class="bi bi-arrow-clockwise me-1"></i>Update metadata
         </button>
-        {% if active_page == "my-drive" || active_page == "shared-with-me" %}
+        {% if active_page == "my-drive" || active_page == "shared-with-me" || active_page == "shared-drives" %}
         <button id="my-drive-migrate-button" class="btn btn-sm btn-outline-success" type="submit" formaction="/migrations/new" disabled>
             <i class="bi bi-arrow-right-circle me-1"></i>Migrate
         </button>

@@ -135,7 +135,7 @@ assert.equal(controls['keeper-filter-form'].elements.user_tag.value, 'keep,!need
 console.log('Keeper user-tag controls: three-click cycle, combined terms and clear passed');
 
 const metadataScript = base.slice(base.indexOf('            const metadataModalElement ='), start);
-function metadataDialog({background = false, initial = 'running'} = {}) {
+function metadataDialog({background = false, initial = 'running', selected = []} = {}) {
     const events = {};
     const state = {status: initial, requests: 0, shows: 0, reloads: 0, poll: null};
     const content = {
@@ -145,7 +145,9 @@ function metadataDialog({background = false, initial = 'running'} = {}) {
             return {dataset: {updating: String(this.innerHTML === 'running'), complete: String(this.innerHTML === 'idle')}};
         },
     };
+    state.choices = [{name:'keeper',disabled:false,checked:false},{name:'my_drive',disabled:true,checked:false}];
     const modal = {
+        querySelectorAll() { return state.choices; },
         querySelector(selector) { return selector === '.modal-content' ? content : content.querySelector(selector); },
         addEventListener(event, callback) { events[event] = callback; },
     };
@@ -156,17 +158,19 @@ function metadataDialog({background = false, initial = 'running'} = {}) {
             createElement: () => ({...content}),
         },
         window: {
+            localStorage: {getItem: () => JSON.stringify(selected), setItem() {}},
             sessionStorage: {getItem: () => String(background), removeItem() {}, setItem() {}},
             location: {reload() { state.reloads++; }},
             setInterval(callback) { state.poll = callback; },
         },
         bootstrap: {Modal: {getOrCreateInstance: () => ({show() { state.shows++; events['show.bs.modal'](); }})}},
-        fetch: async () => { state.requests++; return {ok: true, text: async () => state.status}; },
+        fetch: async url => { state.requests++; if (url === '/metadata/acknowledge-error') state.status = 'idle'; return {ok: true, text: async () => state.status}; },
         refreshDataAges() {}, refreshMetadataStatusAge() {},
     });
     vm.runInContext(metadataScript, context);
     state.refresh = () => vm.runInContext('refreshMetadataModal()', context);
     state.dismiss = () => { events['hide.bs.modal'](); events['hidden.bs.modal'](); };
+    state.acknowledge = () => events.submit({target:{id:'metadata-error-acknowledge',querySelector:()=>({disabled:false})},preventDefault(){}});
     state.content = content;
     return state;
 }
@@ -200,6 +204,12 @@ function metadataDialog({background = false, initial = 'running'} = {}) {
     await settle(); failed.status = 'failed'; await failed.refresh();
     assert.equal(failed.content.innerHTML, 'failed');
     assert.equal(failed.shows, 1, 'background failures must be visible');
+    await failed.acknowledge();
+    assert.equal(failed.content.innerHTML,'idle','acknowledgement returns to source selection');
+    assert(!failed.content.innerHTML.includes('Metadata update complete'),'error acknowledgement is not a successful update');
+    const remembered = metadataDialog({initial:'idle',selected:['keeper','my_drive']}); await settle();
+    assert.equal(remembered.choices[0].checked,true);
+    assert.equal(remembered.choices[1].checked,false,'unavailable sources are not restored');
     console.log('Metadata dialog: completion, acknowledgement, background updates, failures and polling passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
 
@@ -211,3 +221,20 @@ vaultPills[2].listeners.click({preventDefault() {}});
 assert.equal(controls['keeper-filter-form'].elements.tag.value, '');
 assert.equal(controls['keeper-filter-form'].elements.user_tag.value, 'keep,!needs-review', 'Any Folder preserves user filters');
 console.log('Keeper vault tags: mixed filters, three-click cycle and Any Folder passed');
+
+const guide = fs.readFileSync(path.join(__dirname, '../tmpl/html/partials/google-setup-guide.html'), 'utf8');
+const guideSteps = [{},{},{},{}], guideBack = element(), guideNext = element(), guideCount = {};
+vm.runInNewContext(guide.match(/<script>([\s\S]*?)<\/script>/)[1], {document: {
+    querySelectorAll: () => guideSteps,
+    getElementById: id => ({'google-setup-back':guideBack,'google-setup-next':guideNext,'google-setup-count':guideCount}[id]),
+}});
+guideNext.listeners.click();
+assert.equal(guideSteps[1].hidden,false);
+assert.equal(guideSteps[0].hidden,true);
+guideNext.listeners.click(); guideNext.listeners.click();
+assert.equal(guideNext.disabled,true);
+assert.equal(guideCount.textContent,'Step 4 of 4');
+guideBack.listeners.click();
+assert.equal(guideNext.disabled,false);
+assert.equal(guideSteps[2].hidden,false);
+console.log('Google setup guide: next, back and final step passed');

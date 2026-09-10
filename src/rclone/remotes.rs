@@ -160,18 +160,74 @@ pub fn configure(
     }
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "Rclone could not configure {}: {}",
-            kind.label(),
-            stderr.trim()
-        )
-        .into());
+        return Err(format!("Google sign-in for {} did not finish. Retry and complete authorization in the Google tab.", kind.label()).into());
     }
 
     match inspect(runtime, executable, client, kind)? {
         DetectedRemote::Ready => Ok(()),
         _ => Err(format!("Rclone finished without a usable {} remote", kind.label()).into()),
+    }
+}
+
+/// Reapply the managed connection settings and authorize again at the user's request.
+/// Updates only this remote, preserving every other configured connection.
+pub fn reconnect(
+    runtime: &Runtime,
+    executable: &Path,
+    client: &GoogleClientConfig,
+    kind: RemoteKind,
+) -> Result<(), RcloneError> {
+    let config_path = config::path(runtime)?;
+    let Some(remote) = read_remote(runtime, executable, kind)? else {
+        return configure(runtime, executable, client, kind);
+    };
+    check_value(&remote, "type", "drive", kind)?;
+    let output = command::run(
+        executable,
+        [
+            "config",
+            "update",
+            kind.name(),
+            "client_id",
+            &client.client_id,
+            "client_secret",
+            &client.client_secret,
+            "scope",
+            kind.scope(),
+            "token",
+            "",
+            "config_refresh_token",
+            "false",
+            "--obscure",
+            "--non-interactive",
+            "--config",
+            config_path.to_string_lossy().as_ref(),
+        ],
+    )?;
+    protect_config(&config_path)?;
+    if !output.status.success() {
+        return Err("Could not update this connection. Check that Boreal can write its connection settings, then retry.".into());
+    }
+    let output = command::run(
+        executable,
+        [
+            "config",
+            "reconnect",
+            &format!("{}:", kind.name()),
+            "--config",
+            config_path.to_string_lossy().as_ref(),
+        ],
+    )?;
+    protect_config(&config_path)?;
+    if !output.status.success() {
+        return Err("Google sign-in did not finish. Select Reconnect and complete authorization in the Google tab.".into());
+    }
+    match inspect(runtime, executable, client, kind)? {
+        DetectedRemote::Ready => Ok(()),
+        _ => Err(
+            "Google did not return a usable connection. Reconnect and grant the requested access."
+                .into(),
+        ),
     }
 }
 
@@ -181,12 +237,21 @@ fn inspect(
     client: &GoogleClientConfig,
     kind: RemoteKind,
 ) -> Result<DetectedRemote, RcloneError> {
-    let config_path = config::path(runtime)?;
-
-    if !config_path.is_file() {
-        return Ok(DetectedRemote::Missing);
+    match read_remote(runtime, executable, kind)? {
+        Some(remote) => classify_remote(&remote, client, kind),
+        None => Ok(DetectedRemote::Missing),
     }
+}
 
+fn read_remote(
+    runtime: &Runtime,
+    executable: &Path,
+    kind: RemoteKind,
+) -> Result<Option<Value>, RcloneError> {
+    let config_path = config::path(runtime)?;
+    if !config_path.is_file() {
+        return Ok(None);
+    }
     let output = command::run(
         executable,
         [
@@ -196,19 +261,15 @@ fn inspect(
             config_path.to_string_lossy().as_ref(),
         ],
     )?;
-
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Unable to inspect Rclone remotes: {}", stderr.trim()).into());
+        return Err(
+            "Unable to read connections. Check that Boreal can access its Rclone configuration."
+                .into(),
+        );
     }
-
     let remotes: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("Invalid Rclone configuration output: {error}"))?;
-    let Some(remote) = remotes.get(kind.name()) else {
-        return Ok(DetectedRemote::Missing);
-    };
-
-    classify_remote(remote, client, kind)
+        .map_err(|_| "The saved connection configuration could not be read")?;
+    Ok(remotes.get(kind.name()).cloned())
 }
 
 fn classify_remote(
@@ -236,11 +297,19 @@ fn check_value(
     if actual == expected {
         Ok(())
     } else {
-        Err(format!(
-            "Remote '{}' has {key}='{actual}', expected '{expected}'",
-            kind.name()
-        )
-        .into())
+        let reason = match key {
+            "type" => {
+                "uses a different storage provider. Rename that connection in the connection manager, then add the default Google connection again"
+            }
+            "scope" => {
+                "has different Google access permissions. Use Repair / reconnect to apply Boreal's expected permissions"
+            }
+            "client_id" => {
+                "belongs to a different Google app setup. Use Repair / reconnect to authorize the currently configured Google app"
+            }
+            _ => "needs to be reconfigured",
+        };
+        Err(format!("Connection '{}' {reason}.", kind.name()).into())
     }
 }
 
@@ -268,6 +337,72 @@ mod tests {
             client_secret: "secret".to_string(),
             project_id: None,
         }
+    }
+
+    #[test]
+    fn conflict_messages_explain_recovery_without_credential_values() {
+        for key in ["type", "scope", "client_id"] {
+            let mut remote = json!({"type":"drive", "scope":"drive.readonly", "client_id": client().client_id, "token":"private-token"});
+            remote[key] = json!("private-value");
+            let message = classify_remote(&remote, &client(), RemoteKind::MyDriveRo)
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(!message.contains("private-value"));
+            assert!(!message.contains("private-token"));
+            assert!(message.contains("my-drive-ro"));
+            assert!(message.contains("Rename") || message.contains("Repair / reconnect"));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reconnect_updates_only_requested_remote_and_hides_failed_oauth_output() {
+        use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt};
+        let folder = std::env::temp_dir().join(format!(
+            "boreal-reconnect-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&folder).unwrap();
+        let runtime = Runtime {
+            boreal_home: folder.clone(),
+            boreal: json!({}),
+            directories: BTreeMap::from([("CONF".into(), folder.clone())]),
+        };
+        fs::write(folder.join("rclone.conf"), "test configuration").unwrap();
+        let executable = folder.join("fake-rclone");
+        // All credentials in this fixture are synthetic; never invoke a real provider.
+        fs::write(&executable, r#"#!/bin/sh
+case "$2" in
+  dump) printf '%s' '{"my-drive-ro":{"type":"drive","client_id":"old-app","scope":"drive","token":"old-token"}}';;
+  update)
+    [ "$3" = "my-drive-ro" ] && [ "$4" = "client_id" ] && [ "$8" = "scope" ] && [ "$9" = "drive.readonly" ] && [ "${10}" = "token" ] && [ -z "${11}" ] || exit 7
+    ;;
+  reconnect) [ "$3" = "my-drive-ro:" ] || exit 8
+    printf '%s' 'sensitive-oauth-output' >&2
+    exit 1;;
+  *) exit 9;;
+esac
+"#).unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let message = reconnect(&runtime, &executable, &client(), RemoteKind::MyDriveRo)
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("sign-in did not finish"), "{message}");
+        assert!(!message.contains("sensitive-oauth-output"));
+        assert_eq!(
+            fs::metadata(folder.join("rclone.conf"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        fs::remove_dir_all(folder).unwrap();
     }
 
     #[test]
@@ -305,6 +440,10 @@ mod tests {
         let error = classify_remote(&remote, &client(), RemoteKind::MyDriveRo)
             .err()
             .expect("scope conflict should fail");
-        assert!(error.to_string().contains("expected 'drive.readonly'"));
+        assert!(
+            error
+                .to_string()
+                .contains("different Google access permissions")
+        );
     }
 }

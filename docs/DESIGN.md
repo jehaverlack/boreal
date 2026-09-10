@@ -375,7 +375,7 @@ Cargo can continue to resolve the complete dependency graph.
 
 ### Current status
 
-BOREAL can create persistent jobs from selected My Drive or Shared with me items. A job can copy to a user-selected local directory or, after the optional `my-drive-rw` remote is authorized, to a validated Google Drive folder. Entire accessible Shared Drives can also be downloaded locally.
+BOREAL can create persistent jobs from selected My Drive, Shared with me, or Shared Drive items. A job can copy to a user-selected local directory or, after the optional `my-drive-rw` remote is authorized, to a validated Google Drive folder. Shared Drive folder jobs retain their source inventory scope and can target another Shared Drive or My Drive. Entire accessible Shared Drives can also be downloaded locally.
 
 The first copy rejects destination name collisions. An interrupted or failed job can be resumed as a one-way synchronization: missing and changed destination files are updated, destination-only files are retained, and source content is never modified or deleted. Job records retain source totals, destination, progress, status, errors, and resume count.
 
@@ -387,7 +387,7 @@ The migration workflow does not create Shared Drives or destination folders. The
 
 The implemented workflow is:
 
-1. Select a My Drive or Shared with me file/folder.
+1. Select a My Drive, Shared with me, or Shared Drive file/folder.
 2. Supply an existing destination Shared Drive or folder URL.
 3. Validate the destination URL and access, or select a local directory.
 4. Record the source inventory totals in a persistent job.

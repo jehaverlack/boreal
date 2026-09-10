@@ -399,11 +399,62 @@ mod tests {
     }
 
     #[test]
+    fn shared_drive_folder_migration_preserves_scope_and_supports_google_targets() {
+        let root = temporary_directory();
+        let db = Database::initialize(&runtime(&root)).unwrap();
+        let scan = db.start_scan_run("shared-drives").unwrap();
+        let c = db.connect().unwrap();
+        c.execute("INSERT INTO shared_drives(drive_id,name,inventory_scope) VALUES('source','Research','shared-drive:source')", []).unwrap();
+        c.execute("INSERT INTO drive_items(remote_name,item_id,name,relative_path,is_directory,last_seen_scan_id) VALUES('shared-drive:source','folder','Folder','Research/Folder',1,?1)", [scan]).unwrap();
+        let id = migration::create(
+            &db,
+            "shared-drive:source",
+            "shared-drive",
+            &["folder".into()],
+            "drive-copy",
+        )
+        .unwrap();
+        let job = migration::get(&db, id).unwrap().unwrap();
+        assert_eq!(job.source_scope, "shared-drive:source");
+        assert_eq!(job.sources[0].relative_path, "Research/Folder");
+        assert_eq!(job.sources[0].item_id, "folder");
+        for drive in ["target", ""] {
+            migration::set_destination(
+                &db,
+                id,
+                "https://drive.google.com/drive/folders/dest",
+                drive,
+                "Destination",
+                "dest",
+                "Folder",
+            )
+            .unwrap();
+            let job = migration::get(&db, id).unwrap().unwrap();
+            assert_eq!(job.destination_kind, "google-drive");
+            assert_eq!(job.destination_drive_id, drive);
+            assert_eq!(job.source_scope, "shared-drive:source");
+        }
+        assert!(
+            migration::create(
+                &db,
+                "shared-drive:unknown",
+                "shared-drive",
+                &["folder".into()],
+                "drive-copy"
+            )
+            .is_err()
+        );
+        drop(c);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn persists_inventory_settings() {
         let root = temporary_directory();
         let database = Database::initialize(&runtime(&root)).expect("database should initialize");
         let expected = settings::InventorySettings {
-            google_drive_enabled: true,
+            google_drive_enabled: false,
+            google_groups_enabled: true,
             automatic_updates: false,
             refresh_interval_hours: 12,
             full_reconciliation_days: 14,
@@ -426,6 +477,11 @@ mod tests {
 
         assert_eq!(actual.automatic_updates, expected.automatic_updates,);
         assert_eq!(actual.google_drive_enabled, expected.google_drive_enabled);
+        assert!(actual.google_groups_enabled);
+        assert!(
+            actual.directory_sheet_enabled,
+            "Persons Sheet remains independent of Drive enablement"
+        );
         assert_eq!(
             actual.refresh_interval_hours,
             expected.refresh_interval_hours,

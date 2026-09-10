@@ -9,7 +9,10 @@ use tokio::sync::watch;
 use crate::{app::AppState, config};
 
 /// Run the local BOREAL WebUI.
-pub async fn run(state: Arc<AppState>) -> Result<(), Box<dyn Error>> {
+pub async fn run(
+    state: Arc<AppState>,
+    listener: tokio::net::TcpListener,
+) -> Result<(), Box<dyn Error>> {
     let webapp = config::get_webapp_config(&state.runtime.boreal)?;
 
     /*
@@ -22,13 +25,6 @@ pub async fn run(state: Arc<AppState>) -> Result<(), Box<dyn Error>> {
             return Err(format!("BOREAL refuses to listen on non-local address: {other}").into());
         }
     }
-
-    let bind_address = format!("{}:{}", webapp.listen, webapp.port,);
-
-    /*
-     * Bind before opening the browser.
-     */
-    let listener = tokio::net::TcpListener::bind(&bind_address).await?;
 
     if let Ok(database) = state.database() {
         match crate::database::migration::recover_interrupted(&database) {

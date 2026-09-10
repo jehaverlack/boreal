@@ -37,7 +37,8 @@
                     <li>Let BOREAL install and verify its private Rclone executable.</li>
                     <li>Upload a Google OAuth <strong>Desktop app</strong> client JSON file. If you need to create one, open <strong>App → Create Google Client ID</strong>.</li>
                     <li>Set up and authorize the read-only <code>my-drive-ro</code> remote.</li>
-                    <li>Optionally link a Persons Google Sheet in <strong>App → Settings</strong>.</li>
+                    <li>Use <strong>App → Settings</strong> for the service table. Choose <strong>Configure</strong> to enable a service, manage its connection and save its settings independently. Use <strong>Connections</strong> to repair a default Google connection or add another storage account.</li>
+                    <li>Persons is independent of Google Drive. Add entries manually or import a CSV; optionally link a Persons Google Sheet in <strong>App → Settings</strong>.</li>
                     <li>Open <strong>Update</strong> and import the Google Drive metadata you want to explore.</li>
                 </ol>
             </div></div>
@@ -100,9 +101,10 @@
             </div></div>
         </section>
 
+        <section class="mb-4" data-doc-entry><h2 class="h4">Choose sources to update</h2><p>The Update dialog lists connected sources and remembers your last selection. On first use, select the sources you want; none are selected automatically. Google Resources are grouped together, and updating one Shared Drive by URL is available under its expandable option. Only requested sources appear in progress. After a failure, choose <strong>Acknowledge and choose sources</strong> to return to the main update dialog.</p></section>
         <section id="google-groups" class="mb-4" data-doc-entry>
             <h2 class="h4">Google Groups</h2>
-            <p>Under Google Resources, open Google Groups and connect your Workspace account. Enable the Admin SDK API in the same project as your Google Desktop Client ID, use an account with group-read privileges, and grant both read-only group and membership permissions. Groups uses a separate connection from Drive; your Drive authorization stays unchanged.</p>
+            <p>Enable Google Groups in <strong>App → Settings</strong>, then open <strong>Google → Groups</strong> and connect your Workspace account. The step-by-step Google setup guide in Settings walks through project selection, API enablement, Desktop OAuth credentials, and Workspace permissions. Enable the Admin SDK API in the same project as your Google Desktop Client ID, use an account with group-read privileges, and grant both read-only group and membership permissions. Groups uses a separate connection from Drive; your Drive authorization stays unchanged.</p>
             <p>Select Google Groups and visible members in Update. Boreal imports groups you belong to, names, email addresses and aliases, descriptions, direct-member counts, and visible member identities, roles, types, and statuses. Open a group to browse its members; use Up or Base to return. Search, role filters, sorting, adjustable column widths, and matching Persons pills work in this viewer.</p>
             <p>Restricted member lists are marked unavailable, not empty. Nested groups appear as members without recursively expanding them. Messages and conversation archives are not imported. Failed fetches retain the previous inventory, and snapshots are kept separately for each connected account.</p>
             <p class="small">Google reference: <a href="https://developers.google.com/workspace/admin/directory/v1/guides/manage-groups" target="_blank" rel="noopener noreferrer">Groups API</a> and <a href="https://developers.google.com/workspace/admin/directory/reference/rest/v1/members/list" target="_blank" rel="noopener noreferrer">member lists</a>.</p>
@@ -150,7 +152,7 @@
         <section id="migrations" class="mb-4" data-doc-entry>
             <h2 class="h4">Migrate Drive content</h2>
             <div class="card"><div class="card-body">
-                <p>Select one or more active items in <strong>My Drive</strong> or <strong>Shared with me</strong>, then click <strong>Migrate</strong>. The Migration Assistant records the source inventory and guides destination selection and copying.</p>
+                <p>Select one or more active items in <strong>My Drive</strong>, <strong>Shared with me</strong>, or a <strong>Shared Drive</strong>, then click <strong>Migrate</strong>. The Migration Assistant records the source inventory and guides destination selection and copying. Shared Drive folders can be copied to another Shared Drive, a My Drive folder, or a local directory.</p>
                 <ol>
                     <li>Review the selected files, folders, and estimated size.</li>
                     <li>Select a local folder, or paste and validate an allowed Google Drive destination folder URL.</li>

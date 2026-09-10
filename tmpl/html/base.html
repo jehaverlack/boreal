@@ -425,7 +425,6 @@
                     </li>
 
                     <li id="google-drive-primary-navigation" hx-get="/ui/google-drive-primary-nav" hx-trigger="load" hx-swap="outerHTML"></li>
-                    <li class="nav-item"><a class="nav-link{% if active_page == "google-groups" %} active{% endif %}" href="/google-groups" title="Explore Google Groups and visible members"><i class="bi bi-people-fill boreal-google-drive-color me-1"></i>Groups</a></li>
 
                     <li id="github-primary-navigation" hx-get="/ui/github-primary-nav" hx-trigger="load" hx-swap="outerHTML"></li>
                     <li id="keeper-primary-navigation" hx-get="/ui/keeper-primary-nav" hx-trigger="load" hx-swap="outerHTML"></li>
@@ -545,10 +544,10 @@
 
                                 <a
                                     class="dropdown-item{% if active_page == "google-client" %} active{% endif %}"
-                                    href="/google-client"
+                                    href="/settings#google-setup"
                                 >
                                     <i class="bi bi-key me-2"></i>
-                                    Create Google Client ID
+                                    Google setup guide
                                 </a>
 
                             </li>
@@ -671,14 +670,14 @@
                 <div class="modal-body">
                     <p>Select one or more metadata sources. Unselected inventories retain their existing data and timestamps.</p>
                     <div class="list-group mb-3">
-                        <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="my_drive" value="true" checked>My Drive (2–20 min)</label>
+                        <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="my_drive" value="true">My Drive (2–20 min)</label>
                         <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" id="allSharedDrivesUpdateFallback" type="checkbox" name="shared_drives" value="true">All Shared Drives (1–6 hours)</label>
                         <div class="list-group-item">
                             <label class="form-label mb-1" for="specificSharedDriveUrlFallback"><i class="bi bi-link-45deg me-1"></i>One Shared Drive by URL</label>
                             <input class="form-control form-control-sm" form="metadata-update-form" id="specificSharedDriveUrlFallback" name="specific_shared_drive_url" type="url" placeholder="https://drive.google.com/drive/folders/..." oninput="document.getElementById('allSharedDrivesUpdateFallback').checked = false">
                             <div class="form-text">Paste the root URL of a Shared Drive to inventory only that Drive.</div>
                         </div>
-                        <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="shared_with_me" value="true" checked>Shared with me (2–20 min)</label>
+                        <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="shared_with_me" value="true">Shared with me (2–20 min)</label>
                         <label class="list-group-item text-body-secondary"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="directory_info" value="true" disabled>Persons (~10 sec) <span class="small">— checking configuration…</span></label>
                     </div>
                     <p class="mb-0">
@@ -926,6 +925,16 @@
                 refreshMetadataStatusAge();
             }
 
+            function restoreMetadataSelection() {
+                try {
+                    const selected = JSON.parse(window.localStorage.getItem('boreal.metadata.sources') || '[]');
+                    if (!Array.isArray(selected)) return;
+                    metadataModalElement.querySelectorAll('input[type="checkbox"][data-estimated-seconds]').forEach(input => {
+                        input.checked = !input.disabled && selected.includes(input.name);
+                    });
+                } catch (_error) {}
+            }
+
             async function refreshMetadataModal(autoShow = false) {
                 if (!metadataModalElement || metadataRefreshPending || metadataPollInFlight) return;
                 metadataPollInFlight = true;
@@ -950,6 +959,7 @@
                         .querySelector("#metadata-update-modal-content")
                         ?.dataset.complete === "true";
                     modalContent.innerHTML = responseHtml;
+                    if (!isUpdating) restoreMetadataSelection();
                     refreshMetadataEstimate();
                     if (wasUpdating && !isUpdating && completed) {
                         metadataModalDismissed = false;
@@ -1001,6 +1011,18 @@
                     refreshMetadataModal(false);
                 });
                 metadataModalElement.addEventListener("submit", async (event) => {
+                    if (event.target.id === "metadata-error-acknowledge") {
+                        event.preventDefault();
+                        const button = event.target.querySelector('button');
+                        button.disabled = true;
+                        try {
+                            const response = await fetch('/metadata/acknowledge-error', {method: 'POST'});
+                            if (!response.ok) throw new Error('Acknowledgement failed');
+                            metadataUpdateObserved = false;
+                            await refreshMetadataModal(false);
+                        } catch (_error) { button.disabled = false; button.textContent = 'Try acknowledging again'; }
+                        return;
+                    }
                     if (event.target.id !== "metadata-update-form") return;
                     event.preventDefault();
                     const button = event.target.querySelector("button[type=submit]");
@@ -1013,6 +1035,7 @@
                         button.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Select at least one';
                         return;
                     }
+                    try { window.localStorage.setItem('boreal.metadata.sources', JSON.stringify(selectedSources.map(input => input.name))); } catch (_error) {}
                     button.disabled = true;
                     button.innerHTML = '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>Starting…';
                     try {
