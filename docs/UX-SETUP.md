@@ -57,3 +57,19 @@ Rclone command behavior was checked against its official
 [config update](https://rclone.org/commands/rclone_config_update/),
 [reconnect](https://rclone.org/commands/rclone_config_reconnect/) and
 [WebGUI](https://rclone.org/gui/) documentation.
+
+## Reconnect terminal-input regression
+
+Rclone 1.75 prompts for console input during `config reconnect`, even when Boreal
+starts it as a background process with closed stdin. The resulting `Failed to read
+line: EOF` occurs before the browser opens. Managed create/reconnect calls now use
+`--auto-confirm` for Rclone's configuration questions; Google consent still happens
+in the browser. Known failures are translated to fixed, actionable messages without
+copying credential-bearing subprocess output.
+
+Run `python3 tools/test-rclone-auth.py /path/to/rclone` on Linux to verify both Drive
+scopes against a mock loopback OAuth server. This reproduces EOF without the flag,
+then exercises create, missing-token reconnect, and existing-token reconnect with
+it. The test uses only synthetic credentials and a temporary config, stubs browser
+launch, and verifies that the additional connection is preserved. Rclone's local
+callback port 53682 must be available.
