@@ -26,7 +26,7 @@ BOREAL currently supports:
 - Google Drive: My Drive, Shared Drives, and Shared with me
 - GitHub repository metadata
 - S3-compatible object storage
-- Keeper shared-folder metadata
+- Keeper vault folders, record metadata, and folder-sharing information
 
 BOREAL runs on Linux, Windows, and macOS. Its interface and private inventory
 database stay on your computer. It manages its own Rclone installation and

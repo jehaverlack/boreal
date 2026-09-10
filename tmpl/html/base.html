@@ -706,7 +706,7 @@
 
                     <p>
                         The BOREAL application is no longer running.
-                        Use the button below to close this browser tab.
+                        This tab can now be closed.
                     </p>
 
                     <div class="alert alert-warning mb-0 d-none" id="boreal-close-tab-blocked" role="alert">
@@ -716,15 +716,7 @@
 
                 </div>
 
-                <div class="modal-footer">
-                    <button
-                        type="button"
-                        class="btn btn-primary"
-                        id="boreal-close-tab"
-                    >
-                        Close Tab
-                    </button>
-                </div>
+
 
             </div>
 
@@ -1021,9 +1013,6 @@
             const stoppedModalElement =
                 document.getElementById("borealStoppedModal");
 
-            const closeTabButton =
-                document.getElementById("boreal-close-tab");
-
             const closeTabBlocked =
                 document.getElementById("boreal-close-tab-blocked");
 
@@ -1035,54 +1024,25 @@
 
             let heartbeatFailures = 0;
             let stopped = false;
-            let closeRequested = false;
-
-            if (closeTabButton) {
-                closeTabButton.addEventListener("click", () => {
-                    if (closeRequested) return;
-                    closeRequested = true;
-                    closeTabButton.disabled = true;
-                    closeTabButton.innerHTML =
-                        '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>Closing…';
-                    closeTabBlocked?.classList.add("d-none");
-
-                    // Keep every close attempt inside the original user
-                    // gesture. The _self handle is accepted by some browsers
-                    // that decline a direct close on externally opened tabs.
-                    try {
-                        const currentTab = window.open("", "_self");
-                        currentTab?.close();
-                    } catch (_error) {
-                        // Continue to the standards-based close attempt.
-                    }
-                    window.close();
-
-                    // A rejected window.close() does not throw an exception.
-                    // If the page remains, restore the close control and
-                    // explain the browser-level restriction.
-                    window.setTimeout(() => {
-                        closeRequested = false;
-                        const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
-                        const shortcut = isMac ? "Command-W (⌘W)" : "Ctrl-W";
-                        if (closeTabBlockedMessage) {
-                            closeTabBlockedMessage.textContent =
-                                `This browser does not permit websites to close externally opened tabs. Press ${shortcut}, or try the button again.`;
-                        }
-                        closeTabBlocked?.classList.remove("d-none");
-                        closeTabButton.disabled = false;
-                        closeTabButton.innerHTML =
-                            '<i class="bi bi-x-lg me-1" aria-hidden="true"></i>Try Closing Again';
-                    }, 200);
-                });
-            }
-
             function showStopped() {
-                if (stopped) {
-                    return;
-                }
-
+                if (stopped) return;
                 stopped = true;
-                stoppedModal.show();
+                try {
+                    window.close();
+                } catch (_error) {
+                    // Some browsers throw; others silently refuse to close.
+                }
+                window.setTimeout(() => {
+                    if (window.closed) return;
+                    const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+                    const shortcut = isMac ? "Command+W (⌘W)" : "Ctrl+W";
+                    if (closeTabBlockedMessage) {
+                        closeTabBlockedMessage.textContent =
+                            `Press ${shortcut} to close this tab.`;
+                    }
+                    closeTabBlocked?.classList.remove("d-none");
+                    stoppedModal.show();
+                }, 200);
             }
 
             async function checkBoreal() {
@@ -1150,19 +1110,8 @@
                             // accepted response reaches the browser.
                         }
 
-                        try {
-                            const currentTab = window.open("", "_self");
-                            currentTab?.close();
-                        } catch (_error) {
-                            // Continue to the standards-based close attempt.
-                        }
-                        window.close();
-
-                        /*
-                         * If the browser refuses to close an externally
-                         * opened tab, show the stopped modal after BOREAL's
-                         * delayed shutdown has had time to begin.
-                         */
+                        // Let the accepted shutdown begin, then try closing
+                        // once and show keyboard instructions if it is blocked.
                         window.setTimeout(
                             showStopped,
                             1000,

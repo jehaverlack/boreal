@@ -134,11 +134,11 @@
                 <div class="card-body">
                     <div class="form-check form-switch mb-3">
                         <input class="form-check-input" type="checkbox" role="switch" id="keeperEnabled" name="keeper_enabled" value="true" {% if settings.keeper_enabled %}checked{% endif %}>
-                        <label class="form-check-label" for="keeperEnabled">Enable Keeper shared-folder metadata</label>
+                        <label class="form-check-label" for="keeperEnabled">Enable Keeper vault metadata</label>
                     </div>
                     <label class="form-label" for="keeperCommand">Keeper Commander executable</label>
                     <input class="form-control font-monospace" id="keeperCommand" name="keeper_command" value="{{ settings.keeper_command }}" placeholder="{{ keeper_command_default }}">
-                    <div class="form-text">BOREAL runs Keeper's metadata-only shared-folder report. It does not read or store record contents, passwords, or other secrets.</div>
+                    <div class="form-text">BOREAL imports folder structure, record titles, types, modification dates and attachment counts. Record fields, passwords, notes and attachment contents stay in Keeper. Use a pip or pipx installation of Commander.</div>
                     <div class="d-flex flex-wrap gap-2 mt-3">
                         <button class="btn btn-sm btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#keeperSetupModal"><i class="bi bi-list-check me-1"></i>Setup Keeper</button>
                         <button class="btn btn-sm btn-outline-primary" type="submit" formaction="/settings/keeper/test"><i class="bi bi-cloud-check me-1"></i>Save and test access</button>
@@ -207,20 +207,17 @@
         <div class="modal-header"><div><h2 class="modal-title fs-5" id="keeperSetupTitle">Connect Keeper Commander</h2><div class="small text-body-secondary">Keeper credentials remain in Keeper's private configuration.</div></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
         <div class="modal-body">
             <h3 class="h5">1. Install Keeper Commander</h3>
-            <p><strong>Windows and macOS:</strong> download the official Commander executable and place it in BOREAL's <code>bin</code> directory as <code>keeper.exe</code> or <code>keeper</code>. You may instead enter an existing executable path in Settings.</p>
-            <a class="btn btn-outline-primary mb-3" href="https://github.com/Keeper-Security/Commander/releases" target="_blank" rel="noopener noreferrer"><i class="bi bi-download me-1"></i>Windows and macOS downloads</a>
+            <p>The vault metadata helper requires a pip or pipx installation of Commander. Standalone bundled executables do not provide the Python environment it needs.</p>
             <div class="alert alert-secondary">
-                <p class="fw-semibold mb-2"><i class="bi bi-linux me-1"></i>Linux installation</p>
-                <p>Keeper distributes Commander for Linux as the <code>keepercommander</code> Python package. Install it in a user-owned virtual environment so administrator access and system-wide packages are not required:</p>
+                <p class="fw-semibold mb-2">Linux or macOS</p>
                 <pre class="border rounded bg-body p-2"><code>python3 -m venv ~/.boreal/keeper-env
-~/.boreal/keeper-env/bin/pip install keepercommander</code></pre>
-                <p>Then set <strong>Keeper Commander executable</strong> above to:</p>
-                <pre class="border rounded bg-body p-2 mb-2"><code>~/.boreal/keeper-env/bin/keeper</code></pre>
-                <div class="d-flex flex-wrap gap-2">
-                    <a class="btn btn-sm btn-outline-secondary" href="https://docs.keeper.io/en/keeperpam/commander-cli/commander-installation-setup" target="_blank" rel="noopener noreferrer"><i class="bi bi-book me-1"></i>Linux installation guide</a>
-                    <a class="btn btn-sm btn-outline-secondary" href="https://github.com/Keeper-Security/Commander#linux--python-using-pip" target="_blank" rel="noopener noreferrer"><i class="bi bi-github me-1"></i>Official Linux instructions</a>
-                    <a class="btn btn-sm btn-outline-secondary" href="https://pypi.org/project/keepercommander/" target="_blank" rel="noopener noreferrer"><i class="bi bi-box-seam me-1"></i>keepercommander package</a>
-                </div>
+~/.boreal/keeper-env/bin/python -m pip install keepercommander</code></pre>
+                <p>Set <strong>Keeper Commander executable</strong> to <code>~/.boreal/keeper-env/bin/keeper</code>, or your existing pipx-installed Keeper path.</p>
+                <p class="fw-semibold mb-2">Windows PowerShell</p>
+                <pre class="border rounded bg-body p-2"><code>py -m venv "$env:LOCALAPPDATA\boreal\keeper-env"
+&amp; "$env:LOCALAPPDATA\boreal\keeper-env\Scripts\python.exe" -m pip install keepercommander</code></pre>
+                <p>Set <strong>Keeper Commander executable</strong> to the full path of <code>keeper-env\Scripts\keeper.exe</code> in that environment.</p>
+                <a class="btn btn-sm btn-outline-secondary" href="https://docs.keeper.io/en/keeperpam/commander-cli/commander-installation-setup" target="_blank" rel="noopener noreferrer">Commander installation guide</a>
             </div>
             <h3 class="h5">2. Authenticate outside BOREAL</h3>
             <p>Open a terminal and start Keeper Commander using BOREAL's private config path. The file does not exist before the first session; Keeper Commander creates it as you configure and authenticate the session. BOREAL creates its parent directory when this Settings page opens.</p>
@@ -229,14 +226,14 @@
                     <strong>Linux or macOS terminal</strong>
                     <button class="btn btn-sm btn-outline-secondary" type="button" data-copy-command="keeper-auth-unix"><i class="bi bi-copy me-1"></i>Copy</button>
                 </div>
-                <pre class="border rounded bg-body-tertiary p-2 mb-0"><code id="keeper-auth-unix">keeper --config "$HOME/.boreal/conf/keeper/config.json" shell</code></pre>
+                <pre class="border rounded bg-body-tertiary p-2 mb-0"><code id="keeper-auth-unix">"$HOME/.boreal/keeper-env/bin/keeper" --config "$HOME/.boreal/conf/keeper/config.json" shell</code></pre>
             </div>
             <div class="mb-3">
                 <div class="d-flex justify-content-between align-items-center mb-1">
                     <strong>Windows PowerShell</strong>
                     <button class="btn btn-sm btn-outline-secondary" type="button" data-copy-command="keeper-auth-windows"><i class="bi bi-copy me-1"></i>Copy</button>
                 </div>
-                <pre class="border rounded bg-body-tertiary p-2 mb-0"><code id="keeper-auth-windows">&amp; "$env:LOCALAPPDATA\boreal\bin\keeper.exe" --config "$env:LOCALAPPDATA\boreal\conf\keeper\config.json" shell</code></pre>
+                <pre class="border rounded bg-body-tertiary p-2 mb-0"><code id="keeper-auth-windows">&amp; "$env:LOCALAPPDATA\boreal\keeper-env\Scripts\keeper.exe" --config "$env:LOCALAPPDATA\boreal\conf\keeper\config.json" shell</code></pre>
             </div>
             <details class="mb-3">
                 <summary class="small">Command using this computer's configured paths</summary>
@@ -244,8 +241,9 @@
             </details>
             <div class="alert alert-warning"><i class="bi bi-shield-exclamation me-1"></i>Sign in through Keeper Commander and complete your organization's MFA or SSO flow. Never enter your Keeper master password into BOREAL.</div>
             <h3 class="h5">3. Register the device</h3>
-            <p>In the Keeper shell, run <code>this-device register</code>. Enable persistent login only if your organization permits it, then run <code>login-status</code> to confirm authentication.</p>
+            <p>In the Keeper shell, run <code>this-device register</code>. If your organization permits background access, run <code>this-device persistent-login on</code>. An authenticated shell alone does not establish that BOREAL can resume the session.</p>
             <h3 class="h5">4. Verify access</h3>
+            <p>In a separate terminal, use the same executable and <code>--config</code> path shown above, replacing <code>shell</code> with <code>login-status</code>. It must report <strong>Logged in</strong>. BOREAL must also run as the same OS user with access to Keeper's system keyring. If your organization's policy requires interactive authentication each time, unattended indexing cannot resume that session.</p>
             <p class="mb-0">Close this assistant, enable Keeper, and select <strong>Save and test access</strong>. After validation, Keeper appears in navigation and as an optional metadata-update source.</p>
         </div>
         <div class="modal-footer"><button type="button" class="btn btn-primary" data-bs-dismiss="modal">Back to Settings</button></div>

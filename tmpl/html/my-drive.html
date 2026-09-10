@@ -18,16 +18,7 @@
     </div>
     <div class="d-flex gap-2 boreal-report-hide">
         {% if drive_id.len() > 0 %}<a class="btn btn-sm btn-outline-secondary" href="/shared-drives"><i class="bi bi-arrow-left me-1"></i>All Shared Drives</a>{% endif %}
-        <a class="btn btn-sm btn-outline-primary" href="{{ explorer_path }}"><i class="bi bi-house-door me-1"></i>{{ root_label }} root</a>
-    </div>
-</div>
-
-{% if error.len() > 0 %}
-<div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-triangle me-2"></i>{{ error }}</div>
-{% endif %}
-
-{% if has_parent %}
-<div class="d-flex align-items-center gap-2 mb-3">
+        {% if has_parent %}
     <form method="get" action="{{ explorer_path }}">
         <input type="hidden" name="drive" value="{{ drive_id }}">
         <input type="hidden" name="path" value="{{ parent_path }}">
@@ -42,12 +33,22 @@
         <input type="hidden" name="owner_identity_tag" value="{{ owner_identity_tag_filter }}">
         <input type="hidden" name="permission_identity_tag" value="{{ permission_identity_tag_filter }}">
         <input type="hidden" name="include_deleted" value="{{ include_deleted }}">
-        <button class="btn btn-sm btn-outline-secondary" type="submit" title="Browse parent folder"><i class="bi bi-arrow-up"></i></button>
+        <button class="btn btn-sm btn-outline-secondary" type="submit" title="Browse parent folder"><i class="bi bi-arrow-up me-1"></i>Up</button>
     </form>
-    <span class="small text-body-secondary">Location:</span>
-    <span class="fw-semibold">{{ current_path }}</span>
+        {% else %}<button class="btn btn-sm btn-outline-secondary" type="button" disabled><i class="bi bi-arrow-up me-1"></i>Up</button>{% endif %}
+        <form method="get" action="{{ explorer_path }}">
+            <input type="hidden" name="drive" value="{{ drive_id }}">
+            <input type="hidden" name="sort" value="{{ sort }}"><input type="hidden" name="direction" value="{{ direction }}">
+            <button class="btn btn-sm btn-outline-primary" type="submit" title="Browse {{ root_label }} base"><i class="bi bi-house-door me-1"></i>Base</button>
+        </form>
+    </div>
 </div>
+
+{% if error.len() > 0 %}
+<div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-triangle me-2"></i>{{ error }}</div>
 {% endif %}
+
+{% if has_parent %}<div class="d-flex align-items-center gap-2 mb-3"><span class="small text-body-secondary">Location:</span><span class="fw-semibold">{{ current_path }}</span></div>{% endif %}
 
 <form id="my-drive-filter-form" method="get" action="{{ explorer_path }}" class="row g-2 mb-3 boreal-report-hide" role="search">
     <input type="hidden" name="drive" value="{{ drive_id }}">

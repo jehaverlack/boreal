@@ -27,7 +27,7 @@
     </aside>
 
     <div class="col-lg-9">
-        <p class="lead">Use BOREAL to inventory, explore, classify, and report on Google Drive, GitHub repository, and Keeper shared-folder metadata from this computer.</p>
+        <p class="lead">Use BOREAL to inventory, explore, classify, and report on Google Drive, GitHub repository, and Keeper vault metadata from this computer.</p>
         <div id="docs-no-results" class="alert alert-warning d-none">No documentation matched your search. Try a shorter term or visit <a href="/help">Help</a>.</div>
 
         <section id="getting-started" class="mb-4" data-doc-entry>
@@ -53,7 +53,7 @@
                     <li><strong>Shared with me (2–20 minutes)</strong> inventories content shared with the authenticated account.</li>
                     <li><strong>Shared Drives (1–6 hours)</strong> discovers and inventories accessible Shared Drives.</li>
                     <li><strong>GitHub repositories</strong> inventories accessible organizations, owners, and repository metadata when the optional integration is enabled.</li>
-                    <li><strong>Keeper shared folders</strong> inventories shared-folder membership and permission metadata when Keeper Commander is configured.</li>
+                    <li><strong>Keeper vault metadata</strong> inventories folders, record metadata, folder memberships and sharing information when Keeper Commander is configured.</li>
                 </ul>
                 <p class="mt-3 mb-0">Times are approximate and depend on inventory size, permissions, and network speed. You may close the update modal while a job runs; progress remains available from the Update control and status bar.</p>
             </div></div>
@@ -70,13 +70,13 @@
                     <li>Apply tags scoped to GitHub Repositories; tags remain local to BOREAL and never modify GitHub.</li>
                     <li>Repositories no longer returned by GitHub are retained as inaccessible historical records.</li>
                 </ul>
-                <h3 class="h6">Keeper shared folders</h3>
-                <p>Install Keeper Commander and use the assistant under <strong>App → Settings</strong> to authenticate it with BOREAL's private Keeper configuration. Windows and macOS use Keeper's downloadable Commander executable; Linux can use <code>keepercommander</code> in a user-owned Python virtual environment.</p>
+                <h3 class="h6">Keeper vault metadata</h3>
+                <p>Install Keeper Commander and use the assistant under <strong>App → Settings</strong> to authenticate it with BOREAL's private Keeper configuration. Use a pip/pipx installation of <code>keepercommander</code> on Linux, macOS or Windows; the metadata helper needs Commander's Python environment.</p>
                 <ul class="mb-0">
-                    <li>Select <strong>Keeper shared folders</strong> from Update to import folder names, paths, people or teams, and permission labels.</li>
-                    <li>Use Keeper filters and tags to find access that should be removed during offboarding and folders that need a management handoff.</li>
-                    <li>BOREAL invokes Keeper's shared-folder report only. It does not import record contents, passwords, attachments, or secrets.</li>
-                    <li>Keeper authentication remains in <code>~/.boreal/conf/keeper/config.json</code>, or the equivalent BOREAL configuration directory on Windows.</li>
+                    <li>Select <strong>Keeper vault metadata</strong> from Update to import regular and shared folders, record titles and types, modification dates, attachment counts and sizes, and folder-sharing information.</li>
+                    <li>Open folders to browse their records, sort by column, and add or remove local tags on folders and records. A record linked into multiple folders keeps the same tags everywhere.</li>
+                    <li>The helper emits only approved metadata. It excludes record fields, usernames, passwords, URLs, notes, custom-field values, TOTP seeds, keys and attachment contents.</li>
+                    <li>Keeper manages authentication through its private configuration and system keyring. BOREAL needs a resumable session for background indexing.</li>
                 </ul>
             </div></div>
         </section>

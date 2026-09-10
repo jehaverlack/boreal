@@ -1309,21 +1309,21 @@ impl AppState {
                         let timing_started = Instant::now();
                         worker_state.set_metadata_state(MetadataState::Updating(MetadataProgress {
                             selection,
-                            phase: "Fetching Keeper shared-folder metadata".to_string(),
+                            phase: "Fetching Keeper vault metadata".to_string(),
                             files_scanned: my_drive_summary.files_scanned,
                             folders_scanned: my_drive_summary.folders_scanned,
                             permissions_scanned: my_drive_summary.permissions_scanned,
                             bytes_discovered: my_drive_summary.bytes_discovered,
                             errors: 0,
                         }));
-                        let folders = crate::keeper::client::shared_folders(
+                        let snapshot = crate::keeper::client::vault_snapshot(
                             &worker_state.runtime,
                             &inventory_settings.keeper_command,
                         )
                         .map_err(|error| -> crate::database::DatabaseError { error })?;
-                        crate::database::keeper::synchronize(&database, &folders)?;
+                        crate::database::keeper::synchronize(&database, &snapshot)?;
                         let _ = database.record_metadata_timing("keeper", timing_started.elapsed().as_secs());
-                        log::info!("Keeper shared-folder metadata updated: folders={}", folders.len());
+                        log::info!("Keeper vault metadata updated: folders={}, records={}", snapshot.folders.len().saturating_sub(1), snapshot.records.len());
                     }
                     if selection.local_files {
                         let timing_started = Instant::now();

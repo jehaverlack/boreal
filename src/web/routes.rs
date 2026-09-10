@@ -596,7 +596,10 @@ struct KeeperTemplate {
     alerts: Vec<AlertItem>,
     status_items: Vec<StatusItem>,
     poll_rclone: bool,
-    folders: Vec<database::keeper::SharedFolderRow>,
+    entries: Vec<database::keeper::EntryRow>,
+    locations: Vec<database::keeper::FolderLocation>,
+    current_path: String,
+    parent_url: String,
     tags: Vec<database::inventory::Tag>,
     filter_tags: Vec<TagFilterPill>,
     query: KeeperQuery,
@@ -1089,6 +1092,10 @@ struct GitHubTagForm {
 #[derive(Clone, Default, serde::Deserialize)]
 struct KeeperQuery {
     #[serde(default)]
+    folder: String,
+    #[serde(default)]
+    all: bool,
+    #[serde(default)]
     name: String,
     #[serde(default)]
     path: String,
@@ -1112,7 +1119,16 @@ struct KeeperQuery {
 
 #[derive(serde::Deserialize)]
 struct KeeperTagForm {
+    #[serde(default)]
     selected_folder_uids: String,
+    #[serde(default)]
+    selected_record_uids: String,
+    #[serde(default)]
+    folder: String,
+    #[serde(default)]
+    all: bool,
+    #[serde(default)]
+    include_inaccessible: bool,
     tag: String,
     #[serde(default)]
     name: String,
@@ -2193,19 +2209,22 @@ async fn test_keeper_connection(
     let command = inventory_settings.keeper_command.clone();
     let result = tokio::task::spawn_blocking(move || {
         let version = crate::keeper::client::version(&command)?;
-        crate::keeper::client::login_status(&worker_state.runtime, &command)?;
-        let folders = crate::keeper::client::shared_folders(&worker_state.runtime, &command)?;
-        Ok::<_, crate::keeper::client::KeeperError>((version, folders.len()))
+        let snapshot = crate::keeper::client::vault_snapshot(&worker_state.runtime, &command)?;
+        Ok::<_, crate::keeper::client::KeeperError>((
+            version,
+            snapshot.folders.len().saturating_sub(1),
+            snapshot.records.len(),
+        ))
     })
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     match result {
-        Ok((version, count)) => render_settings(
+        Ok((version, folders, records)) => render_settings(
             &state,
             inventory_settings,
             false,
             String::new(),
-            format!("Keeper access verified with {version}; {count} shared folders are visible."),
+            format!("Keeper access verified with {version}; {folders} folders and {records} records are visible."),
         ),
         Err(error) => render_settings(
             &state,
@@ -4802,7 +4821,7 @@ fn keeper_enabled(state: &AppState) -> bool {
 
 async fn ui_keeper_primary_nav(State(state): State<Arc<AppState>>) -> Html<String> {
     if keeper_enabled(&state) {
-        Html("<li id=\"keeper-primary-navigation\" class=\"nav-item\"><a class=\"nav-link boreal-keeper-nav\" href=\"/keeper\" title=\"Explore Keeper shared-folder metadata\"><i class=\"bi bi-shield-lock-fill me-1\"></i>Keeper</a></li>".to_string())
+        Html("<li id=\"keeper-primary-navigation\" class=\"nav-item\"><a class=\"nav-link boreal-keeper-nav\" href=\"/keeper\" title=\"Explore Keeper vault metadata\"><i class=\"bi bi-shield-lock-fill me-1\"></i>Keeper</a></li>".to_string())
     } else {
         Html("<li id=\"keeper-primary-navigation\" class=\"d-none\"></li>".to_string())
     }
@@ -4826,21 +4845,41 @@ async fn keeper_page(
     let database = state
         .database()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let folders = database::keeper::list(
+    let entries = database::keeper::list(
         &database,
-        &query.name,
-        &query.path,
-        &query.shared_to,
-        &query.permission,
-        &query.tag,
-        query.include_inaccessible,
-        &query.sort,
-        query.direction.eq_ignore_ascii_case("desc"),
+        &database::keeper::ListOptions {
+            folder: &query.folder,
+            all: query.all,
+            name: &query.name,
+            path: &query.path,
+            shared_to: &query.shared_to,
+            permission: &query.permission,
+            tag: &query.tag,
+            include_inaccessible: query.include_inaccessible,
+            sort: &query.sort,
+            descending: query.direction.eq_ignore_ascii_case("desc"),
+        },
     )
-    .map_err(|error| {
-        log::error!("Unable to list Keeper shared folders: {error}");
-        StatusCode::BAD_REQUEST
-    })?;
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let locations = database::keeper::folder_locations(&database)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let current_path = locations
+        .iter()
+        .find(|f| f.uid == query.folder)
+        .map(|f| f.path.clone())
+        .unwrap_or_else(|| "/".to_string());
+    let parent_uid = database
+        .connect()
+        .and_then(|c| {
+            c.query_row(
+                "SELECT parent_uid FROM keeper_shared_folders WHERE folder_uid=?1",
+                [&query.folder],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(Into::into)
+        })
+        .unwrap_or_default();
+    let parent_url = format!("/keeper?folder={}", encode_query_value(&parent_uid));
     let tags = database::inventory::list_tags_for_scope(
         &database,
         database::inventory::TagScope::KeeperSharedFolders,
@@ -4864,7 +4903,7 @@ async fn keeper_page(
     let google_remotes_state = state.google_remotes_state();
     let metadata_state = state.metadata_state();
     render_template(&KeeperTemplate {
-        title: "Keeper Shared Folders - BOREAL",
+        title: "Keeper Explorer - BOREAL",
         active_page: "keeper",
         alerts: build_alerts(
             &rclone_state,
@@ -4882,7 +4921,10 @@ async fn keeper_page(
             &state.update_state(),
         ),
         poll_rclone: should_poll_ui(&rclone_state, &google_remotes_state, &metadata_state),
-        folders,
+        entries,
+        locations,
+        current_path,
+        parent_url,
         tags,
         filter_tags,
         query,
@@ -5163,13 +5205,28 @@ fn change_keeper_tag(
     let database = state
         .database()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let changed =
-        database::keeper::change_tags(&database, &ids, &form.tag, remove).map_err(|error| {
-            log::error!("Unable to change Keeper shared-folder tag: {error}");
-            StatusCode::BAD_REQUEST
-        })?;
+    let changed = database::keeper::change_tags(
+        &database,
+        &ids,
+        &form
+            .selected_record_uids
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>(),
+        &form.tag,
+        remove,
+    )
+    .map_err(|error| {
+        log::error!("Unable to change Keeper tag: {error}");
+        StatusCode::BAD_REQUEST
+    })?;
     let url = format!(
-        "/keeper?name={}&path={}&shared_to={}&permission={}&tag={}&sort={}&direction={}&{}={changed}",
+        "/keeper?folder={}&all={}&include_inaccessible={}&name={}&path={}&shared_to={}&permission={}&tag={}&sort={}&direction={}&{}={changed}",
+        encode_query_value(&form.folder),
+        form.all,
+        form.include_inaccessible,
         encode_query_value(&form.name),
         encode_query_value(&form.path),
         encode_query_value(&form.shared_to),
@@ -6466,7 +6523,7 @@ fn metadata_scope_progress_views(
     } else {
         (false, false, 0, "Waiting".to_string())
     };
-    let keeper = if phase == "Fetching Keeper shared-folder metadata" {
+    let keeper = if phase == "Fetching Keeper vault metadata" {
         (true, false, 60, phase.to_string())
     } else {
         (false, false, 0, "Waiting".to_string())
@@ -7234,6 +7291,75 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeper_explorer_renders_record_metadata_and_escapes_titles() {
+        let tag = database::inventory::Tag {
+            slug: "needs-review".into(),
+            name: "Needs review".into(),
+            description: String::new(),
+            color: "#123456".into(),
+            directory: false,
+            my_drive: false,
+            shared_drives: false,
+            shared_with_me: false,
+            github_repositories: false,
+            keeper_shared_folders: true,
+            local_files: false,
+        };
+        let html = KeeperTemplate {
+            title: "Keeper Explorer",
+            active_page: "keeper",
+            alerts: vec![],
+            status_items: vec![],
+            poll_rclone: false,
+            entries: vec![database::keeper::EntryRow {
+                uid: "record-one".into(),
+                is_folder: false,
+                name: "<script>alert('title')</script>".into(),
+                item_type: "login".into(),
+                folder_path: "/Personal".into(),
+                parent_uid: "personal".into(),
+                is_accessible: true,
+                modified: "2026-09-09 12:34".into(),
+                modified_ms: 1,
+                attachment_count: 2,
+                size_bytes: 321,
+                access: vec![],
+                tags: vec![tag.clone()],
+            }],
+            locations: vec![database::keeper::FolderLocation {
+                uid: "personal".into(),
+                path: "/Personal".into(),
+            }],
+            current_path: "/Personal".into(),
+            parent_url: "/keeper".into(),
+            tags: vec![tag],
+            filter_tags: vec![],
+            query: KeeperQuery {
+                folder: "personal".into(),
+                sort: "modified".into(),
+                direction: "desc".into(),
+                ..Default::default()
+            },
+        }
+        .render()
+        .unwrap();
+        assert!(!html.contains("<script>alert('title')</script>"));
+        for expected in [
+            "record-one",
+            "2026-09-09 12:34",
+            "selected_record_uids",
+            "Needs review",
+            "data-keeper-sort=\"modified\"",
+            "name=\"folder\" value=\"personal\"",
+        ] {
+            assert!(
+                html.contains(expected),
+                "Missing Keeper UI element: {expected}"
+            );
+        }
+    }
     use crate::app::MetadataProgress;
 
     #[test]

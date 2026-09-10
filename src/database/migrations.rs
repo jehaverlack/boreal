@@ -184,6 +184,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "metadata_timing_history",
         sql: include_str!("migrations/0035_metadata_timing_history.sql"),
     },
+    Migration {
+        version: 36,
+        name: "keeper_vault",
+        sql: include_str!("migrations/0036_keeper_vault.sql"),
+    },
 ];
 
 pub fn apply(connection: &mut Connection) -> Result<(), DatabaseError> {

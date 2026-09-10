@@ -230,7 +230,7 @@ mod tests {
             })
             .expect("migration count should be readable");
 
-        assert_eq!(migration_count, 35,);
+        assert_eq!(migration_count, 36,);
 
         let safe_to_delete_scope_count: i64 = connection
             .query_row(
@@ -2029,6 +2029,7 @@ mod tests {
 
         let keeper_folder = crate::keeper::client::SharedFolder {
             folder_uid: "keeper-folder-1".to_string(),
+            parent_uid: String::new(),
             name: "Operations".to_string(),
             folder_type: "Shared Folder".to_string(),
             folder_path: "/Operations".to_string(),
@@ -2038,8 +2039,26 @@ mod tests {
                 target_kind: "user".to_string(),
             }],
         };
-        keeper::synchronize(&database, &[keeper_folder])
-            .expect("Keeper inventory should synchronize");
+        keeper::synchronize(
+            &database,
+            &crate::keeper::client::VaultSnapshot {
+                schema_version: 1,
+                folders: vec![
+                    crate::keeper::client::SharedFolder {
+                        folder_uid: String::new(),
+                        parent_uid: String::new(),
+                        name: "My Vault".into(),
+                        folder_type: "Vault".into(),
+                        folder_path: "/".into(),
+                        access: vec![],
+                    },
+                    keeper_folder,
+                ],
+                records: vec![],
+                memberships: vec![],
+            },
+        )
+        .expect("Keeper inventory should synchronize");
         let keeper_summary = keeper::summary(&database).expect("Keeper summary should load");
         assert_eq!(keeper_summary.shared_folders, 1);
         assert_eq!(keeper_summary.shared_with, 1);
