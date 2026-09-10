@@ -121,7 +121,7 @@
         {% for tag in filter_tags %}
         <button class="btn btn-sm rounded-pill boreal-tag-filter-pill{% if tag.excluded %} boreal-tag-filter-pill-excluded{% endif %}" type="button"
                 data-tag-value="{{ tag.slug }}" aria-pressed="{% if tag.selected || tag.excluded %}true{% else %}false{% endif %}"
-                title="{{ tag.description }}"
+                title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)"
                 style="border-color: {{ tag.color }}; background-color: {% if tag.selected %}{{ tag.color }}{% else %}transparent{% endif %}; color: {% if tag.selected %}{{ tag.text_color }}{% else %}{{ tag.color }}{% endif %};">
             {% if tag.selected %}<i class="bi bi-check-lg me-1" aria-hidden="true"></i>{% else if tag.excluded %}<i class="bi bi-slash-circle me-1" aria-hidden="true"></i>Not {% endif %}{{ tag.name }}
         </button>
@@ -131,7 +131,7 @@
         <input type="hidden" id="directory-selected-principal-ids" name="selected_principal_ids" value="">
         <label class="small fw-semibold" for="directory-apply-tag">Apply Person tag:</label>
         <select id="directory-apply-tag" class="form-select form-select-sm w-auto" name="tag" required>
-            {% for tag in tags %}<option value="{{ tag.slug }}" title="{{ tag.description }}">{{ tag.name }}</option>{% endfor %}
+            {% for tag in tags %}<option value="{{ tag.slug }}" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)">{{ tag.name }}</option>{% endfor %}
         </select>
         <button id="directory-apply-tag-button" class="btn btn-sm btn-outline-primary" type="submit" disabled><i class="bi bi-tag me-1"></i>Apply</button>
         <button id="directory-remove-tag-button" class="btn btn-sm btn-outline-danger" type="submit" formaction="/directory/tags/remove" disabled><i class="bi bi-tag-fill me-1"></i>Remove</button>
@@ -156,7 +156,7 @@
             {% for principal in principals %}
             <tr>
                 <td><input class="form-check-input directory-principal-select" type="checkbox" value="{{ principal.id }}" aria-label="Select {{ principal.display_name }}"></td>
-                <td><a href="/directory/principals/{{ principal.id }}" class="text-decoration-none">{{ principal.display_name }}</a>{% for tag in principal.tags %}<span class="badge rounded-pill ms-1" style="background-color: {{ tag.color }}; color: #fff" title="{{ tag.description }}">{{ tag.name }}</span>{% endfor %}</td><td><code>{{ principal.username }}</code></td><td>{{ principal.primary_email }}</td>
+                <td><a href="/directory/principals/{{ principal.id }}" class="text-decoration-none">{{ principal.display_name }}</a>{% for tag in principal.tags %}<span class="badge rounded-pill ms-1" style="background-color: {{ tag.color }}; color: #fff" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)">{{ tag.name }}</span>{% endfor %}</td><td><code>{{ principal.username }}</code></td><td>{{ principal.primary_email }}</td>
                 <td><span class="badge text-bg-secondary">{{ principal.principal_type }}</span></td>
                 <td><span class="badge {% if principal.status == "former" %}text-bg-danger{% else if principal.status == "departing" %}text-bg-warning{% else if principal.status == "active" %}text-bg-success{% else %}text-bg-secondary{% endif %}">{{ principal.status }}</span></td>
                 <td>{{ principal.departure_date }}</td><td>{{ principal.organizations }}</td>
@@ -240,9 +240,7 @@
         document.querySelectorAll(".boreal-tag-filter-pill").forEach((button) => {
             button.addEventListener("click", () => {
                 const requestedTag = button.dataset.tagValue;
-                tagFilterInput.value = tagFilterInput.value === requestedTag
-                    ? `!${requestedTag}`
-                    : tagFilterInput.value === `!${requestedTag}` ? "" : requestedTag;
+                tagFilterInput.value = window.borealToggleTag(tagFilterInput.value, requestedTag);
                 tagFilterForm.requestSubmit();
             });
         });

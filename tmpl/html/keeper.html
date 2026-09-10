@@ -19,14 +19,16 @@
 </nav>
 <form method="get" action="/keeper" id="keeper-filter-form" class="boreal-report-hide">
     <input type="hidden" name="folder" value="{{ query.folder }}"><input type="hidden" name="tag" value="{{ query.tag }}">
-    <div class="d-flex flex-wrap gap-1 mb-2">
+    <p class="small text-body-secondary mb-2">Click a tag to include it, click again to exclude it, and a third time to clear it. All selected conditions must match (AND).</p>
+    <div class="d-flex flex-wrap gap-1 align-items-center mb-2"><span class="small fw-semibold text-body-secondary">Vault tags:</span>
+        <button type="button" data-keeper-tag="" class="btn btn-sm rounded-pill {% if query.tag.is_empty() %}btn-secondary{% else %}btn-outline-secondary{% endif %}">Any Folder</button>
         {% for tag in filter_tags %}
-        <button type="button" data-keeper-tag="{{ tag.slug }}" class="btn btn-sm rounded-pill" title="{{ tag.description }} (click to include; right-click to exclude)" style="border-color: {{ tag.color }};{% if tag.selected %} background:{{ tag.color }};color:{{ tag.text_color }};{% else if tag.excluded %} background:repeating-linear-gradient(135deg,transparent,transparent 4px,{{ tag.color }} 4px,{{ tag.color }} 7px);{% else %} color:{{ tag.color }};{% endif %}">{{ tag.name }}</button>
+        <button type="button" data-keeper-tag="{{ tag.slug }}" class="btn btn-sm rounded-pill boreal-tag-filter-pill{% if tag.excluded %} boreal-tag-filter-pill-excluded{% endif %}" aria-pressed="{% if tag.selected || tag.excluded %}true{% else %}false{% endif %}" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)" style="border-color: {{ tag.color }};{% if tag.selected %} background:{{ tag.color }};color:{{ tag.text_color }};{% else %} color:{{ tag.color }};{% endif %}">{% if tag.selected %}<i class="bi bi-check-lg me-1"></i>{% else if tag.excluded %}Not {% endif %}{{ tag.name }}</button>
         {% endfor %}
     </div>
     <input type="hidden" name="user_tag" value="{{ query.user_tag }}">
     <div class="d-flex flex-wrap gap-1 align-items-center mb-2"><span class="small fw-semibold text-body-secondary">User tags:</span><button type="button" class="btn btn-sm rounded-pill {% if query.user_tag.is_empty() %}btn-secondary{% else %}btn-outline-secondary{% endif %}" data-keeper-user-tag="">Any user</button>
-    {% for tag in user_filter_tags %}<button type="button" data-keeper-user-tag="{{ tag.slug }}" class="btn btn-sm rounded-pill" title="{{ tag.description }} (click to include; right-click to exclude)" style="border-color:{{ tag.color }};{% if tag.selected %}background:{{ tag.color }};color:{{ tag.text_color }};{% else %}color:{{ tag.color }};{% endif %}">{% if tag.excluded %}Not {% endif %}{{ tag.name }}</button>{% endfor %}</div>
+    {% for tag in user_filter_tags %}<button type="button" data-keeper-user-tag="{{ tag.slug }}" class="btn btn-sm rounded-pill boreal-tag-filter-pill{% if tag.excluded %} boreal-tag-filter-pill-excluded{% endif %}" aria-pressed="{% if tag.selected || tag.excluded %}true{% else %}false{% endif %}" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)" style="border-color:{{ tag.color }};{% if tag.selected %}background:{{ tag.color }};color:{{ tag.text_color }};{% else %}color:{{ tag.color }};{% endif %}">{% if tag.selected %}<i class="bi bi-check-lg me-1"></i>{% else if tag.excluded %}<i class="bi bi-slash-circle me-1"></i>Not {% endif %}{{ tag.name }}</button>{% endfor %}</div>
     <input type="hidden" name="sort" value="{{ query.sort }}"><input type="hidden" name="direction" value="{{ query.direction }}">
     <div class="d-flex gap-3 mb-2 small"><label><input type="checkbox" name="all" value="true"{% if query.all %} checked{% endif %}> Search all folders and records</label><label><input type="checkbox" name="include_inaccessible" value="true"{% if query.include_inaccessible %} checked{% endif %}> Include previously indexed items</label></div>
     <div class="d-flex gap-2 mb-2"><button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel me-1"></i>Apply filters</button><button class="btn btn-sm btn-outline-success" type="submit" formaction="/keeper/export.xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Export Excel</button><button class="btn btn-sm btn-outline-danger" type="submit" name="print" value="true" formtarget="_blank"><i class="bi bi-file-earmark-pdf me-1"></i>Print to PDF</button><a class="btn btn-sm btn-outline-secondary" href="/keeper?folder={{ query.folder }}">Clear filters</a></div>
@@ -89,8 +91,7 @@
     document.querySelectorAll('[data-keeper-tag]').forEach(button => {
         const apply = (event, exclude) => {
             event.preventDefault();
-            const value = (exclude ? '!' : '') + button.dataset.keeperTag;
-            form.elements.tag.value = form.elements.tag.value === value ? '' : value;
+            form.elements.tag.value = window.borealToggleTag(form.elements.tag.value, button.dataset.keeperTag, exclude);
             form.requestSubmit();
         };
         button.addEventListener('click', event => apply(event, false));
@@ -100,8 +101,7 @@
         const apply = (event, exclude) => {
             event.preventDefault();
             const slug = button.dataset.keeperUserTag;
-            const value = (exclude && slug ? '!' : '') + slug;
-            form.elements.user_tag.value = form.elements.user_tag.value === value ? '' : value;
+            form.elements.user_tag.value = window.borealToggleTag(form.elements.user_tag.value, slug, exclude);
             form.requestSubmit();
         };
         button.addEventListener('click', event => apply(event, false));

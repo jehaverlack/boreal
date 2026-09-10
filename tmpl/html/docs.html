@@ -74,7 +74,7 @@
                 <p>Install Keeper Commander and use the assistant under <strong>App → Settings</strong> to authenticate it with BOREAL's private Keeper configuration. Use a pip/pipx installation of <code>keepercommander</code> on Linux, macOS or Windows; the metadata helper needs Commander's Python environment.</p>
                 <ul class="mb-0">
                     <li>Select <strong>Keeper vault metadata</strong> from Update to import regular and shared folders, record titles and types, modification dates, attachment counts and sizes, and folder-sharing information.</li>
-                    <li>Open folders to browse their records, sort by column, and add or remove local tags on folders and records. Use Export Excel or Print to PDF to export the current folder or all-folder search with its filters and sorting. A record linked into multiple folders keeps the same tags everywhere. Permissions group users under each access label, with Persons identity pills for matching email addresses and aliases. User tags filter items by the tags on their sharing identities; right-click a user tag to exclude it.</li>
+                    <li>Open folders to browse their records, sort by column, and add or remove local tags on folders and records. Use Export Excel or Print to PDF to export the current folder or all-folder search with its filters and sorting. A record linked into multiple folders keeps the same tags everywhere. Permissions group users under each access label, with Persons identity pills for matching email addresses and aliases. User tags filter items by the tags on their sharing identities; click a user tag to include it, click again to exclude it, and a third time to clear it. Select multiple tags to require every condition (AND).</li>
                     <li>The helper emits only approved metadata. It excludes record fields, usernames, passwords, URLs, notes, custom-field values, TOTP seeds, keys and attachment contents.</li>
                     <li>Keeper manages authentication through its private configuration and system keyring. BOREAL needs a resumable session for background indexing.</li>
                 </ul>
@@ -90,6 +90,7 @@
                     <li>Click the Google Drive icon or a file name to open the item in Google Drive.</li>
                     <li>Use column fields to filter by name, type, size, date, owner, or permission.</li>
                     <li>Click a hollow tag pill to require that tag. Click the solid pill again to exclude that tag; click the red “Not” pill to clear it.</li>
+                    <li>Additional tags narrow results with AND: for example, <strong>Keep</strong> and <strong>Not Needs Review</strong> require Keep and exclude Needs Review. The same three-click cycle works for item and user tags in every explorer. The Any/All pill clears that tag group; Keeper calls its vault-tag reset <strong>Any Folder</strong>.</li>
                     <li>Use <strong>No tags</strong> to find records with no assigned tags.</li>
                     <li>Prefix an Owner value with <code>!</code> to exclude matching owners.</li>
                     <li>Enable <strong>Include deleted items</strong> to see content retained from an older inventory but missing from the latest completed scan.</li>

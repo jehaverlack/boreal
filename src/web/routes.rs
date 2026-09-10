@@ -431,7 +431,9 @@ pub struct IdentityTagFilterPill {
     pub color: String,
     pub text_color: &'static str,
     pub owner_selected: bool,
+    pub owner_excluded: bool,
     pub permission_selected: bool,
+    pub permission_excluded: bool,
 }
 
 #[allow(dead_code)]
@@ -3989,8 +3991,8 @@ async fn shared_drives_page(
                 description: tag.description.clone(),
                 color: tag.color.clone(),
                 text_color: tag_text_color(&tag.color),
-                selected: query.tag == tag.slug,
-                excluded: query.tag.strip_prefix('!') == Some(tag.slug.as_str()),
+                selected: database::tag_filter::selected(&query.tag, &tag.slug, false),
+                excluded: database::tag_filter::selected(&query.tag, tag.slug.as_str(), true),
             })
             .collect::<Vec<_>>();
         filter_tags.push(no_tags_filter_pill(&query.tag));
@@ -4128,8 +4130,12 @@ fn render_drive_explorer(
         StatusCode::SERVICE_UNAVAILABLE
     })?;
     let has_parent = !query.path.is_empty();
-    let include_deleted =
-        query.include_deleted || query.tag == database::inventory::DELETED_TAG_FILTER;
+    let include_deleted = query.include_deleted
+        || database::tag_filter::selected(
+            &query.tag,
+            &database::inventory::DELETED_TAG_FILTER,
+            false,
+        );
     let parent_filter = has_parent.then_some(query.path.as_str());
     let sort = match query.sort.as_str() {
         "type" | "size" | "modified" | "owner" => query.sort.as_str(),
@@ -4269,8 +4275,8 @@ fn render_drive_explorer(
             description: tag.description.clone(),
             color: tag.color.clone(),
             text_color: tag_text_color(&tag.color),
-            selected: query.tag == tag.slug,
-            excluded: query.tag.strip_prefix('!') == Some(tag.slug.as_str()),
+            selected: database::tag_filter::selected(&query.tag, &tag.slug, false),
+            excluded: database::tag_filter::selected(&query.tag, tag.slug.as_str(), true),
         })
         .collect::<Vec<_>>();
     filter_tags.push(no_tags_filter_pill(&query.tag));
@@ -4282,8 +4288,16 @@ fn render_drive_explorer(
                 .to_string(),
         color: "#6c757d".to_string(),
         text_color: "#ffffff",
-        selected: query.tag == database::inventory::DELETED_TAG_FILTER,
-        excluded: query.tag.strip_prefix('!') == Some(database::inventory::DELETED_TAG_FILTER),
+        selected: database::tag_filter::selected(
+            &query.tag,
+            &database::inventory::DELETED_TAG_FILTER,
+            false,
+        ),
+        excluded: database::tag_filter::selected(
+            &query.tag,
+            database::inventory::DELETED_TAG_FILTER,
+            true,
+        ),
     });
     let directory_tags = database::inventory::list_tags_for_scope(
         &database,
@@ -4298,8 +4312,26 @@ fn render_drive_explorer(
             description: tag.description.clone(),
             color: tag.color.clone(),
             text_color: tag_text_color(&tag.color),
-            owner_selected: query.owner_identity_tag == tag.slug,
-            permission_selected: query.permission_identity_tag == tag.slug,
+            owner_excluded: database::tag_filter::selected(
+                &query.owner_identity_tag,
+                &tag.slug,
+                true,
+            ),
+            permission_excluded: database::tag_filter::selected(
+                &query.permission_identity_tag,
+                &tag.slug,
+                true,
+            ),
+            owner_selected: database::tag_filter::selected(
+                &query.owner_identity_tag,
+                &tag.slug,
+                false,
+            ),
+            permission_selected: database::tag_filter::selected(
+                &query.permission_identity_tag,
+                &tag.slug,
+                false,
+            ),
         })
         .collect();
 
@@ -4946,8 +4978,8 @@ async fn keeper_page(
             description: tag.description.clone(),
             color: tag.color.clone(),
             text_color: tag_text_color(&tag.color),
-            selected: query.tag == tag.slug,
-            excluded: query.tag.strip_prefix('!') == Some(tag.slug.as_str()),
+            selected: database::tag_filter::selected(&query.tag, &tag.slug, false),
+            excluded: database::tag_filter::selected(&query.tag, tag.slug.as_str(), true),
         })
         .collect::<Vec<_>>();
     filter_tags.push(no_tags_filter_pill(&query.tag));
@@ -4958,8 +4990,8 @@ async fn keeper_page(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     .into_iter()
     .map(|tag| TagFilterPill {
-        selected: query.user_tag == tag.slug,
-        excluded: query.user_tag.strip_prefix('!') == Some(tag.slug.as_str()),
+        selected: database::tag_filter::selected(&query.user_tag, &tag.slug, false),
+        excluded: database::tag_filter::selected(&query.user_tag, tag.slug.as_str(), true),
         text_color: tag_text_color(&tag.color),
         slug: tag.slug,
         name: tag.name,
@@ -5260,8 +5292,8 @@ async fn local_files_page(
             description: tag.description.clone(),
             color: tag.color.clone(),
             text_color: tag_text_color(&tag.color),
-            selected: query.tag == tag.slug,
-            excluded: false,
+            selected: database::tag_filter::selected(&query.tag, &tag.slug, false),
+            excluded: database::tag_filter::selected(&query.tag, &tag.slug, true),
         })
         .collect::<Vec<_>>();
     filter_tags.push(no_tags_filter_pill(&query.tag));
@@ -5524,8 +5556,8 @@ async fn github_page(
             description: tag.description.clone(),
             color: tag.color.clone(),
             text_color: tag_text_color(&tag.color),
-            selected: query.tag == tag.slug,
-            excluded: query.tag.strip_prefix('!') == Some(tag.slug.as_str()),
+            selected: database::tag_filter::selected(&query.tag, &tag.slug, false),
+            excluded: database::tag_filter::selected(&query.tag, tag.slug.as_str(), true),
         })
         .collect::<Vec<_>>();
     filter_tags.push(no_tags_filter_pill(&query.tag));
@@ -5794,8 +5826,8 @@ async fn directory_page(
             description: tag.description.clone(),
             color: tag.color.clone(),
             text_color: tag_text_color(&tag.color),
-            selected: query.tag_filter == tag.slug,
-            excluded: query.tag_filter.strip_prefix('!') == Some(tag.slug.as_str()),
+            selected: database::tag_filter::selected(&query.tag_filter, &tag.slug, false),
+            excluded: database::tag_filter::selected(&query.tag_filter, tag.slug.as_str(), true),
         })
         .collect::<Vec<_>>();
     filter_tags.push(no_tags_filter_pill(&query.tag_filter));
@@ -6390,8 +6422,16 @@ fn no_tags_filter_pill(filter: &str) -> TagFilterPill {
         description: "Records that do not have any tags assigned.".to_string(),
         color: "#6c757d".to_string(),
         text_color: "#ffffff",
-        selected: filter == database::inventory::UNTAGGED_TAG_FILTER,
-        excluded: filter.strip_prefix('!') == Some(database::inventory::UNTAGGED_TAG_FILTER),
+        selected: database::tag_filter::selected(
+            filter,
+            database::inventory::UNTAGGED_TAG_FILTER,
+            false,
+        ),
+        excluded: database::tag_filter::selected(
+            filter,
+            database::inventory::UNTAGGED_TAG_FILTER,
+            true,
+        ),
     }
 }
 

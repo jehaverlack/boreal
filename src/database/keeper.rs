@@ -313,22 +313,12 @@ pub fn list(
     }
     let contains =
         |value: &str, filter: &str| value.to_lowercase().contains(&filter.trim().to_lowercase());
-    let (excluded, tag) = options
-        .tag
-        .strip_prefix('!')
-        .map_or((false, options.tag), |s| (true, s));
-    let (exclude_user_tag, user_tag) = options
-        .user_tag
-        .strip_prefix('!')
-        .map_or((false, options.user_tag), |s| (true, s));
     entries.retain(|e| {
-        (user_tag.is_empty()
-            || (e
-                .access
+        super::tag_filter::matches(options.user_tag, |slug| {
+            e.access
                 .iter()
-                .any(|a| a.target_kind != "team" && a.tags.iter().any(|t| t.slug == user_tag))
-                != exclude_user_tag))
-            && (options.include_inaccessible || e.is_accessible)
+                .any(|a| a.target_kind != "team" && a.tags.iter().any(|t| t.slug == slug))
+        }) && (options.include_inaccessible || e.is_accessible)
             && (options.all || e.parent_uid == options.folder)
             && contains(&e.name, options.name)
             && contains(&e.folder_path, options.path)
@@ -340,12 +330,13 @@ pub fn list(
                 || e.access
                     .iter()
                     .any(|a| contains(&a.permissions, options.permission)))
-            && (tag.is_empty()
-                || ((if tag == super::inventory::UNTAGGED_TAG_FILTER {
+            && super::tag_filter::matches(options.tag, |slug| {
+                if slug == super::inventory::UNTAGGED_TAG_FILTER {
                     e.tags.is_empty()
                 } else {
-                    e.tags.iter().any(|t| t.slug == tag)
-                }) != excluded))
+                    e.tags.iter().any(|t| t.slug == slug)
+                }
+            })
     });
     entries.sort_by(|a, b| {
         let order = match options.sort {
@@ -661,6 +652,57 @@ mod tests {
             (3, 1, 2)
         );
         assert_eq!(folder_locations(&db.database).unwrap().len(), 4);
+    }
+
+    #[test]
+    fn keeper_combines_vault_and_user_tag_predicates() {
+        let db = TestDb::new();
+        synchronize(&db.database, &fixture()).unwrap();
+        let c = db.database.connect().unwrap();
+        c.execute_batch("INSERT INTO tags(slug,name,color) VALUES('filter-a','A','#123456'),('filter-b','B','#234567');
+            INSERT INTO tag_scopes(tag_id,scope) SELECT id,'keeper-shared-folders' FROM tags WHERE slug IN ('filter-a','filter-b');
+            INSERT INTO tag_scopes(tag_id,scope) SELECT id,'directory' FROM tags WHERE slug IN ('filter-a','filter-b');
+            INSERT INTO principals(id,display_name,primary_email) VALUES(1,'Person','person@example.test');
+            INSERT INTO principal_tags(principal_id,tag_id) SELECT 1,id FROM tags WHERE slug='filter-a';").unwrap();
+        change_tags(
+            &db.database,
+            &["personal".into(), "shared".into()],
+            &["one".into()],
+            "filter-a",
+            false,
+        )
+        .unwrap();
+        change_tags(
+            &db.database,
+            &["shared".into()],
+            &["one".into()],
+            "filter-b",
+            false,
+        )
+        .unwrap();
+        for (tag, user_tag, expected) in [
+            ("filter-a", "", 4),
+            ("filter-a,filter-b", "", 3),
+            ("filter-a,!filter-b", "", 1),
+            ("filter-a,!filter-a", "", 0),
+            ("filter-a,missing", "", 0),
+            ("filter-a,filter-b", "filter-a,!filter-b", 2),
+            ("filter-a,filter-b", "filter-a,filter-b", 0),
+            ("filter-a,filter-b", "!filter-a", 1),
+            ("__untagged__,filter-a", "", 0),
+        ] {
+            let rows = list(
+                &db.database,
+                &ListOptions {
+                    all: true,
+                    tag,
+                    user_tag,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(rows.len(), expected, "vault: {tag}; users: {user_tag}");
+        }
     }
 
     #[test]

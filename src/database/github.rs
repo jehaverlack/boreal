@@ -177,9 +177,7 @@ pub fn list(
 ) -> Result<Vec<RepositoryRow>, DatabaseError> {
     let (size_comparison, size_kb) = parse_count_filter(size_filter, "size", ">5000")?;
     let (pushed_comparison, pushed_value) = parse_date_filter(pushed_filter)?;
-    let (exclude_tag, tag_slug) = tag
-        .strip_prefix('!')
-        .map_or((false, tag), |value| (true, value));
+    let tag_predicates = super::tag_filter::json(tag);
     let order = match sort {
         "owner" => "owner_login",
         "visibility" => "visibility",
@@ -202,11 +200,18 @@ pub fn list(
            AND (?6='' OR language LIKE '%'||?6||'%')
            AND (?7=0 OR CASE ?7 WHEN 1 THEN size_kb>?8 WHEN 2 THEN size_kb>=?8 WHEN 3 THEN size_kb<?8 WHEN 4 THEN size_kb<=?8 ELSE size_kb=?8 END)
            AND (?9=0 OR CASE ?9 WHEN 1 THEN substr(pushed_at,1,10)>?10 WHEN 2 THEN substr(pushed_at,1,10)>=?10 WHEN 3 THEN substr(pushed_at,1,10)<?10 WHEN 4 THEN substr(pushed_at,1,10)<=?10 ELSE substr(pushed_at,1,10)=?10 END)
-           AND (?11='' OR
-                (?13=1 AND ((?12=0 AND NOT EXISTS(SELECT 1 FROM github_repository_tags rt WHERE rt.repository_id=r.repository_id))
-                         OR (?12=1 AND EXISTS(SELECT 1 FROM github_repository_tags rt WHERE rt.repository_id=r.repository_id))))
-                OR (?13=0 AND ((?12=0 AND EXISTS(SELECT 1 FROM github_repository_tags rt JOIN tags t ON t.id=rt.tag_id WHERE rt.repository_id=r.repository_id AND t.slug=?11))
-                           OR (?12=1 AND NOT EXISTS(SELECT 1 FROM github_repository_tags rt JOIN tags t ON t.id=rt.tag_id WHERE rt.repository_id=r.repository_id AND t.slug=?11)))))
+           AND NOT EXISTS (
+                SELECT 1 FROM json_each(?11) tag_term
+                WHERE (CASE json_extract(tag_term.value, '$[1]')
+                    WHEN '__untagged__' THEN NOT EXISTS (
+                        SELECT 1 FROM github_repository_tags link WHERE link.repository_id = r.repository_id
+                    )
+                    ELSE EXISTS (
+                        SELECT 1 FROM github_repository_tags link JOIN tags t ON t.id = link.tag_id
+                        WHERE link.repository_id = r.repository_id AND t.slug = json_extract(tag_term.value, '$[1]')
+                    )
+                END) = json_extract(tag_term.value, '$[0]')
+           )
          ORDER BY {order} {direction}, repository_id {direction}"
     );
     let connection = database.connect()?;
@@ -224,9 +229,7 @@ pub fn list(
                 size_kb,
                 pushed_comparison,
                 pushed_value,
-                tag_slug,
-                exclude_tag,
-                tag_slug == super::inventory::UNTAGGED_TAG_FILTER
+                tag_predicates
             ],
             |row| {
                 Ok(RepositoryRow {

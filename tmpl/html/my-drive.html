@@ -64,8 +64,8 @@
         </button>
         {% for tag in filter_tags %}
         <button class="btn btn-sm rounded-pill boreal-tag-filter-pill{% if tag.excluded %} boreal-tag-filter-pill-excluded{% endif %}"
-                type="button" data-filter-input="my-drive-tag-filter" data-tag-value="{{ tag.slug }}" data-negatable="true" aria-pressed="{% if tag.selected || tag.excluded %}true{% else %}false{% endif %}"
-                title="{{ tag.description }}"
+                type="button" data-filter-input="my-drive-tag-filter" data-tag-value="{{ tag.slug }}" aria-pressed="{% if tag.selected || tag.excluded %}true{% else %}false{% endif %}"
+                title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)"
                 style="border-color: {{ tag.color }}; background-color: {% if tag.selected %}{{ tag.color }}{% else %}transparent{% endif %}; color: {% if tag.selected %}{{ tag.text_color }}{% else %}{{ tag.color }}{% endif %};">
             {% if tag.selected %}<i class="bi bi-check-lg me-1" aria-hidden="true"></i>{% else if tag.excluded %}<i class="bi bi-slash-circle me-1" aria-hidden="true"></i>Not {% endif %}{{ tag.name }}
         </button>
@@ -79,11 +79,11 @@
             {% if owner_identity_tag_filter.len() == 0 %}<i class="bi bi-check-lg me-1" aria-hidden="true"></i>{% endif %}Any owner
         </button>
         {% for tag in identity_filter_tags %}
-        <button class="btn btn-sm rounded-pill boreal-tag-filter-pill" type="button"
+        <button class="btn btn-sm rounded-pill boreal-tag-filter-pill{% if tag.owner_excluded %} boreal-tag-filter-pill-excluded{% endif %}" type="button"
                 data-filter-input="my-drive-owner-identity-tag-filter" data-tag-value="{{ tag.slug }}"
-                aria-pressed="{% if tag.owner_selected %}true{% else %}false{% endif %}" title="{{ tag.description }}"
+                aria-pressed="{% if tag.owner_selected || tag.owner_excluded %}true{% else %}false{% endif %}" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)"
                 style="border-color: {{ tag.color }}; background-color: {% if tag.owner_selected %}{{ tag.color }}{% else %}transparent{% endif %}; color: {% if tag.owner_selected %}{{ tag.text_color }}{% else %}{{ tag.color }}{% endif %};">
-            {% if tag.owner_selected %}<i class="bi bi-check-lg me-1" aria-hidden="true"></i>{% endif %}{{ tag.name }}
+            {% if tag.owner_selected %}<i class="bi bi-check-lg me-1" aria-hidden="true"></i>{% else if tag.owner_excluded %}Not {% endif %}{{ tag.name }}
         </button>
         {% endfor %}
     </div>
@@ -95,11 +95,11 @@
             {% if permission_identity_tag_filter.len() == 0 %}<i class="bi bi-check-lg me-1" aria-hidden="true"></i>{% endif %}Any permission
         </button>
         {% for tag in identity_filter_tags %}
-        <button class="btn btn-sm rounded-pill boreal-tag-filter-pill" type="button"
+        <button class="btn btn-sm rounded-pill boreal-tag-filter-pill{% if tag.permission_excluded %} boreal-tag-filter-pill-excluded{% endif %}" type="button"
                 data-filter-input="my-drive-permission-identity-tag-filter" data-tag-value="{{ tag.slug }}"
-                aria-pressed="{% if tag.permission_selected %}true{% else %}false{% endif %}" title="{{ tag.description }}"
+                aria-pressed="{% if tag.permission_selected || tag.permission_excluded %}true{% else %}false{% endif %}" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)"
                 style="border-color: {{ tag.color }}; background-color: {% if tag.permission_selected %}{{ tag.color }}{% else %}transparent{% endif %}; color: {% if tag.permission_selected %}{{ tag.text_color }}{% else %}{{ tag.color }}{% endif %};">
-            {% if tag.permission_selected %}<i class="bi bi-check-lg me-1" aria-hidden="true"></i>{% endif %}{{ tag.name }}
+            {% if tag.permission_selected %}<i class="bi bi-check-lg me-1" aria-hidden="true"></i>{% else if tag.permission_excluded %}Not {% endif %}{{ tag.name }}
         </button>
         {% endfor %}
     </div>
@@ -157,7 +157,7 @@
     <div class="d-flex align-items-center gap-2 mb-2 boreal-report-hide">
         <label class="small fw-semibold" for="my-drive-apply-tag">Apply {% if active_page == "my-drive" %}My Drive{% else if active_page == "shared-with-me" %}Shared with me{% else %}Shared Drive{% endif %} tag:</label>
         <select id="my-drive-apply-tag" class="form-select form-select-sm w-auto" name="tag" required>
-            {% for tag in tags %}<option value="{{ tag.slug }}" title="{{ tag.description }}">{{ tag.name }}</option>{% endfor %}
+            {% for tag in tags %}<option value="{{ tag.slug }}" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)">{{ tag.name }}</option>{% endfor %}
         </select>
         <button id="my-drive-apply-tag-button" class="btn btn-sm btn-outline-primary" type="submit" disabled>
             <i class="bi bi-tag me-1"></i>Apply
@@ -233,7 +233,7 @@
                             {{ row.name }}
                         </a>
                         <a class="boreal-print-only small ms-1" href="{{ row.drive_url }}" title="Open {{ row.name }} in Google Drive">Open in Google Drive</a>
-                        <span class="boreal-item-tags">{% for tag in row.tags %}<span class="badge rounded-pill ms-1" style="background-color: {{ tag.color }}; color: {{ tag.text_color }};" title="{{ tag.description }}">{{ tag.name }}</span>{% endfor %}</span>
+                        <span class="boreal-item-tags">{% for tag in row.tags %}<span class="badge rounded-pill ms-1" style="background-color: {{ tag.color }}; color: {{ tag.text_color }};" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)">{{ tag.name }}</span>{% endfor %}</span>
                         {% if row.is_deleted %}<span class="badge rounded-pill text-bg-secondary ms-1">Deleted</span>{% endif %}
                     </th>
                     <td class="text-nowrap small">{{ row.size }}</td>
@@ -281,13 +281,7 @@
             button.addEventListener("click", () => {
                 const tagFilterInput = document.getElementById(button.dataset.filterInput);
                 const requestedTag = button.dataset.tagValue;
-                if (button.dataset.negatable === "true" && requestedTag !== "") {
-                    tagFilterInput.value = tagFilterInput.value === requestedTag
-                        ? `!${requestedTag}`
-                        : tagFilterInput.value === `!${requestedTag}` ? "" : requestedTag;
-                } else {
-                    tagFilterInput.value = requestedTag === tagFilterInput.value ? "" : requestedTag;
-                }
+                tagFilterInput.value = window.borealToggleTag(tagFilterInput.value, requestedTag);
                 tagFilterForm.requestSubmit();
             });
         });

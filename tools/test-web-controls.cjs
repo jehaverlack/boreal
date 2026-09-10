@@ -4,6 +4,19 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 const base = fs.readFileSync(path.join(__dirname, '../tmpl/html/base.html'), 'utf8');
+const tagWindow = {};
+const tagScriptStart = base.indexOf('        window.borealToggleTag =');
+vm.runInNewContext(base.slice(tagScriptStart, base.indexOf('</script>', tagScriptStart)), {window: tagWindow});
+const toggleTag = tagWindow.borealToggleTag;
+assert.equal(toggleTag('', 'keep'), 'keep');
+assert.equal(toggleTag('keep', 'review'), 'keep,review');
+assert.equal(toggleTag('keep,review', 'review'), 'keep,!review');
+assert.equal(toggleTag('keep,!review', 'review'), 'keep');
+assert.equal(toggleTag('keep,!review', ''), '');
+assert.equal(toggleTag('', ''), '');
+assert.equal(toggleTag('keeper', 'keep'), 'keeper,keep');
+assert.equal(toggleTag('keep,!review', 'keep'), '!review,!keep');
+console.log('Shared tag cycle: include, exclude, clear and multiple predicates passed');
 const start = base.indexOf('            const quitButton =');
 const end = base.indexOf('        })();', start);
 const shutdownScript = base.slice(start, end);
@@ -74,6 +87,7 @@ function element(extra = {}) {
 const boxes = [element({value: 'folder-a', dataset: {kind: 'folder'}, checked: false}),
     element({value: 'record-b', dataset: {kind: 'record'}, checked: false}),
     element({value: 'record-b', dataset: {kind: 'record'}, checked: false})];
+const vaultPills = [element({dataset: {keeperTag: 'keep'}}), element({dataset: {keeperTag: 'review'}}), element({dataset: {keeperTag: ''}})];
 const userPills = [element({dataset: {keeperUserTag: 'needs-review'}}), element({dataset: {keeperUserTag: ''}})];
 let filterSubmissions = 0;
 const tagForm = element({elements: {selected_folder_uids: {}, selected_record_uids: {}}});
@@ -85,8 +99,8 @@ const controls = {
 };
 vm.runInNewContext(keeperScript, {document: {
     getElementById: id => controls[id],
-    querySelectorAll: selector => selector === '[data-keeper-user-tag]' ? userPills : selector === '.keeper-select' ? boxes : selector === '.keeper-select:checked' ? boxes.filter(box => box.checked) : [],
-}, alert: () => {} });
+    querySelectorAll: selector => selector === '[data-keeper-tag]' ? vaultPills : selector === '[data-keeper-user-tag]' ? userPills : selector === '.keeper-select' ? boxes : selector === '.keeper-select:checked' ? boxes.filter(box => box.checked) : [],
+}, window: tagWindow, alert: () => {} });
 controls['keeper-select-all'].checked = true;
 controls['keeper-select-all'].listeners.change({target: controls['keeper-select-all']});
 assert.equal(controls['keeper-selected-count'].textContent, '2 selected');
@@ -108,7 +122,17 @@ assert.equal(controls['keeper-filter-form'].elements.user_tag.value, '!needs-rev
 userPills[1].listeners.click({preventDefault() {}});
 assert.equal(controls['keeper-filter-form'].elements.user_tag.value, '');
 assert.equal(filterSubmissions, 3);
-console.log('Keeper user-tag controls: include, exclude and clear passed');
+userPills[0].listeners.click({preventDefault() {}});
+userPills[0].listeners.click({preventDefault() {}});
+assert.equal(controls['keeper-filter-form'].elements.user_tag.value, '!needs-review');
+userPills[0].listeners.click({preventDefault() {}});
+assert.equal(controls['keeper-filter-form'].elements.user_tag.value, '');
+controls['keeper-filter-form'].elements.user_tag.value = 'keep';
+userPills[0].listeners.click({preventDefault() {}});
+assert.equal(controls['keeper-filter-form'].elements.user_tag.value, 'keep,needs-review');
+userPills[0].listeners.click({preventDefault() {}});
+assert.equal(controls['keeper-filter-form'].elements.user_tag.value, 'keep,!needs-review');
+console.log('Keeper user-tag controls: three-click cycle, combined terms and clear passed');
 
 const metadataScript = base.slice(base.indexOf('            const metadataModalElement ='), start);
 function metadataDialog({background = false, initial = 'running'} = {}) {
@@ -178,3 +202,12 @@ function metadataDialog({background = false, initial = 'running'} = {}) {
     assert.equal(failed.shows, 1, 'background failures must be visible');
     console.log('Metadata dialog: completion, acknowledgement, background updates, failures and polling passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
+
+for (const pill of [vaultPills[0], vaultPills[1], vaultPills[1]]) pill.listeners.click({preventDefault() {}});
+assert.equal(controls['keeper-filter-form'].elements.tag.value, 'keep,!review');
+vaultPills[1].listeners.click({preventDefault() {}});
+assert.equal(controls['keeper-filter-form'].elements.tag.value, 'keep');
+vaultPills[2].listeners.click({preventDefault() {}});
+assert.equal(controls['keeper-filter-form'].elements.tag.value, '');
+assert.equal(controls['keeper-filter-form'].elements.user_tag.value, 'keep,!needs-review', 'Any Folder preserves user filters');
+console.log('Keeper vault tags: mixed filters, three-click cycle and Any Folder passed');

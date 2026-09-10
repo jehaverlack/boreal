@@ -341,7 +341,22 @@
         }
     </style>
 
-</head>
+<script>
+        // Shared by every explorer: include → exclude → clear; retain other AND terms.
+        window.borealToggleTag = (value, slug, exclude = false) => {
+            if (!slug) return '';
+            const terms = [...new Set(value.split(',').map(term => term.trim()).filter(Boolean))];
+            const included = terms.includes(slug);
+            const excluded = terms.includes(`!${slug}`);
+            const remaining = terms.filter(term => term !== slug && term !== `!${slug}`);
+            if (exclude) {
+                if (!excluded) remaining.push(`!${slug}`);
+            } else if (included) remaining.push(`!${slug}`);
+            else if (!excluded) remaining.push(slug);
+            return remaining.join(',');
+        };
+    </script>
+    </head>
 
 <body class="d-flex flex-column min-vh-100{% if active_page == "my-drive" || active_page == "shared-drives" || active_page == "shared-with-me" || active_page == "directory" || active_page == "tags" || active_page == "github" || active_page == "keeper" || active_page == "local-files" %} vh-100 overflow-hidden{% endif %}">
 

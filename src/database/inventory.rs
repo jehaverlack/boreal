@@ -198,7 +198,7 @@ pub fn list_shared_drives_filtered(
     let (folders_comparison, folders_value) = parse_count_filter(folders_filter)?;
     let (size_comparison, size_value) = parse_size_filter(size_filter)?;
     let (modified_comparison, modified_value) = parse_modified_filter(modified_filter)?;
-    let (exclude_tag, tag_slug) = split_tag_filter(tag_filter);
+    let tag_predicates = super::tag_filter::json(tag_filter);
     let connection = database.connect()?;
     let mut statement = connection.prepare(
         "SELECT sd.drive_id, sd.name, sd.inventory_scope, sd.is_accessible,
@@ -226,26 +226,18 @@ pub fn list_shared_drives_filtered(
          FROM shared_drives sd
          WHERE (?1 = '' OR instr(lower(sd.name), lower(?1)) > 0
                     OR instr(lower(sd.drive_id), lower(?1)) > 0)
-           AND (?2 = '' OR
-                (?2 = '__untagged__' AND
-                    ((?13 = 0 AND NOT EXISTS (
-                        SELECT 1 FROM shared_drive_tags untagged_sdt
-                        WHERE untagged_sdt.drive_id = sd.drive_id
-                    )) OR
-                    (?13 = 1 AND EXISTS (
-                        SELECT 1 FROM shared_drive_tags untagged_sdt
-                        WHERE untagged_sdt.drive_id = sd.drive_id
-                    )))) OR
-                (?2 <> '__untagged__' AND ?13 = 0 AND EXISTS (
-                    SELECT 1 FROM shared_drive_tags filter_sdt
-                    JOIN tags filter_tag ON filter_tag.id = filter_sdt.tag_id
-                    WHERE filter_sdt.drive_id = sd.drive_id AND filter_tag.slug = ?2
-                )) OR
-                (?2 <> '__untagged__' AND ?13 = 1 AND NOT EXISTS (
-                    SELECT 1 FROM shared_drive_tags filter_sdt
-                    JOIN tags filter_tag ON filter_tag.id = filter_sdt.tag_id
-                    WHERE filter_sdt.drive_id = sd.drive_id AND filter_tag.slug = ?2
-                )))
+           AND NOT EXISTS (
+                SELECT 1 FROM json_each(?2) tag_term
+                WHERE (CASE json_extract(tag_term.value, '$[1]')
+                    WHEN '__untagged__' THEN NOT EXISTS (
+                        SELECT 1 FROM shared_drive_tags link WHERE link.drive_id = sd.drive_id
+                    )
+                    ELSE EXISTS (
+                        SELECT 1 FROM shared_drive_tags link JOIN tags t ON t.id = link.tag_id
+                        WHERE link.drive_id = sd.drive_id AND t.slug = json_extract(tag_term.value, '$[1]')
+                    )
+                END) = json_extract(tag_term.value, '$[0]')
+           )
            AND (?3 = 0 OR (?3 = 1 AND files_scanned > ?4) OR (?3 = 2 AND files_scanned >= ?4)
                 OR (?3 = 3 AND files_scanned < ?4) OR (?3 = 4 AND files_scanned <= ?4) OR (?3 = 5 AND files_scanned = ?4))
            AND (?5 = 0 OR (?5 = 1 AND folders_scanned > ?6) OR (?5 = 2 AND folders_scanned >= ?6)
@@ -285,7 +277,7 @@ pub fn list_shared_drives_filtered(
         .query_map(
             params![
                 search.trim(),
-                tag_slug,
+                tag_predicates,
                 files_comparison,
                 files_value,
                 folders_comparison,
@@ -296,7 +288,6 @@ pub fn list_shared_drives_filtered(
                 modified_value,
                 manager_filter.trim(),
                 permission_filter.trim(),
-                exclude_tag,
             ],
             |row| {
                 Ok(SharedDriveRow {
@@ -698,7 +689,7 @@ pub fn list_drive_directory(
     let connection = database.connect()?;
     let (size_comparison, size_bytes) = parse_size_filter(size_filter)?;
     let (modified_comparison, modified_value) = parse_modified_filter(modified_filter)?;
-    let (exclude_tag, tag_slug) = split_tag_filter(tag_filter);
+    let tag_predicates = super::tag_filter::json(tag_filter);
     let remote = inventory_scope;
     let sort_expression = match sort {
         "type" => {
@@ -741,31 +732,19 @@ pub fn list_drive_directory(
            AND (?13 = 1 OR is_deleted = 0)
            AND ((?2 IS NULL AND parent_path IS NULL) OR parent_path = ?2)
            AND (?3 = '' OR instr(lower(name), lower(?3)) > 0)
-           AND (?4 = '' OR
-                (?4 = '__deleted__' AND
-                    ((?16 = 0 AND is_deleted = 1) OR (?16 = 1 AND is_deleted = 0))) OR
-                (?4 = '__untagged__' AND
-                    ((?16 = 0 AND NOT EXISTS (
-                        SELECT 1 FROM drive_item_tags untagged_dit
-                        WHERE untagged_dit.remote_name = drive_items.remote_name
-                          AND untagged_dit.item_id = drive_items.item_id
-                    )) OR
-                    (?16 = 1 AND EXISTS (
-                        SELECT 1 FROM drive_item_tags untagged_dit
-                        WHERE untagged_dit.remote_name = drive_items.remote_name
-                          AND untagged_dit.item_id = drive_items.item_id
-                    )))) OR
-                (?4 NOT IN ('__deleted__', '__untagged__') AND
-                    ((?16 = 0 AND EXISTS (
-                        SELECT 1 FROM drive_item_tags dit JOIN tags t ON t.id = dit.tag_id
-                        WHERE dit.remote_name = drive_items.remote_name
-                          AND dit.item_id = drive_items.item_id AND t.slug = ?4
-                    )) OR
-                    (?16 = 1 AND NOT EXISTS (
-                        SELECT 1 FROM drive_item_tags dit JOIN tags t ON t.id = dit.tag_id
-                        WHERE dit.remote_name = drive_items.remote_name
-                          AND dit.item_id = drive_items.item_id AND t.slug = ?4
-                    )))))
+           AND NOT EXISTS (
+                SELECT 1 FROM json_each(?4) tag_term
+                WHERE (CASE json_extract(tag_term.value, '$[1]')
+                    WHEN '__deleted__' THEN is_deleted
+                    WHEN '__untagged__' THEN NOT EXISTS (
+                        SELECT 1 FROM drive_item_tags link WHERE link.remote_name = drive_items.remote_name AND link.item_id = drive_items.item_id
+                    )
+                    ELSE EXISTS (
+                        SELECT 1 FROM drive_item_tags link JOIN tags t ON t.id = link.tag_id
+                        WHERE link.remote_name = drive_items.remote_name AND link.item_id = drive_items.item_id AND t.slug = json_extract(tag_term.value, '$[1]')
+                    )
+                END) = json_extract(tag_term.value, '$[0]')
+           )
            AND (?5 = '' OR instr(lower(
                 CASE WHEN is_directory THEN 'folder' ELSE COALESCE(mime_type, '') END
            ), lower(?5)) > 0)
@@ -795,20 +774,20 @@ pub fn list_drive_directory(
                       COALESCE(permission_filter.permission_type, '')
                   ), lower(?12)) > 0
            ))
-           AND (?14 = '' OR EXISTS (
+           AND NOT EXISTS (SELECT 1 FROM json_each(?14) tag_term WHERE (EXISTS (
                 SELECT 1
                 FROM principal_tags identity_pt
                 JOIN tags identity_tag ON identity_tag.id = identity_pt.tag_id
                 JOIN principals identity_principal ON identity_principal.id = identity_pt.principal_id
-                WHERE identity_tag.slug = ?14
+                WHERE identity_tag.slug = json_extract(tag_term.value, '$[1]')
                   AND (lower(COALESCE(drive_items.owner_email, '')) = lower(COALESCE(identity_principal.primary_email, ''))
                        OR EXISTS (
                            SELECT 1 FROM principal_emails identity_alias
                            WHERE identity_alias.principal_id = identity_principal.id
                              AND lower(identity_alias.email) = lower(COALESCE(drive_items.owner_email, ''))
                        ))
-           ))
-           AND (?15 = '' OR EXISTS (
+           )) = json_extract(tag_term.value, '$[0]'))
+           AND NOT EXISTS (SELECT 1 FROM json_each(?15) tag_term WHERE (EXISTS (
                 SELECT 1
                 FROM drive_permissions identity_permission
                 JOIN principal_emails permission_email
@@ -817,8 +796,8 @@ pub fn list_drive_directory(
                 JOIN tags permission_tag ON permission_tag.id = permission_pt.tag_id
                 WHERE identity_permission.remote_name = drive_items.remote_name
                   AND identity_permission.item_id = drive_items.item_id
-                  AND permission_tag.slug = ?15
-           ))
+                  AND permission_tag.slug = json_extract(tag_term.value, '$[1]')
+           )) = json_extract(tag_term.value, '$[0]'))
          ORDER BY {directory_grouping} {sort_expression} {direction}, name COLLATE NOCASE, item_id"
     );
     let mut statement = connection.prepare(&sql)?;
@@ -827,7 +806,7 @@ pub fn list_drive_directory(
             remote,
             parent_path,
             search.trim(),
-            tag_slug,
+            tag_predicates,
             type_filter.trim(),
             size_comparison,
             size_bytes,
@@ -836,10 +815,9 @@ pub fn list_drive_directory(
             owner_filter.trim(),
             exclude_owner,
             permission_filter.trim(),
-            include_deleted,
-            owner_identity_tag_filter,
-            permission_identity_tag_filter,
-            exclude_tag,
+            include_deleted || super::tag_filter::selected(tag_filter, DELETED_TAG_FILTER, false),
+            super::tag_filter::json(owner_identity_tag_filter),
+            super::tag_filter::json(permission_identity_tag_filter),
         ],
         |row| {
             let size: Option<i64> = row.get(5)?;
@@ -955,13 +933,6 @@ fn comparison_prefix(value: &str) -> (i64, &str) {
         }
     }
     (5, value.trim())
-}
-
-fn split_tag_filter(filter: &str) -> (bool, &str) {
-    match filter.trim().strip_prefix('!') {
-        Some(slug) => (true, slug.trim()),
-        None => (false, filter.trim()),
-    }
 }
 
 fn parse_count_filter(filter: &str) -> Result<(i64, i64), DatabaseError> {
