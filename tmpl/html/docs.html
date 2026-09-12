@@ -36,8 +36,8 @@
                 <ol class="mb-0">
                     <li>Let BOREAL install and verify its private Rclone executable.</li>
                     <li>Upload a Google OAuth <strong>Desktop app</strong> client JSON file. If you need to create one, open <strong>App → Create Google Client ID</strong>.</li>
-                    <li>Set up and authorize the read-only <code>my-drive-ro</code> remote.</li>
-                    <li>Use <strong>App → Settings</strong> for the service table. Choose <strong>Configure</strong> to enable a service, manage its connection and save its settings independently. Use <strong>Connections</strong> to repair a default Google connection or add another storage account.</li>
+                    <li>Open <strong>Storage remotes</strong> and authorize <code>my-drive-ro</code> for Drive inventory, downloads and private Persons Sheets.</li>
+                    <li>Use <strong>App → Settings</strong> for the service table. Choose <strong>Configure</strong> to enable a service, configure its account access and save its settings independently. Use <strong>Storage remotes</strong> to manage named Rclone configurations such as <code>my-drive-ro</code> or an S3 remote.</li>
                     <li>Persons is independent of Google Drive. Add entries manually or import a CSV; optionally link a Persons Google Sheet in <strong>App → Settings</strong>.</li>
                     <li>Open <strong>Update</strong> and import the Google Drive metadata you want to explore.</li>
                 </ol>
@@ -102,13 +102,6 @@
         </section>
 
         <section class="mb-4" data-doc-entry><h2 class="h4">Choose sources to update</h2><p>The Update dialog lists connected sources and remembers your last selection. On first use, select the sources you want; none are selected automatically. Google Resources are grouped together, and updating one Shared Drive by URL is available under its expandable option. Only requested sources appear in progress. After a failure, choose <strong>Acknowledge and choose sources</strong> to return to the main update dialog.</p></section>
-        <section id="google-groups" class="mb-4" data-doc-entry>
-            <h2 class="h4">Google Groups</h2>
-            <p>Enable Google Groups in <strong>App → Settings</strong>, then open <strong>Google → Groups</strong> and connect your Workspace account. The step-by-step Google setup guide in Settings walks through project selection, API enablement, Desktop OAuth credentials, and Workspace permissions. Enable the Admin SDK API in the same project as your Google Desktop Client ID, use an account with group-read privileges, and grant both read-only group and membership permissions. Groups uses a separate connection from Drive; your Drive authorization stays unchanged.</p>
-            <p>Select Google Groups and visible members in Update. Boreal imports groups you belong to, names, email addresses and aliases, descriptions, direct-member counts, and visible member identities, roles, types, and statuses. Open a group to browse its members; use Up or Base to return. Search, role filters, sorting, adjustable column widths, and matching Persons pills work in this viewer.</p>
-            <p>Restricted member lists are marked unavailable, not empty. Nested groups appear as members without recursively expanding them. Messages and conversation archives are not imported. Failed fetches retain the previous inventory, and snapshots are kept separately for each connected account.</p>
-            <p class="small">Google reference: <a href="https://developers.google.com/workspace/admin/directory/v1/guides/manage-groups" target="_blank" rel="noopener noreferrer">Groups API</a> and <a href="https://developers.google.com/workspace/admin/directory/reference/rest/v1/members/list" target="_blank" rel="noopener noreferrer">member lists</a>.</p>
-        </section>
 
         <section id="tags" class="mb-4" data-doc-entry>
             <h2 class="h4">Classify content with tags</h2>

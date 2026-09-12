@@ -1,6 +1,6 @@
 <div id="boreal-drive-summaries">
     <div class="d-flex flex-column">
-    {% if google_drive_enabled || google_groups_enabled %}
+    {% if google_drive_enabled %}
     <section class="mb-4 order-3" aria-labelledby="google-drive-summary-heading">
         <h1 class="h4 mb-3 boreal-google-drive-color" id="google-drive-summary-heading"><img class="boreal-service-icon me-2" src="/assets/google-drive-logo.svg" alt="">Google Resources</h1>
     {% if google_drive_enabled %}
@@ -80,11 +80,6 @@
         </div></div>
     </div>
     {% endif %}
-    {% if google_groups_enabled %}<div class="mt-4" aria-labelledby="google-groups-summary-heading"><h2 class="h5 mb-2" id="google-groups-summary-heading"><a class="text-body text-decoration-none" href="/google-groups"><i class="bi bi-people-fill boreal-google-drive-color me-2"></i>Google Groups</a></h2><div class="card"><div class="card-body">
-    {% if !google_groups_summary.completed_at.is_empty() %}<div class="d-flex flex-nowrap justify-content-between gap-3 overflow-auto"><div class="text-nowrap">Groups <strong>{{ google_groups_summary.groups }}</strong></div><div class="text-nowrap">Visible memberships <strong>{{ google_groups_summary.members }}</strong></div><div class="text-nowrap">Restricted lists <strong>{{ google_groups_summary.restricted }}</strong></div><div class="text-nowrap">Metadata age <strong class="boreal-data-age" data-synchronized-at="{{ google_groups_summary.completed_at }}">just now</strong></div></div>
-    {% else if google_groups_connected %}Use Update to import groups you belong to and visible member lists.
-    {% else %}<a href="/google-groups">Connect Google Groups</a> to import your Workspace groups and visible members.{% endif %}
-    </div></div></div>{% endif %}
     </section>
     {% endif %}
 

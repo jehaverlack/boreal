@@ -39,7 +39,6 @@ impl RemoteKind {
 pub enum RemoteState {
     Waiting,
     NotConfigured,
-    #[allow(dead_code)] // Retained while legacy status UI migrates to shared Google authorization.
     Configuring,
     Ready,
     Conflict(String),
@@ -54,29 +53,6 @@ pub struct ConfiguredRemote {
 
 /// List configured remotes without reading or exposing their credentials.
 pub fn list_configured(
-    runtime: &Runtime,
-    executable: &Path,
-) -> Result<Vec<ConfiguredRemote>, RcloneError> {
-    let mut remotes = list_legacy_configured(runtime, executable)?;
-    if crate::google::auth::configured(runtime) {
-        for (name, scope) in [
-            ("my-drive-ro", crate::google::auth::DRIVE_READ),
-            ("my-drive-rw", crate::google::auth::DRIVE_WRITE),
-        ] {
-            if crate::google::auth::granted(runtime, scope)
-                && !remotes.iter().any(|r| r.name == name)
-            {
-                remotes.push(ConfiguredRemote {
-                    name: name.into(),
-                    backend: "drive".into(),
-                });
-            }
-        }
-    }
-    Ok(remotes)
-}
-
-fn list_legacy_configured(
     runtime: &Runtime,
     executable: &Path,
 ) -> Result<Vec<ConfiguredRemote>, RcloneError> {
@@ -135,7 +111,6 @@ pub fn detect(
     }
 }
 
-#[cfg(test)]
 pub fn configure(
     runtime: &Runtime,
     executable: &Path,
@@ -199,7 +174,6 @@ pub fn configure(
 
 /// Reapply the managed connection settings and authorize again at the user's request.
 /// Updates only this remote, preserving every other configured connection.
-#[cfg(test)]
 pub fn reconnect(
     runtime: &Runtime,
     executable: &Path,
@@ -235,7 +209,7 @@ pub fn reconnect(
     )?;
     protect_config(&config_path)?;
     if !output.status.success() {
-        return Err("Could not update this connection. Check that Boreal can write its connection settings, then retry.".into());
+        return Err("Could not update this remote. Check that Boreal can write its remote settings, then retry.".into());
     }
     let output = command::run(
         executable,
@@ -255,7 +229,7 @@ pub fn reconnect(
     match inspect(runtime, executable, client, kind)? {
         DetectedRemote::Ready => Ok(()),
         _ => Err(
-            "Google did not return a usable connection. Reconnect and grant the requested access."
+            "Google did not return usable authorization. Reconnect and grant the requested access."
                 .into(),
         ),
     }
@@ -263,7 +237,6 @@ pub fn reconnect(
 
 /// Translate known diagnostics to fixed messages. Never echo OAuth output:
 /// it can contain tokens, client secrets or authorization URLs.
-#[cfg(test)]
 fn authorization_failure(output: &std::process::Output) -> String {
     let diagnostic = format!(
         "{}\n{}",
@@ -330,12 +303,12 @@ fn read_remote(
     )?;
     if !output.status.success() {
         return Err(
-            "Unable to read connections. Check that Boreal can access its Rclone configuration."
+            "Unable to read storage remotes. Check that Boreal can access its Rclone configuration."
                 .into(),
         );
     }
     let remotes: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|_| "The saved connection configuration could not be read")?;
+        .map_err(|_| "The saved remote configuration could not be read")?;
     Ok(remotes.get(kind.name()).cloned())
 }
 
@@ -366,7 +339,7 @@ fn check_value(
     } else {
         let reason = match key {
             "type" => {
-                "uses a different storage provider. Rename that connection in the connection manager, then add the default Google connection again"
+                "uses a different storage provider. Rename that remote in the Rclone remote manager, then add the default Google remote again"
             }
             "scope" => {
                 "has different Google access permissions. Use Repair / reconnect to apply Boreal's expected permissions"
@@ -376,12 +349,11 @@ fn check_value(
             }
             _ => "needs to be reconfigured",
         };
-        Err(format!("Connection '{}' {reason}.", kind.name()).into())
+        Err(format!("Remote '{}' {reason}.", kind.name()).into())
     }
 }
 
 #[cfg(unix)]
-#[cfg(test)]
 fn protect_config(path: &Path) -> Result<(), RcloneError> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
@@ -389,7 +361,6 @@ fn protect_config(path: &Path) -> Result<(), RcloneError> {
 }
 
 #[cfg(not(unix))]
-#[cfg(test)]
 fn protect_config(_path: &Path) -> Result<(), RcloneError> {
     Ok(())
 }

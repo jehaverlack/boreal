@@ -1,9 +1,0 @@
-{
-  "timeZone": "Etc/UTC",
-  "runtimeVersion": "V8",
-  "exceptionLogging": "NONE",
-  "oauthScopes": [
-    "https://www.googleapis.com/auth/groups",
-    "https://www.googleapis.com/auth/userinfo.email"
-  ]
-}

@@ -1,3 +1,5 @@
+> Google Groups and shared account setup were removed on 2026-09-11. Earlier Groups sections below are historical. Current setup is documented in [GOOGLE-AUTH-MIGRATION.md](GOOGLE-AUTH-MIGRATION.md).
+
 # Service setup and configuration UX review
 
 September 2026. Scope: first launch, Settings, Google setup, account connections,
@@ -112,3 +114,35 @@ For a `forbidden` / resource-authorization response, verify the signed-in user's
 Workspace Admin API Groups → Read privilege or Groups Reader role. Cloud project
 administration and group ownership are separate from Directory API authorization.
 See Google's [administrator privilege definitions](https://knowledge.workspace.google.com/admin/users/administrator-privilege-definitions).
+
+## Account access, storage remotes and data sources
+
+Use distinct names in the UI:
+
+- **Google account & permissions**: the signed-in identity and Google authorization
+  shared by Drive, Groups and an optional private Persons Sheet.
+- **Storage remotes**: named Rclone configurations, such as `my-drive-ro`,
+  `my-drive-rw`, or an S3 remote. Several remotes can use the same account;
+  a remote count is not an account count.
+- **Data sources**: the datasets enabled for metadata import and browsing.
+
+Use “Sign in,” “Authorize,” or “Reconnect” for account access, and “Add remote” or
+“Manage remotes” for Rclone configurations. Avoid the unqualified “Connections”
+page label. `/google` and `/remotes` URLs and saved remote names remain stable.
+
+Google account setup presents one Groups task: memberships and visible members.
+The normal page offers a setup-file import and sign-in; a signed-in account puts
+Update metadata first and collapses service/sign-in changes. Project preparation,
+helper deployment IDs and profile export live at `/google/project`. No Directory
+API selector appears in either page. Saving source choices preserves imported
+project settings; saving a new Groups project setup selects My Groups. Existing
+Directory configurations continue to work until explicitly replaced.
+
+When Groups is selected but its deployment ID is absent, show one specific next
+action: Set up Groups. Client configuration and a completed Groups setup are
+different states. Continue saves source choices and routes to
+`/google/project#groups-setup` before OAuth begins. Importing only Desktop client
+credentials also routes there when Groups is requested. The project guide skips
+client creation when saved, scopes Cloud links to that project, supplies script
+content, and explains linking by project number and deploying an API executable.
+Saving the deployment returns to sign-in; it does not claim the query was verified.

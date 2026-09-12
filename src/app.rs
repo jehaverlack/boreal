@@ -42,6 +42,8 @@ pub struct AppState {
 
     metadata_job_active: Mutex<bool>,
 
+    remote_setup_active: Mutex<bool>,
+
     update_check_active: Mutex<bool>,
 
     job_cancellation: Arc<AtomicBool>,
@@ -143,7 +145,6 @@ pub struct MetadataUpdateSelection {
     pub directory_info: bool,
     pub github: bool,
     pub keeper: bool,
-    pub google_groups: bool,
     pub local_files: bool,
     pub s3: bool,
 }
@@ -232,6 +233,8 @@ impl AppState {
             update: RwLock::new(crate::update::UpdateState::Checking),
 
             metadata_job_active: Mutex::new(false),
+
+            remote_setup_active: Mutex::new(false),
 
             update_check_active: Mutex::new(false),
 
@@ -483,20 +486,6 @@ impl AppState {
     }
 
     pub fn google_remotes_state(&self) -> GoogleRemotesState {
-        if crate::google::auth::configured(&self.runtime) {
-            let state = |scope| match crate::google::auth::issue(&self.runtime, &[scope]) {
-                None => RemoteState::Ready,
-                Some(issue) => RemoteState::Error(issue.into()),
-            };
-            return GoogleRemotesState {
-                ro: state(crate::google::auth::DRIVE_READ),
-                rw: if crate::google::auth::setup(&self.runtime).is_ok_and(|s| s.migration_access) {
-                    state(crate::google::auth::DRIVE_WRITE)
-                } else {
-                    RemoteState::NotConfigured
-                },
-            };
-        }
         self.google_remotes
             .read()
             .map(|state| state.clone())
@@ -547,6 +536,88 @@ impl AppState {
     pub fn refresh_google_remotes_if_ready(&self) {
         if let RcloneState::Ready(status) = self.rclone_state() {
             self.refresh_google_remotes(&status.path);
+        }
+    }
+
+    pub fn configure_google_remote(state: Arc<Self>, kind: RemoteKind) -> Result<(), String> {
+        Self::configure_google_remote_action(state, kind, false)
+    }
+
+    pub fn configure_google_remote_action(
+        state: Arc<Self>,
+        kind: RemoteKind,
+        reconnect: bool,
+    ) -> Result<(), String> {
+        log::info!("Google remote setup requested: remote={}", kind.name());
+        {
+            let mut active = state
+                .remote_setup_active
+                .lock()
+                .map_err(|error| format!("Unable to start remote setup: {error}"))?;
+            if *active {
+                return Err("Another remote setup is already running".to_string());
+            }
+            *active = true;
+        }
+
+        let executable = match state.rclone_state() {
+            RcloneState::Ready(status) => status.path,
+            _ => {
+                state.finish_remote_setup();
+                return Err("Rclone is not ready".to_string());
+            }
+        };
+        let client = match state.google_client_state() {
+            GoogleClientState::Ready(client) => client,
+            _ => {
+                state.finish_remote_setup();
+                return Err("Google Client ID is not configured".to_string());
+            }
+        };
+
+        if let Ok(mut remotes) = state.google_remotes.write() {
+            *remote_state_mut(&mut remotes, kind) = RemoteState::Configuring;
+        }
+
+        tokio::spawn(async move {
+            let worker_state = Arc::clone(&state);
+            let result = tokio::task::spawn_blocking(move || {
+                if reconnect {
+                    rclone::remotes::reconnect(&worker_state.runtime, &executable, &client, kind)
+                } else {
+                    rclone::remotes::configure(&worker_state.runtime, &executable, &client, kind)
+                }
+            })
+            .await;
+
+            let new_remote_state = match result {
+                Ok(Ok(())) => RemoteState::Ready,
+                Ok(Err(error)) => RemoteState::Error(error.to_string()),
+                Err(error) => RemoteState::Error(format!("Remote setup task failed: {error}")),
+            };
+
+            if let Ok(mut remotes) = state.google_remotes.write() {
+                *remote_state_mut(&mut remotes, kind) = new_remote_state;
+            }
+            match state.google_remotes_state() {
+                remotes if matches!(remote_state(&remotes, kind), RemoteState::Ready) => {
+                    log::info!("Google remote setup completed: remote={}", kind.name())
+                }
+                remotes => log::warn!(
+                    "Google remote setup did not complete: remote={}, state={:?}",
+                    kind.name(),
+                    remote_state(&remotes, kind),
+                ),
+            }
+            state.finish_remote_setup();
+        });
+
+        Ok(())
+    }
+
+    fn finish_remote_setup(&self) {
+        if let Ok(mut active) = self.remote_setup_active.lock() {
+            *active = false;
         }
     }
 
@@ -768,7 +839,6 @@ impl AppState {
             && !selection.shared_with_me
             && !selection.directory_info
             && !selection.github
-            && !selection.google_groups
             && !selection.keeper
             && !selection.local_files
             && !selection.s3
@@ -800,7 +870,7 @@ impl AppState {
             || selection.shared_drives
             || selection.specific_shared_drive
             || selection.shared_with_me
-            || (selection.directory_info && !crate::google::auth::configured(&state.runtime));
+            || selection.directory_info;
         let rclone_path = if google_selected || selection.s3 {
             match state.rclone_state() {
                 RcloneState::Ready(status) => status.path,
@@ -829,17 +899,6 @@ impl AppState {
             return Err(
                 "Directory Info requires a configured directory spreadsheet URL".to_string(),
             );
-        }
-        if selection.google_groups {
-            let issue = if !inventory_settings.google_groups_enabled {
-                Some("Enable Google Groups in Settings first.")
-            } else {
-                crate::google::groups::connection_issue(&state.runtime)
-            };
-            if let Some(issue) = issue {
-                state.finish_metadata_job();
-                return Err(issue.into());
-            }
         }
         if selection.keeper
             && (!inventory_settings.keeper_enabled
@@ -1276,18 +1335,6 @@ impl AppState {
                         let _ = database.record_metadata_timing("github", timing_started.elapsed().as_secs());
                         log::info!("GitHub repository metadata updated: repositories={}", repositories.len());
                     }
-                    if selection.google_groups {
-                        let timing_started = Instant::now();
-                        worker_state.set_metadata_state(MetadataState::Updating(MetadataProgress {
-                            selection, phase: "Fetching Google Groups metadata".into(),
-                            files_scanned: 0, folders_scanned: 0, permissions_scanned: 0, bytes_discovered: 0, errors: 0,
-                        }));
-                        let snapshot = crate::google::groups::snapshot(&worker_state.runtime, &worker_state.job_cancellation)?;
-                        if worker_state.job_cancellation.load(std::sync::atomic::Ordering::Relaxed) { return Err("Google Groups update canceled".into()); }
-                        database::google_groups::synchronize(&database, &snapshot)?;
-                        let _ = database.record_metadata_timing("google-groups", timing_started.elapsed().as_secs());
-                        log::info!("Google Groups metadata updated: groups={}", snapshot.groups.len());
-                    }
                     if selection.keeper {
                         let timing_started = Instant::now();
                         worker_state.set_metadata_state(MetadataState::Updating(MetadataProgress {
@@ -1466,7 +1513,6 @@ impl AppState {
             directory_info: false,
             github: false,
             keeper: false,
-            google_groups: false,
             local_files: false,
             s3: false,
         };
@@ -1641,5 +1687,19 @@ impl AppState {
                 eprintln!("Unable to stop Rclone WebGUI: {error}");
             }
         }
+    }
+}
+
+fn remote_state_mut(remotes: &mut GoogleRemotesState, kind: RemoteKind) -> &mut RemoteState {
+    match kind {
+        RemoteKind::MyDriveRw => &mut remotes.rw,
+        RemoteKind::MyDriveRo => &mut remotes.ro,
+    }
+}
+
+fn remote_state(remotes: &GoogleRemotesState, kind: RemoteKind) -> &RemoteState {
+    match kind {
+        RemoteKind::MyDriveRw => &remotes.rw,
+        RemoteKind::MyDriveRo => &remotes.ro,
     }
 }

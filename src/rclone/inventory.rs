@@ -49,17 +49,15 @@ pub fn discover_shared_drives(
         return Err(format!("Rclone executable does not exist: {}", executable.display()).into());
     }
     let config_path = config::path(runtime)?;
-    let mut command = Command::new(executable);
-    command.args([
-        "backend",
-        "drives",
-        &format!("{}:", RemoteKind::MyDriveRo.name()),
-        "--json",
-        "--config",
-        config_path.to_string_lossy().as_ref(),
-    ]);
-    let _bridge = crate::google::bridge::Bridge::attach(&mut command, &config_path)?;
-    let output = command
+    let output = Command::new(executable)
+        .args([
+            "backend",
+            "drives",
+            &format!("{}:", RemoteKind::MyDriveRo.name()),
+            "--json",
+            "--config",
+            config_path.to_string_lossy().as_ref(),
+        ])
         .output()
         .map_err(|error| format!("Unable to discover Shared Drives: {error}"))?;
     if !output.status.success() {
@@ -159,10 +157,9 @@ pub fn fetch_selected_path(
         "--config",
         config_string.as_str(),
     ];
-    let mut command = Command::new(executable);
-    command.args(["lsjson", &remote, "--stat"]).args(common);
-    let _bridge = crate::google::bridge::Bridge::attach(&mut command, &config_path)?;
-    let stat = command
+    let stat = Command::new(executable)
+        .args(["lsjson", &remote, "--stat"])
+        .args(common)
         .output()
         .map_err(|error| format!("Unable to refresh selected Drive item: {error}"))?;
     if !stat.status.success() {
@@ -177,12 +174,9 @@ pub fn fetch_selected_path(
     root.path = relative_path.to_string();
     let mut items = vec![root];
     if is_directory {
-        let mut command = Command::new(executable);
-        command
+        let output = Command::new(executable)
             .args(["lsjson", &remote, "--recursive"])
-            .args(common);
-        let _bridge = crate::google::bridge::Bridge::attach(&mut command, &config_path)?;
-        let output = command
+            .args(common)
             .output()
             .map_err(|error| format!("Unable to refresh selected Drive folder: {error}"))?;
         if !output.status.success() {
@@ -258,7 +252,6 @@ fn fetch_drive_with_options(
         command.args(["--drive-team-drive", drive_id, "--drive-root-folder-id", ""]);
     }
 
-    let _bridge = crate::google::bridge::Bridge::attach(&mut command, &config_path)?;
     let output = command
         .stdout(Stdio::from(output_file))
         .stderr(Stdio::piped())

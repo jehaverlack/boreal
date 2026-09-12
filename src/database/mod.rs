@@ -1,6 +1,5 @@
 pub mod directory;
 pub mod github;
-pub mod google_groups;
 pub mod inventory;
 pub mod keeper;
 pub mod local_files;
@@ -454,7 +453,6 @@ mod tests {
         let database = Database::initialize(&runtime(&root)).expect("database should initialize");
         let expected = settings::InventorySettings {
             google_drive_enabled: false,
-            google_groups_enabled: true,
             automatic_updates: false,
             refresh_interval_hours: 12,
             full_reconciliation_days: 14,
@@ -477,7 +475,6 @@ mod tests {
 
         assert_eq!(actual.automatic_updates, expected.automatic_updates,);
         assert_eq!(actual.google_drive_enabled, expected.google_drive_enabled);
-        assert!(actual.google_groups_enabled);
         assert!(
             actual.directory_sheet_enabled,
             "Persons Sheet remains independent of Drive enablement"

@@ -65,7 +65,7 @@ pub fn fetch_google_drive_folder_for_remote(
         .map_err(|error| format!("Unable to read Google Drive destination response: {error}"))?;
     if !status.is_success() {
         let message = if status == reqwest::StatusCode::UNAUTHORIZED {
-            "Google rejected the authorization. Open Settings → Google connection, reconnect, then validate the destination again."
+            "Google rejected the refreshed My Drive RO authorization. Reconnect the my-drive-ro remote, then validate the destination again."
                 .to_string()
         } else if status == reqwest::StatusCode::FORBIDDEN
             || status == reqwest::StatusCode::NOT_FOUND
@@ -235,21 +235,19 @@ pub fn fetch_read_only_account(
     executable: &Path,
 ) -> Result<RemoteIdentity, RcloneError> {
     let config_path = config::path(runtime)?;
-    let mut command = Command::new(executable);
-    command.args([
-        "config",
-        "userinfo",
-        &format!("{}:", RemoteKind::MyDriveRo.name()),
-        "--json",
-        "--timeout",
-        "20s",
-        "--contimeout",
-        "10s",
-        "--config",
-        config_path.to_string_lossy().as_ref(),
-    ]);
-    let _bridge = crate::google::bridge::Bridge::attach(&mut command, &config_path)?;
-    let output = command
+    let output = Command::new(executable)
+        .args([
+            "config",
+            "userinfo",
+            &format!("{}:", RemoteKind::MyDriveRo.name()),
+            "--json",
+            "--timeout",
+            "20s",
+            "--contimeout",
+            "10s",
+            "--config",
+            config_path.to_string_lossy().as_ref(),
+        ])
         .output()
         .map_err(|error| format!("Unable to query authenticated Google account: {error}"))?;
     if output.status.success() {
@@ -306,20 +304,6 @@ fn google_client() -> Result<reqwest::blocking::Client, RcloneError> {
 }
 
 fn read_access_token(config_path: &Path, kind: RemoteKind) -> Result<String, RcloneError> {
-    if let Some(conf) = config_path
-        .parent()
-        .filter(|p| p.join("google-account.json").exists())
-    {
-        return crate::google::auth::access_at(
-            conf,
-            if kind == RemoteKind::MyDriveRw {
-                crate::google::auth::DRIVE_WRITE
-            } else {
-                crate::google::auth::DRIVE_READ
-            },
-        )
-        .map(|t| t.0);
-    }
     let config_text = fs::read_to_string(config_path).map_err(|error| {
         format!("Unable to read rclone configuration for Google access: {error}")
     })?;

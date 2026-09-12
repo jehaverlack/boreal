@@ -1,8 +1,3 @@
-#[path = "google_connection.rs"]
-mod google_connection_routes;
-#[path = "google_groups.rs"]
-mod google_groups_routes;
-
 use std::{
     collections::HashMap,
     path::{Path as FsPath, PathBuf},
@@ -159,9 +154,6 @@ struct DashboardTemplate {
     github_summary: database::github::Summary,
     keeper_enabled: bool,
     keeper_summary: database::keeper::Summary,
-    google_groups_connected: bool,
-    google_groups_enabled: bool,
-    google_groups_summary: database::google_groups::Summary,
     local_files_enabled: bool,
     local_files_summary: database::local_files::Summary,
     directory_summary: database::directory::DirectorySummary,
@@ -205,7 +197,6 @@ struct SettingsTemplate {
     google_client_ready: bool,
     google_client_error: String,
     s3_connections: Vec<String>,
-    groups_connection_issue: String,
 }
 
 #[allow(dead_code)]
@@ -826,8 +817,6 @@ struct MetadataUpdateModalTemplate {
     directory_available: bool,
     github_available: bool,
     keeper_available: bool,
-    google_groups_available: bool,
-    google_groups_connection_issue: String,
     local_files_available: bool,
     s3_available: bool,
     directory_estimate: MetadataTimingView,
@@ -837,7 +826,6 @@ struct MetadataUpdateModalTemplate {
     specific_shared_drive_estimate: MetadataTimingView,
     github_estimate: MetadataTimingView,
     keeper_estimate: MetadataTimingView,
-    google_groups_estimate: MetadataTimingView,
     local_files_estimate: MetadataTimingView,
     s3_estimate: MetadataTimingView,
 }
@@ -870,9 +858,6 @@ struct DriveSummariesTemplate {
     github_summary: database::github::Summary,
     keeper_enabled: bool,
     keeper_summary: database::keeper::Summary,
-    google_groups_connected: bool,
-    google_groups_enabled: bool,
-    google_groups_summary: database::google_groups::Summary,
     local_files_enabled: bool,
     local_files_summary: database::local_files::Summary,
     directory_summary: database::directory::DirectorySummary,
@@ -1095,8 +1080,6 @@ struct SettingsForm {
     #[serde(default)]
     google_drive_enabled: Option<String>,
     #[serde(default)]
-    google_groups_enabled: Option<String>,
-    #[serde(default)]
     directory_sheet_url: String,
     #[serde(default)]
     github_enabled: Option<String>,
@@ -1130,13 +1113,7 @@ impl SettingsForm {
     fn apply(&self, inventory_settings: &mut InventorySettings) -> Result<(), StatusCode> {
         if !matches!(
             self.service.as_str(),
-            "" | "google-drive"
-                | "google-groups"
-                | "persons"
-                | "github"
-                | "keeper"
-                | "local-files"
-                | "s3"
+            "" | "google-drive" | "persons" | "github" | "keeper" | "local-files" | "s3"
         ) {
             return Err(StatusCode::BAD_REQUEST);
         }
@@ -1144,9 +1121,6 @@ impl SettingsForm {
         let directory_sheet_url = form.directory_sheet_url.trim().to_string();
         if self.includes("google-drive") {
             inventory_settings.google_drive_enabled = form.google_drive_enabled.is_some();
-        }
-        if self.includes("google-groups") {
-            inventory_settings.google_groups_enabled = form.google_groups_enabled.is_some();
         }
         if self.includes("persons") {
             inventory_settings.directory_sheet_enabled = !directory_sheet_url.is_empty();
@@ -1342,8 +1316,6 @@ struct MetadataUpdateForm {
     #[serde(default)]
     keeper: Option<String>,
     #[serde(default)]
-    google_groups: Option<String>,
-    #[serde(default)]
     local_files: Option<String>,
     #[serde(default)]
     s3: Option<String>,
@@ -1473,6 +1445,13 @@ struct RemoteQuery {
     error: String,
 }
 
+#[derive(serde::Deserialize)]
+struct AddRemoteForm {
+    remote_kind: String,
+    #[serde(default)]
+    reconnect: bool,
+}
+
 #[derive(Default, serde::Deserialize)]
 struct MigrationListQuery {
     #[serde(default)]
@@ -1550,27 +1529,6 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/ui/google-drive-launcher", get(ui_google_drive_launcher))
         .route("/ui/github-launcher", get(ui_github_launcher))
-        .route("/google", get(google_connection_routes::page))
-        .route(
-            "/google/configure",
-            post(google_connection_routes::configure),
-        )
-        .route("/google/connect", post(google_connection_routes::connect))
-        .route("/google/verify", post(google_connection_routes::verify))
-        .route("/google/profile", get(google_connection_routes::profile))
-        .route(
-            "/google/helper/Code.gs",
-            get(google_connection_routes::helper_code),
-        )
-        .route(
-            "/google/helper/appsscript.json",
-            get(google_connection_routes::helper_manifest),
-        )
-        .route("/google-groups", get(google_groups_routes::page))
-        .route(
-            "/google-groups/connect",
-            post(google_groups_routes::connect),
-        )
         .route("/keeper", get(keeper_page))
         .route("/keeper/export.xlsx", get(export_keeper))
         .route("/keeper/tags", post(apply_keeper_tag))
@@ -1919,7 +1877,6 @@ async fn index(State(state): State<Arc<AppState>>) -> Result<Html<String>, Statu
         initial_setup_complete,
         modules_enabled: setup_settings.google_drive_enabled
             || github_is_enabled
-            || google_groups_enabled(&state) && google::groups::connection_ready(&state.runtime)
             || keeper_is_enabled
             || local_files_is_enabled
             || setup_settings.s3_enabled,
@@ -1940,10 +1897,6 @@ async fn index(State(state): State<Arc<AppState>>) -> Result<Html<String>, Statu
         github_summary,
         keeper_enabled: keeper_is_enabled,
         keeper_summary,
-        google_groups_enabled: google_groups_enabled(&state),
-        google_groups_connected: google_groups_enabled(&state)
-            && google::groups::connection_ready(&state.runtime),
-        google_groups_summary: google_groups_routes::summary(&state),
         local_files_enabled: local_files_is_enabled,
         local_files_summary,
         directory_summary,
@@ -2557,7 +2510,6 @@ async fn test_directory_sheet(
     let url = inventory_settings.directory_sheet_url.clone();
     let rclone_path = match state.rclone_state() {
         RcloneState::Ready(status) => status.path,
-        _ if google::auth::configured(&state.runtime) => PathBuf::new(),
         _ => {
             return render_settings(
                 &state,
@@ -2570,10 +2522,8 @@ async fn test_directory_sheet(
         }
     };
     let result: Result<(), String> = tokio::task::spawn_blocking(move || {
-        if !google::auth::configured(&worker_state.runtime) {
-            crate::rclone::identity::fetch_read_only_account(&worker_state.runtime, &rclone_path)
-                .map_err(|error| error.to_string())?;
-        }
+        crate::rclone::identity::fetch_read_only_account(&worker_state.runtime, &rclone_path)
+            .map_err(|error| error.to_string())?;
         let (_, csv) =
             crate::rclone::identity::download_google_sheet_csv(&worker_state.runtime, &url)
                 .map_err(|error| error.to_string())?;
@@ -2630,7 +2580,6 @@ fn render_settings(
     let keeper_setup_command = keeper_command.to_string();
     let drive_ready = matches!(google_remotes_state.ro, RemoteState::Ready);
     let client_ready = matches!(google_client_state, GoogleClientState::Ready(_));
-    let groups_ready = crate::google::groups::connection_ready(&state.runtime);
     let github_ready = crate::github::client::configured(&state.runtime);
     let s3_connections: Vec<String> = match &rclone_state {
         RcloneState::Ready(status) => {
@@ -2709,24 +2658,9 @@ fn render_settings(
             if !client_ready {
                 "Prepare Google setup, then connect your account."
             } else if !drive_ready {
-                "Open Google connection and approve your selected services."
+                "Connect or repair your read-only connection."
             } else {
                 "Choose Drive sources in Update. Write access is optional."
-            },
-        ),
-        service(
-            "google-groups",
-            "Google Groups",
-            "Your Workspace groups and visible members",
-            "bi-people-fill",
-            "",
-            "boreal-google-drive-color",
-            inventory_settings.google_groups_enabled,
-            groups_ready,
-            if groups_ready {
-                "Choose Google Groups in Update."
-            } else {
-                "Configure the My Groups helper and shared Google connection."
             },
         ),
         service(
@@ -2760,7 +2694,7 @@ fn render_settings(
             "boreal-s3-color",
             inventory_settings.s3_enabled,
             s3_ready,
-            "Add a storage connection, then select its name.",
+            "Add a storage remote, then select its name.",
         ),
     ];
     for service in &mut services {
@@ -2807,9 +2741,6 @@ fn render_settings(
             _ => String::new(),
         },
         s3_connections,
-        groups_connection_issue: google::groups::connection_issue(&state.runtime)
-            .unwrap_or_default()
-            .into(),
     };
 
     render_template(&template)
@@ -3662,7 +3593,7 @@ async fn remotes_page(
                     .map(|remote| {
                         let (access, purpose, status, status_class) = match remote.name.as_str() {
                             "my-drive-ro" => (
-                                if google::auth::granted(&state.runtime,google::auth::DRIVE_WRITE) {"Read/write grant; inventory reads only"} else {"Read only"},
+                                "Read only",
                                 "Metadata inventory",
                                 remote_state_label(&google_remotes_state.ro),
                                 remote_state_class(&google_remotes_state.ro),
@@ -3712,7 +3643,7 @@ async fn remotes_page(
         || matches!(google_remotes_state.rw, RemoteState::Configuring);
 
     let template = RemotesTemplate {
-        title: "Connections - BOREAL",
+        title: "Storage remotes - BOREAL",
         active_page: "remotes",
         alerts: build_alerts(
             &rclone_state,
@@ -3745,8 +3676,23 @@ async fn remotes_page(
     render_template(&template)
 }
 
-async fn add_remote(State(_state): State<Arc<AppState>>) -> Result<Redirect, StatusCode> {
-    Ok(Redirect::to("/google"))
+async fn add_remote(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<AddRemoteForm>,
+) -> Result<Redirect, StatusCode> {
+    let kind = match form.remote_kind.as_str() {
+        "my-drive-ro" => RemoteKind::MyDriveRo,
+        "my-drive-rw" => RemoteKind::MyDriveRw,
+        _ => return Err(StatusCode::BAD_REQUEST),
+    };
+    if let Err(error) = AppState::configure_google_remote_action(state, kind, form.reconnect) {
+        log::warn!("Unable to start Google connection setup");
+        return Ok(Redirect::to(&format!(
+            "/remotes?error={}",
+            encode_query_value(&error)
+        )));
+    }
+    Ok(Redirect::to("/remotes"))
 }
 
 async fn my_drive_page(
@@ -5163,20 +5109,12 @@ fn google_drive_enabled(state: &AppState) -> bool {
         .is_some_and(|settings| settings.google_drive_enabled)
 }
 
-fn google_groups_enabled(state: &AppState) -> bool {
-    state
-        .database()
-        .ok()
-        .and_then(|db| database::settings::load(&db).ok())
-        .is_some_and(|s| s.google_groups_enabled)
-}
-
 async fn ui_google_drive_primary_nav(State(state): State<Arc<AppState>>) -> Html<String> {
-    google_primary_navigation(google_drive_enabled(&state), google_groups_enabled(&state))
+    google_primary_navigation(google_drive_enabled(&state))
 }
 
-fn google_primary_navigation(drive: bool, groups: bool) -> Html<String> {
-    if !drive && !groups {
+fn google_primary_navigation(drive: bool) -> Html<String> {
+    if !drive {
         return Html("<li id=\"google-drive-primary-navigation\" class=\"d-none\"></li>".into());
     }
     let mut html = String::from(
@@ -5184,10 +5122,7 @@ fn google_primary_navigation(drive: bool, groups: bool) -> Html<String> {
 <a class="nav-link dropdown-toggle boreal-drive-nav" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false" title="Google resources"><img class="boreal-service-icon me-1" src="/assets/google-g.png" alt="">Google</a><ul class="dropdown-menu">"##,
     );
     if drive {
-        html.push_str(r#"<li><a class="dropdown-item fw-semibold" href="/my-drive"><img class="boreal-service-icon me-2" src="/assets/google-drive-logo.svg" alt="">GDrive</a></li><li><a class="dropdown-item" href="/my-drive"><i class="bi bi-folder2 me-2"></i>My Drive</a></li><li><a class="dropdown-item" href="/shared-drives"><i class="bi bi-hdd-network me-2"></i>Shared Drives</a></li><li><a class="dropdown-item" href="/shared-with-me"><i class="bi bi-people me-2"></i>Shared with me</a></li><li><a class="dropdown-item" href="/remotes"><i class="bi bi-plug me-2"></i>Drive connections</a></li>"#);
-    }
-    if groups {
-        html.push_str(r#"<li><a class="dropdown-item" href="/google-groups"><i class="bi bi-people-fill me-2"></i>Groups</a></li>"#);
+        html.push_str(r#"<li><a class="dropdown-item fw-semibold" href="/my-drive"><img class="boreal-service-icon me-2" src="/assets/google-drive-logo.svg" alt="">GDrive</a></li><li><a class="dropdown-item" href="/my-drive"><i class="bi bi-folder2 me-2"></i>My Drive</a></li><li><a class="dropdown-item" href="/shared-drives"><i class="bi bi-hdd-network me-2"></i>Shared Drives</a></li><li><a class="dropdown-item" href="/shared-with-me"><i class="bi bi-people me-2"></i>Shared with me</a></li><li><a class="dropdown-item" href="/remotes"><i class="bi bi-plug me-2"></i>Storage remotes</a></li>"#);
     }
     html.push_str(r#"<li><hr class="dropdown-divider"></li><li><a class="dropdown-item" href="/settings#google-setup"><i class="bi bi-list-check me-2"></i>Google setup guide</a></li></ul></li>"#);
     Html(html)
@@ -6930,10 +6865,6 @@ async fn ui_drive_summaries(
         github_summary,
         keeper_enabled: keeper_is_enabled,
         keeper_summary,
-        google_groups_enabled: google_groups_enabled(&state),
-        google_groups_connected: google_groups_enabled(&state)
-            && google::groups::connection_ready(&state.runtime),
-        google_groups_summary: google_groups_routes::summary(&state),
         local_files_enabled: local_files_is_enabled,
         local_files_summary,
         directory_summary: state
@@ -6995,7 +6926,6 @@ async fn ui_metadata_update_modal(
         .and_then(|database| database::settings::load(&database).ok())
         .unwrap_or_default();
     let available = matches!(remotes.ro, RemoteState::Ready)
-        || google_groups_enabled(&state) && google::groups::connection_ready(&state.runtime)
         || enabled_settings.github_enabled
         || enabled_settings.keeper_enabled
         || enabled_settings.local_files_enabled
@@ -7030,15 +6960,6 @@ async fn ui_metadata_update_modal(
             .is_some_and(|settings| settings.github_enabled)
             && crate::github::client::configured(&state.runtime),
         keeper_available: keeper_enabled(&state),
-        google_groups_available: google_groups_enabled(&state)
-            && google::groups::connection_ready(&state.runtime),
-        google_groups_connection_issue: if enabled_settings.google_groups_enabled {
-            google::groups::connection_issue(&state.runtime)
-                .unwrap_or_default()
-                .into()
-        } else {
-            String::new()
-        },
         local_files_available: state
             .database()
             .ok()
@@ -7056,7 +6977,6 @@ async fn ui_metadata_update_modal(
         specific_shared_drive_estimate: metadata_timing_view(&state, "specific-shared-drive"),
         github_estimate: metadata_timing_view(&state, "github"),
         keeper_estimate: metadata_timing_view(&state, "keeper"),
-        google_groups_estimate: metadata_timing_view(&state, "google-groups"),
         local_files_estimate: metadata_timing_view(&state, "local-files"),
         s3_estimate: metadata_timing_view(&state, "s3"),
     })
@@ -7193,16 +7113,6 @@ fn metadata_scope_progress_views(
             shared_drives,
         ),
         ("GitHub", selection.github, "github", github),
-        (
-            "Google Groups",
-            selection.google_groups,
-            "google-groups",
-            if phase == "Fetching Google Groups metadata" {
-                (true, false, 60, phase.to_string())
-            } else {
-                (false, false, 0, "Waiting".to_string())
-            },
-        ),
         ("Keeper", selection.keeper, "keeper", keeper),
         (
             "Local Files",
@@ -7363,11 +7273,6 @@ async fn import_google_client(
     }
 
     let data = credentials.ok_or(StatusCode::BAD_REQUEST)?;
-    if !state.active_job_descriptions().is_empty() {
-        return Ok(Redirect::to(
-            "/google?error=Wait%20for%20active%20jobs%20before%20replacing%20Google%20project%20setup.",
-        ));
-    }
 
     match google::client::import(&state.runtime, &data) {
         Ok(config) => {
@@ -7377,7 +7282,7 @@ async fn import_google_client(
 
             state.refresh_google_remotes_if_ready();
 
-            Ok(Redirect::to("/google"))
+            Ok(Redirect::to("/settings#google-setup"))
         }
 
         Err(error) => {
@@ -7385,10 +7290,9 @@ async fn import_google_client(
 
             eprintln!("Google Client ID import failed: {message}");
 
-            Ok(Redirect::to(&format!(
-                "/google?error={}",
-                encode_query_value(&message)
-            )))
+            state.set_google_client_state(GoogleClientState::Error(message));
+
+            Ok(Redirect::to("/settings#google-setup"))
         }
     }
 }
@@ -7432,8 +7336,13 @@ async fn save_setup_directory(
     Ok(Redirect::to("/"))
 }
 
-fn start_remote_setup(_state: Arc<AppState>, _kind: RemoteKind) -> Result<Redirect, StatusCode> {
-    Ok(Redirect::to("/google"))
+fn start_remote_setup(state: Arc<AppState>, kind: RemoteKind) -> Result<Redirect, StatusCode> {
+    AppState::configure_google_remote(state, kind).map_err(|error| {
+        eprintln!("Unable to start {} setup: {error}", kind.label());
+        StatusCode::CONFLICT
+    })?;
+
+    Ok(Redirect::to("/"))
 }
 
 async fn start_metadata_update(
@@ -7472,7 +7381,6 @@ async fn start_metadata_update(
         directory_info: form.directory_info.is_some(),
         github: form.github.is_some(),
         keeper: form.keeper.is_some(),
-        google_groups: form.google_groups.is_some(),
         local_files: form.local_files.is_some(),
         s3: form.s3.is_some(),
     };
@@ -7644,9 +7552,6 @@ fn build_alerts(
 }
 
 fn authenticated_google_email(state: &AppState) -> String {
-    if let Some(email) = google::auth::email(&state.runtime) {
-        return email;
-    }
     state
         .database()
         .ok()
@@ -7939,42 +7844,20 @@ mod tests {
 
     #[test]
     fn google_navigation_preserves_color_icons_and_optional_sources() {
-        let html = google_primary_navigation(true, true).0;
-        assert!(html.contains("dropdown-toggle boreal-drive-nav"));
-        for icon in [
-            "google-g.png",
-            "google-drive-logo.svg",
-            "bi-folder2",
-            "bi-hdd-network",
-            "bi-people",
-            "bi-plug",
-            "bi-people-fill",
-            "bi-list-check",
-        ] {
-            assert!(html.contains(icon), "Missing Google navigation icon {icon}");
-        }
-        assert!(
-            !google_primary_navigation(false, true)
-                .0
-                .contains("href=\"/my-drive\"")
-        );
-        assert!(
-            !google_primary_navigation(true, false)
-                .0
-                .contains("href=\"/google-groups\"")
-        );
-        assert!(
-            !google_primary_navigation(false, false)
-                .0
-                .contains("dropdown-menu")
-        );
+        let html = google_primary_navigation(true).0;
+        assert!(html.contains("boreal-drive-nav"));
+        assert!(html.contains("google-g.png"));
+        assert!(html.contains("google-drive-logo.svg"));
+        assert!(html.contains("bi-folder2"));
+        assert!(html.contains("/shared-drives"));
+        assert!(!html.contains("/google-groups"));
+        assert!(google_primary_navigation(false).0.contains("d-none"));
     }
 
     #[test]
     fn service_settings_only_change_the_selected_service() {
         let original = InventorySettings {
             google_drive_enabled: true,
-            google_groups_enabled: true,
             directory_sheet_enabled: true,
             directory_sheet_url: "https://docs.google.com/spreadsheets/d/example/edit".into(),
             github_enabled: true,
@@ -7988,7 +7871,6 @@ mod tests {
         };
         for service in [
             "google-drive",
-            "google-groups",
             "persons",
             "github",
             "keeper",
@@ -8002,7 +7884,6 @@ mod tests {
             let mut expected = original.clone();
             match service {
                 "google-drive" => expected.google_drive_enabled = false,
-                "google-groups" => expected.google_groups_enabled = false,
                 "persons" => {
                     expected.directory_sheet_enabled = false;
                     expected.directory_sheet_url.clear();
@@ -8064,14 +7945,6 @@ mod tests {
                 "My Drive, Shared Drives and shared files",
                 "",
                 "/assets/google-drive-logo.svg",
-                "boreal-google-drive-color",
-            ),
-            (
-                "google-groups",
-                "Google Groups",
-                "Your Workspace groups and visible members",
-                "bi-people-fill",
-                "",
                 "boreal-google-drive-color",
             ),
             (
@@ -8138,13 +8011,13 @@ mod tests {
             google_client_ready: true,
             google_client_error: String::new(),
             s3_connections: vec!["archive-storage".into()],
-            groups_connection_issue: "Google Client ID changed. Reconnect Google Groups.".into(),
         };
         let html = template.render().unwrap();
-        assert_eq!(html.matches("data-service-form=").count(), 7);
+        assert_eq!(html.matches("data-service-form=").count(), 6);
+        assert!(!html.contains("google-groups"));
+        assert!(!html.contains("/google/connect"));
         for service in [
             "google-drive",
-            "google-groups",
             "persons",
             "github",
             "keeper",
@@ -8155,7 +8028,7 @@ mod tests {
             assert!(html.contains(&format!("id=\"service-{service}\"")));
         }
         let remotes = RemotesTemplate {
-            title: "Connections - BOREAL",
+            title: "Storage remotes - BOREAL",
             active_page: "remotes",
             alerts: vec![],
             status_items: vec![],
@@ -8179,12 +8052,12 @@ mod tests {
         }
         .render()
         .unwrap();
-        assert!(remotes.contains("href=\"/google\""));
-        assert!(!remotes.contains("action=\"/remotes/add\""));
-        assert!(remotes.contains("Add another connection"));
+        assert!(remotes.contains("Repair / reconnect"));
+        assert!(remotes.contains("name=\"reconnect\" value=\"true\""));
+        assert!(remotes.contains("Add another remote"));
         if let Ok(directory) = std::env::var("BOREAL_UI_FIXTURE_DIR") {
             std::fs::create_dir_all(&directory).unwrap();
-            let html = html.replace("<li id=\"google-drive-primary-navigation\" hx-get=\"/ui/google-drive-primary-nav\" hx-trigger=\"load\" hx-swap=\"outerHTML\"></li>", &google_primary_navigation(true, true).0);
+            let html = html.replace("<li id=\"google-drive-primary-navigation\" hx-get=\"/ui/google-drive-primary-nav\" hx-trigger=\"load\" hx-swap=\"outerHTML\"></li>", &google_primary_navigation(true).0);
             std::fs::write(std::path::Path::new(&directory).join("settings.html"), html).unwrap();
             std::fs::write(
                 std::path::Path::new(&directory).join("remotes.html"),
@@ -8416,7 +8289,6 @@ mod tests {
                 directory_info: false,
                 github: false,
                 keeper: false,
-                google_groups: false,
                 local_files: false,
                 s3: false,
             },

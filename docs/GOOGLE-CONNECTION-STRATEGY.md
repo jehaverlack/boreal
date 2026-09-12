@@ -1,5 +1,7 @@
 # One Google connection for Boreal
 
+> Historical proposal, retired 2026-09-11. Google Groups and shared account authentication were removed. See [current Google setup](GOOGLE-AUTH-MIGRATION.md).
+
 Status: implementation candidate, September 2026. The shared connection and My Groups
 helper are implemented locally. Live acceptance of a shared Apps Script deployment
 is still required. See [migration and setup](GOOGLE-AUTH-MIGRATION.md). The design

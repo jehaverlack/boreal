@@ -5,7 +5,6 @@ use super::{Database, DatabaseError};
 #[derive(Debug, Clone)]
 pub struct InventorySettings {
     pub google_drive_enabled: bool,
-    pub google_groups_enabled: bool,
     pub automatic_updates: bool,
     pub refresh_interval_hours: u32,
     pub full_reconciliation_days: u32,
@@ -33,7 +32,6 @@ impl Default for InventorySettings {
     fn default() -> Self {
         Self {
             google_drive_enabled: false,
-            google_groups_enabled: false,
             automatic_updates: false,
             refresh_interval_hours: 24,
             full_reconciliation_days: 7,
@@ -99,11 +97,6 @@ pub fn load(database: &Database) -> Result<InventorySettings, DatabaseError> {
             &connection,
             "google_drive.enabled",
             defaults.google_drive_enabled,
-        )?,
-        google_groups_enabled: get_bool(
-            &connection,
-            "google_groups.enabled",
-            defaults.google_groups_enabled,
         )?,
         automatic_updates: get_bool(
             &connection,
@@ -181,11 +174,6 @@ pub fn save(database: &Database, settings: &InventorySettings) -> Result<(), Dat
         &transaction,
         "google_drive.enabled",
         bool_value(settings.google_drive_enabled),
-    )?;
-    set(
-        &transaction,
-        "google_groups.enabled",
-        bool_value(settings.google_groups_enabled),
     )?;
     set(
         &transaction,

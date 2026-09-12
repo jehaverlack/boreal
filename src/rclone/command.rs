@@ -19,37 +19,15 @@ where
         return Err(format!("Rclone executable does not exist: {}", executable.display()).into());
     }
 
-    let args = args
-        .into_iter()
-        .map(|a| a.as_ref().to_owned())
-        .collect::<Vec<_>>();
-    let mut command = Command::new(executable);
-    command.args(&args);
-    let config = args
-        .windows(2)
-        .find(|a| a[0] == "--config")
-        .map(|a| Path::new(&a[1]));
-    let google = args.iter().any(|a| {
-        let a = a.to_string_lossy();
-        a.starts_with("my-drive-ro:")
-            || a.starts_with("my-drive-rw:")
-            || a.starts_with("my-drive-ro,")
-            || a.starts_with("my-drive-rw,")
-    });
-    let _bridge = if google && args.first().is_some_and(|a| a != "config") {
-        config
-            .map(|p| crate::google::bridge::Bridge::attach(&mut command, p))
-            .transpose()?
-            .flatten()
-    } else {
-        None
-    };
-    let output = command.output().map_err(|error| {
-        format!(
-            "Unable to execute Rclone at {}: {error}",
-            executable.display()
-        )
-    })?;
+    let output = Command::new(executable)
+        .args(args)
+        .output()
+        .map_err(|error| {
+            format!(
+                "Unable to execute Rclone at {}: {error}",
+                executable.display()
+            )
+        })?;
 
     Ok(output)
 }
@@ -93,4 +71,58 @@ pub fn version(executable: &Path) -> Result<String, RcloneError> {
         })?;
 
     Ok(version.to_string())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    #[test]
+    fn existing_remotes_are_used_even_when_retired_shared_auth_files_exist() {
+        use std::{fs, os::unix::fs::PermissionsExt};
+        let folder = std::env::temp_dir().join(format!(
+            "boreal-remote-restore-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&folder).unwrap();
+        let config = folder.join("rclone.conf");
+        fs::write(
+            &config,
+            "[my-drive-ro]\ntype = drive\n[my-drive-rw]\ntype = drive\n",
+        )
+        .unwrap();
+        fs::write(folder.join("google-account.json"), "retired and invalid").unwrap();
+        fs::write(folder.join("google-connection.json"), "retired and invalid").unwrap();
+        let executable = folder.join("fake-rclone");
+        fs::write(&executable, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let output = run(
+            &executable,
+            [
+                "copy",
+                "my-drive-ro:source",
+                "my-drive-rw:target",
+                "--config",
+                config.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        assert!(output.status.success());
+        let args = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(
+            args,
+            format!(
+                "copy\nmy-drive-ro:source\nmy-drive-rw:target\n--config\n{}\n",
+                config.display()
+            )
+        );
+        assert_eq!(
+            fs::read_to_string(folder.join("google-account.json")).unwrap(),
+            "retired and invalid"
+        );
+        fs::remove_dir_all(folder).unwrap();
+    }
 }

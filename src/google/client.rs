@@ -128,58 +128,92 @@ pub fn validate(data: &[u8]) -> Result<GoogleClientConfig, GoogleError> {
 /// The original Google-generated JSON is preserved.
 pub fn import(runtime: &Runtime, data: &[u8]) -> Result<GoogleClientConfig, GoogleError> {
     let config = validate(data)?;
-    let profile: serde_json::Value =
-        serde_json::from_slice(data).map_err(|_| "Invalid Google project profile")?;
-    let shared_setup = profile
-        .get("boreal_google")
-        .map(|value| {
-            serde_json::from_value::<super::auth::Setup>(value.clone())
-                .map_err(|_| "Invalid Boreal Google profile options")
-        })
-        .transpose()?;
-    if let Some(setup) = &shared_setup {
-        setup.validate()?;
-    }
-    let config_path = path(runtime)?;
-
-    let parent = config_path
-        .parent()
-        .ok_or("Unable to determine Google client configuration directory")?;
-
-    fs::create_dir_all(parent)?;
-
-    super::auth::private_write(&config_path, data)?;
-    if let Some(mut setup) = shared_setup {
-        // The profile supplies deployment information; users choose write access locally.
-        setup.migration_access = super::auth::setup(runtime)
-            .unwrap_or_default()
-            .migration_access;
-        super::auth::save_setup(runtime, &setup)?;
-    }
-
+    // Import only Desktop application configuration. Retired shared-account/profile
+    // fields must never change the existing per-remote Rclone authorization.
+    let value: serde_json::Value =
+        serde_json::from_slice(data).map_err(|_| "Invalid Google Desktop client JSON")?;
+    let data = serde_json::to_vec(&serde_json::json!({"installed": value["installed"]}))?;
+    private_write(&path(runtime)?, &data)?;
     Ok(config)
+}
+
+fn private_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), GoogleError> {
+    use std::io::Write;
+    let parent = path
+        .parent()
+        .ok_or("Invalid Google client configuration path")?;
+    fs::create_dir_all(parent)?;
+    let mut random = [0u8; 16];
+    getrandom::fill(&mut random).map_err(|_| "Unable to prepare private client configuration")?;
+    let suffix: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    let temp = parent.join(format!(".google-client-{suffix}.tmp"));
+    let result = (|| -> Result<(), GoogleError> {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        fs::rename(&temp, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temp);
+    }
+    result.map_err(|_| "Unable to save Google client configuration privately".into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn reusable_profile_imports_helper_without_replacing_user_authorization() {
-        let runtime = crate::google::auth::tests::fixture();
-        let conf = crate::google::auth::conf(&runtime).unwrap();
-        let account = fs::read(conf.join("google-account.json")).unwrap();
-        let mut profile: serde_json::Value =
-            serde_json::from_slice(&fs::read(path(&runtime).unwrap()).unwrap()).unwrap();
-        profile["boreal_google"] = serde_json::json!({"groups_deployment":"deployment_123","directory_admin":false,"migration_access":true});
-        import(&runtime, profile.to_string().as_bytes()).unwrap();
-        let setup = crate::google::auth::setup(&runtime).unwrap();
-        assert_eq!(setup.groups_deployment, "deployment_123");
-        assert!(!setup.migration_access);
-        assert_eq!(fs::read(conf.join("google-account.json")).unwrap(), account);
-        let before = fs::read(path(&runtime).unwrap()).unwrap();
-        profile["boreal_google"]["groups_deployment"] = "https://wrong.invalid".into();
-        assert!(import(&runtime, profile.to_string().as_bytes()).is_err());
-        assert_eq!(fs::read(path(&runtime).unwrap()).unwrap(), before);
-        fs::remove_dir_all(&runtime.boreal_home).unwrap();
+    fn desktop_import_preserves_remote_credentials_and_ignores_retired_profile() {
+        let folder = std::env::temp_dir().join(format!(
+            "boreal-client-restore-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&folder).unwrap();
+        let runtime = Runtime {
+            boreal_home: folder.clone(),
+            boreal: serde_json::json!({}),
+            directories: std::collections::BTreeMap::from([("CONF".into(), folder.clone())]),
+        };
+        let remote = b"[my-drive-ro]\ntoken = synthetic-ro\n[my-drive-rw]\ntoken = synthetic-rw\n";
+        fs::write(folder.join("rclone.conf"), remote).unwrap();
+        let input = serde_json::json!({"installed":{"client_id":"test.apps.googleusercontent.com","client_secret":"synthetic-client","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token"},"boreal_google":{"groups_deployment":"old-helper","directory_admin":true}});
+        import(&runtime, input.to_string().as_bytes()).unwrap();
+        assert_eq!(fs::read(folder.join("rclone.conf")).unwrap(), remote);
+        assert!(!folder.join("google-account.json").exists());
+        assert!(!folder.join("google-connection.json").exists());
+        let saved = fs::read(path(&runtime).unwrap()).unwrap();
+        assert!(
+            serde_json::from_slice::<serde_json::Value>(&saved)
+                .unwrap()
+                .get("boreal_google")
+                .is_none()
+        );
+        assert!(import(&runtime, b"invalid").is_err());
+        assert_eq!(fs::read(path(&runtime).unwrap()).unwrap(), saved);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(path(&runtime).unwrap())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        fs::remove_dir_all(folder).unwrap();
     }
 }

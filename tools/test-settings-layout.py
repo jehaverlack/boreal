@@ -36,6 +36,7 @@ with open(sys.argv[1]) as source:
     parser.feed(source.read())
 assert not parser.divs, 'Unclosed layout divs'
 assert {'googleSetupModal', 'googleClientSetupModal', 'githubTokenSetupModal', 'keeperSetupModal',
-        'service-s3', 'service-google-drive', 'service-google-groups'} <= parser.modals
+        'service-s3', 'service-google-drive', 'service-persons'} <= parser.modals
+assert 'service-google-groups' not in parser.modals
 assert {'s3Enabled', 's3RemoteName'} <= parser.labels
 print('PASS: every Settings dialog is independent; layout tags are balanced and S3 controls have labels.')

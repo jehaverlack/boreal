@@ -2,7 +2,7 @@
                         <input class="form-check-input" type="checkbox" id="s3Enabled" name="s3_enabled" value="true" {% if settings.s3_enabled %}checked{% endif %}>
     <label class="form-check-label" for="s3Enabled">Enable S3 object metadata</label>
 </div>
-<label class="form-label" for="s3RemoteName">Storage connection</label>
-<select class="form-select" id="s3RemoteName" name="s3_remote_name"><option value="">Choose a connection</option>{% for name in s3_connections %}<option value="{{ name }}" {% if name.as_str() == settings.s3_remote_name.as_str() %}selected{% endif %}>{{ name }}</option>{% endfor %}</select>
-<div class="form-text">Add an S3 connection in Connections, then return here and refresh to select it. Compatible providers include AWS S3, MinIO, Ceph and Wasabi.</div>
-                    <a class="btn btn-sm btn-outline-primary mt-3" href="/remotes"><i class="bi bi-gear me-1"></i>Manage connections</a>
+<label class="form-label" for="s3RemoteName">Storage remote</label>
+<select class="form-select" id="s3RemoteName" name="s3_remote_name"><option value="">Choose a remote</option>{% for name in s3_connections %}<option value="{{ name }}" {% if name.as_str() == settings.s3_remote_name.as_str() %}selected{% endif %}>{{ name }}</option>{% endfor %}</select>
+<div class="form-text">Add an S3 remote in Storage remotes, then return here and refresh to select it. Compatible providers include AWS S3, MinIO, Ceph and Wasabi.</div>
+                    <a class="btn btn-sm btn-outline-primary mt-3" href="/remotes"><i class="bi bi-gear me-1"></i>Manage remotes</a>
