@@ -101,6 +101,7 @@
         <div class="modal-header"><div><h2 class="modal-title fs-5" id="keeperSetupTitle">Connect Keeper Commander</h2><div class="small text-body-secondary">Keeper credentials remain in Keeper's private configuration.</div></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
         <div class="modal-body">
             <h3 class="h5">1. Install Keeper Commander</h3>
+            <p>Already installed Commander using pip or pipx? Keep that installation and continue at step 2.</p>
             <p>The vault metadata helper requires a pip or pipx installation of Commander. Standalone bundled executables do not provide the Python environment it needs.</p>
             <div class="alert alert-secondary">
                 <p class="fw-semibold mb-2">Linux or macOS</p>
@@ -115,6 +116,8 @@
             </div>
             <h3 class="h5">2. Authenticate outside BOREAL</h3>
             <p>Open a terminal and start Keeper Commander using BOREAL's private config path. The file does not exist before the first session; Keeper Commander creates it as you configure and authenticate the session. BOREAL creates its parent directory when this Settings page opens.</p>
+            <p>The commands below use the installation from step 1. If your configured installation is available as <code>keeper</code> on Linux or macOS (for example, through pipx), use:</p>
+            <pre class="border rounded bg-body-tertiary p-2"><code>keeper --config "$HOME/.boreal/conf/keeper/config.json" shell</code></pre>
             <div class="mb-3">
                 <div class="d-flex justify-content-between align-items-center mb-1">
                     <strong>Linux or macOS terminal</strong>
@@ -133,12 +136,8 @@
                 <summary class="small">Command using this computer's configured paths</summary>
                 <pre class="border rounded bg-body-tertiary p-2 mt-2 mb-0"><code>{{ keeper_setup_command }} --config {{ keeper_config_path }} shell</code></pre>
             </details>
-            <div class="alert alert-warning"><i class="bi bi-shield-exclamation me-1"></i>Sign in through Keeper Commander and complete your organization's MFA or SSO flow. Never enter your Keeper master password into BOREAL.</div>
-            <h3 class="h5">3. Register the device</h3>
-            <p>In the Keeper shell, run <code>this-device register</code>. If your organization permits background access, run <code>this-device persistent-login on</code>. An authenticated shell alone does not establish that BOREAL can resume the session.</p>
-            <h3 class="h5">4. Verify access</h3>
-            <p>In a separate terminal, use the same executable and <code>--config</code> path shown above, replacing <code>shell</code> with <code>login-status</code>. It must report <strong>Logged in</strong>. BOREAL must also run as the same OS user with access to Keeper's system keyring. If your organization's policy requires interactive authentication each time, unattended indexing cannot resume that session.</p>
-            <p class="mb-0">Close this assistant, enable Keeper, and select <strong>Save and test access</strong>. After validation, Keeper appears in navigation and as an optional metadata-update source.</p>
+            {% include "partials/keeper-sso-help.html" %}
+            {% include "partials/keeper-session-help.html" %}
         </div>
         <div class="modal-footer"><button type="button" class="btn btn-primary" data-bs-dismiss="modal">Back to Settings</button></div>
     </div></div>
