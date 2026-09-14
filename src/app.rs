@@ -503,18 +503,28 @@ impl AppState {
 
         match client {
             GoogleClientState::Ready(client) => {
-                remotes_state.rw = rclone::remotes::detect(
-                    &self.runtime,
-                    executable,
-                    &client,
-                    RemoteKind::MyDriveRw,
-                );
-                remotes_state.ro = rclone::remotes::detect(
-                    &self.runtime,
-                    executable,
-                    &client,
-                    RemoteKind::MyDriveRo,
-                );
+                if !matches!(
+                    remotes_state.rw,
+                    RemoteState::Configuring | RemoteState::Error(_)
+                ) {
+                    remotes_state.rw = rclone::remotes::detect(
+                        &self.runtime,
+                        executable,
+                        &client,
+                        RemoteKind::MyDriveRw,
+                    );
+                }
+                if !matches!(
+                    remotes_state.ro,
+                    RemoteState::Configuring | RemoteState::Error(_)
+                ) {
+                    remotes_state.ro = rclone::remotes::detect(
+                        &self.runtime,
+                        executable,
+                        &client,
+                        RemoteKind::MyDriveRo,
+                    );
+                }
             }
             _ => {
                 remotes_state.rw = RemoteState::Waiting;
@@ -530,6 +540,14 @@ impl AppState {
     }
 
     pub fn configure_google_remote(state: Arc<Self>, kind: RemoteKind) -> Result<(), String> {
+        Self::configure_google_remote_action(state, kind, false)
+    }
+
+    pub fn configure_google_remote_action(
+        state: Arc<Self>,
+        kind: RemoteKind,
+        reconnect: bool,
+    ) -> Result<(), String> {
         log::info!("Google remote setup requested: remote={}", kind.name());
         {
             let mut active = state
@@ -564,7 +582,11 @@ impl AppState {
         tokio::spawn(async move {
             let worker_state = Arc::clone(&state);
             let result = tokio::task::spawn_blocking(move || {
-                rclone::remotes::configure(&worker_state.runtime, &executable, &client, kind)
+                if reconnect {
+                    rclone::remotes::reconnect(&worker_state.runtime, &executable, &client, kind)
+                } else {
+                    rclone::remotes::configure(&worker_state.runtime, &executable, &client, kind)
+                }
             })
             .await;
 
@@ -701,8 +723,7 @@ impl AppState {
                             .join(rclone::download::safe_local_name(&source.name));
                         let config_path = rclone::config::path(&state.runtime)
                             .map_err(|error| error.to_string())?;
-                        let shared_drive_id = (job.source_kind == "shared-drive")
-                            .then_some(source.item_id.as_str());
+                        let shared_drive_id = if job.source_kind == "shared-drive" { job.source_scope.strip_prefix(database::inventory::SHARED_DRIVE_SCOPE_PREFIX) } else { None };
                         rclone::download::copy_item(rclone::download::DownloadRequest {
                             executable: &executable,
                             config_path: &config_path,
@@ -718,6 +739,7 @@ impl AppState {
                             &state.runtime,
                             &executable,
                             &job.source_kind,
+                            &job.source_scope,
                             source,
                             &job.destination_drive_id,
                             &job.destination_folder_id,
@@ -796,6 +818,14 @@ impl AppState {
             .unwrap_or_else(|error| {
                 MetadataState::Error(format!("Unable to read metadata state: {error}"))
             })
+    }
+
+    pub fn acknowledge_metadata_error(&self) {
+        if let Ok(mut metadata) = self.metadata.write() {
+            if matches!(*metadata, MetadataState::Error(_)) {
+                *metadata = MetadataState::NotSynchronized;
+            }
+        }
     }
 
     pub fn start_metadata_update(
@@ -1309,21 +1339,21 @@ impl AppState {
                         let timing_started = Instant::now();
                         worker_state.set_metadata_state(MetadataState::Updating(MetadataProgress {
                             selection,
-                            phase: "Fetching Keeper shared-folder metadata".to_string(),
+                            phase: "Fetching Keeper vault metadata".to_string(),
                             files_scanned: my_drive_summary.files_scanned,
                             folders_scanned: my_drive_summary.folders_scanned,
                             permissions_scanned: my_drive_summary.permissions_scanned,
                             bytes_discovered: my_drive_summary.bytes_discovered,
                             errors: 0,
                         }));
-                        let folders = crate::keeper::client::shared_folders(
+                        let snapshot = crate::keeper::client::vault_snapshot(
                             &worker_state.runtime,
                             &inventory_settings.keeper_command,
                         )
                         .map_err(|error| -> crate::database::DatabaseError { error })?;
-                        crate::database::keeper::synchronize(&database, &folders)?;
+                        crate::database::keeper::synchronize(&database, &snapshot)?;
                         let _ = database.record_metadata_timing("keeper", timing_started.elapsed().as_secs());
-                        log::info!("Keeper shared-folder metadata updated: folders={}", folders.len());
+                        log::info!("Keeper vault metadata updated: folders={}, records={}", snapshot.folders.len().saturating_sub(1), snapshot.records.len());
                     }
                     if selection.local_files {
                         let timing_started = Instant::now();

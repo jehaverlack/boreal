@@ -271,11 +271,13 @@ dependencies = [
 
 [[package]]
 name = "boreal"
-version = "1.1.1"
+version = "1.2.0"
 dependencies = [
  "askama",
  "axum",
+ "base64",
  "dirs",
+ "getrandom 0.4.3",
  "ksni",
  "libc",
  "log",

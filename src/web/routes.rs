@@ -161,6 +161,19 @@ struct DashboardTemplate {
     s3_summary: database::s3::Summary,
 }
 
+struct ServiceSettingsView {
+    key: &'static str,
+    name: &'static str,
+    description: &'static str,
+    icon: &'static str,
+    image: &'static str,
+    color: &'static str,
+    enabled: bool,
+    status: &'static str,
+    status_class: &'static str,
+    next_step: &'static str,
+}
+
 #[allow(dead_code)]
 #[derive(Template)]
 #[template(path = "settings.html", config = "askama.toml")]
@@ -180,6 +193,10 @@ struct SettingsTemplate {
     keeper_setup_command: String,
     keeper_config_path: String,
     keeper_version: String,
+    services: Vec<ServiceSettingsView>,
+    google_client_ready: bool,
+    google_client_error: String,
+    s3_connections: Vec<String>,
 }
 
 #[allow(dead_code)]
@@ -343,6 +360,8 @@ pub struct RemoteView {
     pub purpose: &'static str,
     pub status: &'static str,
     pub status_class: &'static str,
+    pub detail: String,
+    pub managed: bool,
 }
 
 #[allow(dead_code)]
@@ -431,7 +450,9 @@ pub struct IdentityTagFilterPill {
     pub color: String,
     pub text_color: &'static str,
     pub owner_selected: bool,
+    pub owner_excluded: bool,
     pub permission_selected: bool,
+    pub permission_excluded: bool,
 }
 
 #[allow(dead_code)]
@@ -588,6 +609,55 @@ struct GitHubTemplate {
     print_view: bool,
 }
 
+struct KeeperEntryView {
+    record: database::keeper::EntryRow,
+    permissions: Vec<KeeperPermissionGroup>,
+}
+
+struct KeeperPermissionGroup {
+    label: String,
+    users: Vec<IdentityDisplay>,
+}
+
+fn keeper_entry_view(record: database::keeper::EntryRow) -> KeeperEntryView {
+    let mut groups = std::collections::BTreeMap::<String, Vec<IdentityDisplay>>::new();
+    for access in &record.access {
+        let label = if access.permissions.trim().is_empty() {
+            "Unspecified"
+        } else {
+            access.permissions.trim()
+        };
+        let name = access
+            .shared_to
+            .strip_prefix("(Team User)")
+            .unwrap_or(&access.shared_to)
+            .trim()
+            .to_string();
+        let mut user = identity_display(
+            name,
+            access.known || access.target_kind == "team",
+            &access.tags,
+        );
+        if access.target_kind == "team-user" {
+            user.tag_details = format!("Team member. {}", user.tag_details);
+        }
+        let users = groups.entry(label.to_string()).or_default();
+        if !users
+            .iter()
+            .any(|existing| existing.label.eq_ignore_ascii_case(&user.label))
+        {
+            users.push(user);
+        }
+    }
+    KeeperEntryView {
+        record,
+        permissions: groups
+            .into_iter()
+            .map(|(label, users)| KeeperPermissionGroup { label, users })
+            .collect(),
+    }
+}
+
 #[derive(Template)]
 #[template(path = "keeper.html", config = "askama.toml")]
 struct KeeperTemplate {
@@ -596,7 +666,11 @@ struct KeeperTemplate {
     alerts: Vec<AlertItem>,
     status_items: Vec<StatusItem>,
     poll_rclone: bool,
-    folders: Vec<database::keeper::SharedFolderRow>,
+    entries: Vec<KeeperEntryView>,
+    user_filter_tags: Vec<TagFilterPill>,
+    locations: Vec<database::keeper::FolderLocation>,
+    current_path: String,
+    parent_url: String,
     tags: Vec<database::inventory::Tag>,
     filter_tags: Vec<TagFilterPill>,
     query: KeeperQuery,
@@ -930,6 +1004,20 @@ struct ApplyPrincipalTagForm {
     #[serde(default)]
     selected_principal_ids: String,
     tag: String,
+    #[serde(default)]
+    name_filter: String,
+    #[serde(default)]
+    email_filter: String,
+    #[serde(default)]
+    type_filter: String,
+    #[serde(default)]
+    status_filter: String,
+    #[serde(default)]
+    departure_filter: String,
+    #[serde(default)]
+    organization_filter: String,
+    #[serde(default)]
+    tag_filter: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -988,6 +1076,8 @@ struct DeleteTagForm {
 #[derive(serde::Deserialize)]
 struct SettingsForm {
     #[serde(default)]
+    service: String,
+    #[serde(default)]
     google_drive_enabled: Option<String>,
     #[serde(default)]
     directory_sheet_url: String,
@@ -1013,6 +1103,56 @@ struct SettingsForm {
     s3_enabled: Option<String>,
     #[serde(default)]
     s3_remote_name: String,
+}
+
+impl SettingsForm {
+    fn includes(&self, service: &str) -> bool {
+        self.service.is_empty() || self.service == service
+    }
+
+    fn apply(&self, inventory_settings: &mut InventorySettings) -> Result<(), StatusCode> {
+        if !matches!(
+            self.service.as_str(),
+            "" | "google-drive" | "persons" | "github" | "keeper" | "local-files" | "s3"
+        ) {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        let form = self;
+        let directory_sheet_url = form.directory_sheet_url.trim().to_string();
+        if self.includes("google-drive") {
+            inventory_settings.google_drive_enabled = form.google_drive_enabled.is_some();
+        }
+        if self.includes("persons") {
+            inventory_settings.directory_sheet_enabled = !directory_sheet_url.is_empty();
+            inventory_settings.directory_sheet_url = directory_sheet_url;
+        }
+        if self.includes("github") {
+            inventory_settings.github_enabled = form.github_enabled.is_some();
+        }
+        if self.includes("keeper") {
+            inventory_settings.keeper_enabled = form.keeper_enabled.is_some();
+            inventory_settings.keeper_command = if form.keeper_command.trim().is_empty() {
+                String::new()
+            } else {
+                form.keeper_command.trim().to_string()
+            };
+        }
+        if self.includes("local-files") {
+            inventory_settings.local_files_enabled = form.local_files_enabled.is_some();
+            inventory_settings.local_file_roots = form.local_file_roots.trim().to_string();
+            inventory_settings.local_exclude_hidden = form.local_exclude_hidden.is_some();
+            inventory_settings.local_exclude_caches = form.local_exclude_caches.is_some();
+            inventory_settings.local_exclude_temporary = form.local_exclude_temporary.is_some();
+            inventory_settings.local_exclude_patterns =
+                form.local_exclude_patterns.trim().to_string();
+        }
+        if self.includes("s3") {
+            inventory_settings.s3_enabled = form.s3_enabled.is_some();
+            inventory_settings.s3_remote_name =
+                form.s3_remote_name.trim().trim_end_matches(':').to_string();
+        }
+        Ok(())
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -1084,10 +1224,20 @@ struct GitHubTagForm {
     sort: String,
     #[serde(default)]
     direction: String,
+    #[serde(default)]
+    include_inaccessible: bool,
 }
 
 #[derive(Clone, Default, serde::Deserialize)]
 struct KeeperQuery {
+    #[serde(default)]
+    user_tag: String,
+    #[serde(default)]
+    print: bool,
+    #[serde(default)]
+    folder: String,
+    #[serde(default)]
+    all: bool,
     #[serde(default)]
     name: String,
     #[serde(default)]
@@ -1112,7 +1262,18 @@ struct KeeperQuery {
 
 #[derive(serde::Deserialize)]
 struct KeeperTagForm {
+    #[serde(default)]
+    user_tag: String,
+    #[serde(default)]
     selected_folder_uids: String,
+    #[serde(default)]
+    selected_record_uids: String,
+    #[serde(default)]
+    folder: String,
+    #[serde(default)]
+    all: bool,
+    #[serde(default)]
+    include_inaccessible: bool,
     tag: String,
     #[serde(default)]
     name: String,
@@ -1278,9 +1439,17 @@ struct MigrationDestinationForm {
     destination_url: String,
 }
 
+#[derive(Default, serde::Deserialize)]
+struct RemoteQuery {
+    #[serde(default)]
+    error: String,
+}
+
 #[derive(serde::Deserialize)]
 struct AddRemoteForm {
     remote_kind: String,
+    #[serde(default)]
+    reconnect: bool,
 }
 
 #[derive(Default, serde::Deserialize)]
@@ -1306,6 +1475,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/assets/acep-logo.png", get(acep_logo))
         .route("/assets/rclone-logo.svg", get(rclone_logo))
         .route("/assets/google-drive-logo.svg", get(google_drive_logo))
+        .route("/assets/google-g.png", get(google_g_logo))
+        .route("/assets/keeper-logo.svg", get(keeper_logo))
         .route(
             "/assets/google-cloud-project-selection.png",
             get(google_cloud_project_selection),
@@ -1359,6 +1530,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/ui/google-drive-launcher", get(ui_google_drive_launcher))
         .route("/ui/github-launcher", get(ui_github_launcher))
         .route("/keeper", get(keeper_page))
+        .route("/keeper/export.xlsx", get(export_keeper))
         .route("/keeper/tags", post(apply_keeper_tag))
         .route("/keeper/tags/remove", post(remove_keeper_tag))
         .route("/ui/keeper-primary-nav", get(ui_keeper_primary_nav))
@@ -1463,6 +1635,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/ui/setup-progress", get(ui_setup_progress))
         .route("/ui/metadata-progress", get(ui_metadata_progress))
         .route("/ui/metadata-update-modal", get(ui_metadata_update_modal))
+        .route(
+            "/metadata/acknowledge-error",
+            post(acknowledge_metadata_error),
+        )
         .route("/ui/drive-summaries", get(ui_drive_summaries))
         .route("/setup/google-client/import", post(import_google_client))
         .route("/setup/remotes/my-drive-ro", post(setup_my_drive_ro))
@@ -1521,6 +1697,16 @@ async fn rclone_logo() -> impl IntoResponse {
     )
 }
 
+async fn google_g_logo() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        include_bytes!("../../tmpl/html/img/google-g.png").as_slice(),
+    )
+}
+
 async fn google_drive_logo() -> impl IntoResponse {
     (
         [
@@ -1528,6 +1714,16 @@ async fn google_drive_logo() -> impl IntoResponse {
             (header::CACHE_CONTROL, "public, max-age=86400"),
         ],
         include_bytes!("../../tmpl/html/img/google-drive-logo.svg").as_slice(),
+    )
+}
+
+async fn keeper_logo() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        include_bytes!("../../tmpl/html/img/keeper-logo.svg").as_slice(),
     )
 }
 
@@ -2056,37 +2252,19 @@ async fn save_settings(
     State(state): State<Arc<AppState>>,
     Form(form): Form<SettingsForm>,
 ) -> Result<axum::response::Response, StatusCode> {
-    let directory_sheet_url = form.directory_sheet_url.trim().to_string();
     let database = state
         .database()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     let mut inventory_settings =
         settings::load(&database).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let google_drive_was_enabled = inventory_settings.google_drive_enabled;
-    inventory_settings.google_drive_enabled = form.google_drive_enabled.is_some();
-    if inventory_settings.google_drive_enabled {
-        inventory_settings.directory_sheet_enabled = !directory_sheet_url.is_empty();
-        inventory_settings.directory_sheet_url = directory_sheet_url;
-    } else {
-        inventory_settings.directory_sheet_enabled = false;
+    form.apply(&mut inventory_settings)?;
+    if form.includes("keeper") && inventory_settings.keeper_command.is_empty() {
+        inventory_settings.keeper_command = crate::keeper::client::default_command(&state.runtime);
     }
-    inventory_settings.github_enabled = form.github_enabled.is_some();
-    inventory_settings.keeper_enabled = form.keeper_enabled.is_some();
-    inventory_settings.keeper_command = if form.keeper_command.trim().is_empty() {
-        crate::keeper::client::default_command(&state.runtime)
-    } else {
-        form.keeper_command.trim().to_string()
-    };
-    inventory_settings.local_files_enabled = form.local_files_enabled.is_some();
-    inventory_settings.local_file_roots = form.local_file_roots.trim().to_string();
-    inventory_settings.local_exclude_hidden = form.local_exclude_hidden.is_some();
-    inventory_settings.local_exclude_caches = form.local_exclude_caches.is_some();
-    inventory_settings.local_exclude_temporary = form.local_exclude_temporary.is_some();
-    inventory_settings.local_exclude_patterns = form.local_exclude_patterns.trim().to_string();
-    inventory_settings.s3_enabled = form.s3_enabled.is_some();
-    inventory_settings.s3_remote_name =
-        form.s3_remote_name.trim().trim_end_matches(':').to_string();
-    if inventory_settings.github_enabled && !crate::github::client::configured(&state.runtime) {
+    if form.includes("github")
+        && inventory_settings.github_enabled
+        && !crate::github::client::configured(&state.runtime)
+    {
         return render_settings(
             &state,
             inventory_settings,
@@ -2096,7 +2274,7 @@ async fn save_settings(
         )
         .map(axum::response::IntoResponse::into_response);
     }
-    if inventory_settings.s3_enabled {
+    if form.includes("s3") && inventory_settings.s3_enabled {
         let s3_remote_ready = match state.rclone_state() {
             RcloneState::Ready(status) => {
                 rclone::remotes::list_configured(&state.runtime, &status.path)
@@ -2121,7 +2299,7 @@ async fn save_settings(
             .map(axum::response::IntoResponse::into_response);
         }
     }
-    if inventory_settings.directory_sheet_enabled {
+    if form.includes("persons") && inventory_settings.directory_sheet_enabled {
         if let Err(error) =
             crate::rclone::identity::parse_google_sheet_url(&inventory_settings.directory_sheet_url)
         {
@@ -2136,19 +2314,7 @@ async fn save_settings(
         }
     }
     match settings::save(&database, &inventory_settings) {
-        Ok(()) => {
-            if !google_drive_was_enabled && inventory_settings.google_drive_enabled {
-                let destination =
-                    if matches!(state.google_client_state(), GoogleClientState::Ready(_)) {
-                        "/remotes"
-                    } else {
-                        "/google-client"
-                    };
-                Ok(Redirect::to(destination).into_response())
-            } else {
-                Ok(Redirect::to("/settings?saved=true").into_response())
-            }
-        }
+        Ok(()) => Ok(Redirect::to("/settings?saved=true").into_response()),
 
         Err(error) => render_settings(
             &state,
@@ -2170,9 +2336,6 @@ async fn test_keeper_connection(
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     let mut inventory_settings =
         settings::load(&database).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    inventory_settings.directory_sheet_url = form.directory_sheet_url.trim().to_string();
-    inventory_settings.directory_sheet_enabled = !inventory_settings.directory_sheet_url.is_empty();
-    inventory_settings.github_enabled = form.github_enabled.is_some();
     inventory_settings.keeper_enabled = true;
     inventory_settings.keeper_command = if form.keeper_command.trim().is_empty() {
         crate::keeper::client::default_command(&state.runtime)
@@ -2193,19 +2356,22 @@ async fn test_keeper_connection(
     let command = inventory_settings.keeper_command.clone();
     let result = tokio::task::spawn_blocking(move || {
         let version = crate::keeper::client::version(&command)?;
-        crate::keeper::client::login_status(&worker_state.runtime, &command)?;
-        let folders = crate::keeper::client::shared_folders(&worker_state.runtime, &command)?;
-        Ok::<_, crate::keeper::client::KeeperError>((version, folders.len()))
+        let snapshot = crate::keeper::client::vault_snapshot(&worker_state.runtime, &command)?;
+        Ok::<_, crate::keeper::client::KeeperError>((
+            version,
+            snapshot.folders.len().saturating_sub(1),
+            snapshot.records.len(),
+        ))
     })
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     match result {
-        Ok((version, count)) => render_settings(
+        Ok((version, folders, records)) => render_settings(
             &state,
             inventory_settings,
             false,
             String::new(),
-            format!("Keeper access verified with {version}; {count} shared folders are visible."),
+            format!("Keeper access verified with {version}; {folders} folders and {records} records are visible."),
         ),
         Err(error) => render_settings(
             &state,
@@ -2238,11 +2404,7 @@ async fn add_github_connection(
             inventory_settings.github_login = account.login;
             settings::save(&database, &inventory_settings)
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            log::info!(
-                "GitHub connection added: resource_owner={}, account_id={}",
-                form.resource_owner.trim(),
-                account.id
-            );
+            log::info!("GitHub connection added");
             Ok(Redirect::to("/settings?saved=true").into_response())
         }
         Err(error) => {
@@ -2284,10 +2446,7 @@ async fn delete_github_connection(
         settings::save(&database, &inventory_settings)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
-    log::info!(
-        "GitHub connection removed: resource_owner={}",
-        form.resource_owner.trim()
-    );
+    log::info!("GitHub connection removed");
     Ok(Redirect::to("/settings?saved=true").into_response())
 }
 
@@ -2419,6 +2578,133 @@ fn render_settings(
     };
     let keeper_version = crate::keeper::client::version(keeper_command).unwrap_or_default();
     let keeper_setup_command = keeper_command.to_string();
+    let drive_ready = matches!(google_remotes_state.ro, RemoteState::Ready);
+    let client_ready = matches!(google_client_state, GoogleClientState::Ready(_));
+    let github_ready = crate::github::client::configured(&state.runtime);
+    let s3_connections: Vec<String> = match &rclone_state {
+        RcloneState::Ready(status) => {
+            rclone::remotes::list_configured(&state.runtime, &status.path)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|r| r.backend == "s3")
+                .map(|r| r.name)
+                .collect()
+        }
+        _ => vec![],
+    };
+    let s3_ready = s3_connections.contains(&inventory_settings.s3_remote_name);
+    let service = |key, name, description, icon, image, color, enabled, ready, next_step| {
+        ServiceSettingsView {
+            key,
+            name,
+            description,
+            icon,
+            image,
+            color,
+            enabled,
+            status: if !enabled {
+                "Not active"
+            } else if ready {
+                "Configured"
+            } else {
+                "Setup needed"
+            },
+            status_class: if !enabled {
+                "text-bg-light"
+            } else if ready {
+                "text-bg-success"
+            } else {
+                "text-bg-warning"
+            },
+            next_step,
+        }
+    };
+    let mut services = vec![
+        service(
+            "local-files",
+            "Local Files",
+            "Folders on this computer",
+            "bi-folder2-open",
+            "",
+            "boreal-local-files-color",
+            inventory_settings.local_files_enabled,
+            !inventory_settings.local_file_roots.trim().is_empty(),
+            "Choose folders and exclusions.",
+        ),
+        service(
+            "persons",
+            "Persons",
+            "People, identities and tags",
+            "bi-person-vcard",
+            "",
+            "boreal-person-color",
+            true,
+            true,
+            if inventory_settings.directory_sheet_enabled && !drive_ready {
+                "Local entries available; connect Google to update your linked Sheet."
+            } else {
+                "Add people, import CSV, or link an optional Sheet."
+            },
+        ),
+        service(
+            "google-drive",
+            "Google Drive",
+            "My Drive, Shared Drives and shared files",
+            "",
+            "/assets/google-drive-logo.svg",
+            "boreal-google-drive-color",
+            inventory_settings.google_drive_enabled,
+            drive_ready,
+            if !client_ready {
+                "Prepare Google setup, then connect your account."
+            } else if !drive_ready {
+                "Connect or repair your read-only connection."
+            } else {
+                "Choose Drive sources in Update. Write access is optional."
+            },
+        ),
+        service(
+            "github",
+            "GitHub",
+            "Repository metadata by account or organization",
+            "bi-github",
+            "",
+            "boreal-github-color",
+            inventory_settings.github_enabled,
+            github_ready,
+            "Add or renew a token for each repository owner.",
+        ),
+        service(
+            "keeper",
+            "Keeper",
+            "Vault structure and safe record metadata",
+            "",
+            "/assets/keeper-logo.svg",
+            "boreal-keeper-color",
+            inventory_settings.keeper_enabled,
+            !keeper_version.is_empty(),
+            "Sign in with Keeper Commander, then test access.",
+        ),
+        service(
+            "s3",
+            "S3-compatible storage",
+            "Buckets and object metadata",
+            "bi-bucket",
+            "",
+            "boreal-s3-color",
+            inventory_settings.s3_enabled,
+            s3_ready,
+            "Add a storage remote, then select its name.",
+        ),
+    ];
+    for service in &mut services {
+        if service.key == "persons" {
+            service.status = "Local dataset ready";
+        }
+        if service.key == "keeper" && service.enabled && !keeper_version.is_empty() {
+            service.status = "Commander installed";
+        }
+    }
     let template = SettingsTemplate {
         title: "Settings - BOREAL",
         active_page: "settings",
@@ -2448,6 +2734,13 @@ fn render_settings(
         keeper_setup_command,
         keeper_config_path,
         keeper_version,
+        services,
+        google_client_ready: client_ready,
+        google_client_error: match google_client_state {
+            GoogleClientState::Error(error) => error,
+            _ => String::new(),
+        },
+        s3_connections,
     };
 
     render_template(&template)
@@ -2794,6 +3087,9 @@ async fn create_migration(
     let source_kind = match form.inventory_scope.as_str() {
         database::inventory::MY_DRIVE_SCOPE => "my-drive",
         database::inventory::SHARED_WITH_ME_SCOPE => "shared-with-me",
+        scope if scope.starts_with(database::inventory::SHARED_DRIVE_SCOPE_PREFIX) => {
+            "shared-drive"
+        }
         _ => return Err(StatusCode::BAD_REQUEST),
     };
     let item_ids = form
@@ -2836,6 +3132,9 @@ async fn create_download_migration(
     let source_kind = match form.inventory_scope.as_str() {
         database::inventory::MY_DRIVE_SCOPE => "my-drive",
         database::inventory::SHARED_WITH_ME_SCOPE => "shared-with-me",
+        scope if scope.starts_with(database::inventory::SHARED_DRIVE_SCOPE_PREFIX) => {
+            "shared-drive"
+        }
         _ => return Err(StatusCode::BAD_REQUEST),
     };
     let database = state
@@ -2882,9 +3181,6 @@ async fn save_migration_destination(
         let job = database::migration::get(&database, migration_id)
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("Unknown migration: {migration_id}"))?;
-        if job.source_kind == "shared-drive" {
-            return Err("Shared Drives can only be copied to a local destination.".to_string());
-        }
         let require_shared_drive = job.source_kind == "my-drive";
         let executable = match state.rclone_state() {
             RcloneState::Ready(status) => status.path,
@@ -2912,6 +3208,9 @@ async fn save_migration_destination(
         .map_err(|error| format!("Destination validation task failed: {error}"))?
         .map_err(|error| error.to_string())?;
 
+        if job.sources.iter().any(|source| source.is_directory && destination.folders.iter().any(|folder| folder.id == source.item_id)) {
+            return Err("Choose a destination outside the selected source folders; a folder cannot be copied into itself or its descendants.".into());
+        }
         let local_destination = database::migration::resolve_destination(&database, &folder_id)
             .map_err(|error| error.to_string())?;
         let (drive_name, folder_name) = match local_destination {
@@ -3153,8 +3452,9 @@ fn migration_view(job: database::migration::MigrationJob) -> MigrationView {
     let can_resume = matches!(job.status.as_str(), "interrupted" | "error" | "copied")
         && job.archived_at.is_empty();
     let running = matches!(job.status.as_str(), "preflight" | "running");
-    let allows_my_drive_destination = job.source_kind == "shared-with-me";
-    let allows_google_destination = job.source_kind != "shared-drive";
+    let allows_my_drive_destination =
+        matches!(job.source_kind.as_str(), "shared-with-me" | "shared-drive");
+    let allows_google_destination = true;
     let sources = job
         .sources
         .into_iter()
@@ -3263,7 +3563,11 @@ async fn instance_identity() -> &'static str {
     "BOREAL"
 }
 
-async fn remotes_page(State(state): State<Arc<AppState>>) -> Result<Html<String>, StatusCode> {
+async fn remotes_page(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<RemoteQuery>,
+) -> Result<Html<String>, StatusCode> {
+    state.refresh_google_remotes_if_ready();
     let rclone_state = state.rclone_state();
     let google_client_state = state.google_client_state();
     let google_remotes_state = state.google_remotes_state();
@@ -3302,7 +3606,20 @@ async fn remotes_page(State(state): State<Arc<AppState>>) -> Result<Html<String>
                             ),
                             _ => ("Remote-defined", "General", "Configured", "text-bg-success"),
                         };
+                        let managed_state = match remote.name.as_str() {
+                            "my-drive-ro" => Some(&google_remotes_state.ro),
+                            "my-drive-rw" => Some(&google_remotes_state.rw),
+                            _ => None,
+                        };
+                        let detail = match managed_state {
+                            Some(RemoteState::Conflict(message) | RemoteState::Error(message)) => message.clone(),
+                            Some(RemoteState::Configuring) => "Complete sign-in in the Google tab. This page updates automatically.".into(),
+                            Some(RemoteState::NotConfigured) => "Sign in to finish this connection.".into(),
+                            _ => String::new(),
+                        };
                         RemoteView {
+                            managed: managed_state.is_some(),
+                            detail,
                             name: remote.name,
                             backend: remote.backend,
                             access,
@@ -3326,7 +3643,7 @@ async fn remotes_page(State(state): State<Arc<AppState>>) -> Result<Html<String>
         || matches!(google_remotes_state.rw, RemoteState::Configuring);
 
     let template = RemotesTemplate {
-        title: "Remotes - BOREAL",
+        title: "Storage remotes - BOREAL",
         active_page: "remotes",
         alerts: build_alerts(
             &rclone_state,
@@ -3345,7 +3662,11 @@ async fn remotes_page(State(state): State<Arc<AppState>>) -> Result<Html<String>
         ),
         poll_rclone: should_poll_ui(&rclone_state, &google_remotes_state, &metadata_state),
         remotes,
-        error,
+        error: if query.error.is_empty() {
+            error
+        } else {
+            query.error
+        },
         my_drive_ro_configured,
         my_drive_rw_configured,
         remote_setup_busy,
@@ -3364,10 +3685,13 @@ async fn add_remote(
         "my-drive-rw" => RemoteKind::MyDriveRw,
         _ => return Err(StatusCode::BAD_REQUEST),
     };
-    AppState::configure_google_remote(state, kind).map_err(|error| {
-        log::warn!("Unable to add {}: {error}", kind.label());
-        StatusCode::CONFLICT
-    })?;
+    if let Err(error) = AppState::configure_google_remote_action(state, kind, form.reconnect) {
+        log::warn!("Unable to start Google connection setup");
+        return Ok(Redirect::to(&format!(
+            "/remotes?error={}",
+            encode_query_value(&error)
+        )));
+    }
     Ok(Redirect::to("/remotes"))
 }
 
@@ -3909,8 +4233,8 @@ async fn shared_drives_page(
                 description: tag.description.clone(),
                 color: tag.color.clone(),
                 text_color: tag_text_color(&tag.color),
-                selected: query.tag == tag.slug,
-                excluded: query.tag.strip_prefix('!') == Some(tag.slug.as_str()),
+                selected: database::tag_filter::selected(&query.tag, &tag.slug, false),
+                excluded: database::tag_filter::selected(&query.tag, tag.slug.as_str(), true),
             })
             .collect::<Vec<_>>();
         filter_tags.push(no_tags_filter_pill(&query.tag));
@@ -4048,8 +4372,12 @@ fn render_drive_explorer(
         StatusCode::SERVICE_UNAVAILABLE
     })?;
     let has_parent = !query.path.is_empty();
-    let include_deleted =
-        query.include_deleted || query.tag == database::inventory::DELETED_TAG_FILTER;
+    let include_deleted = query.include_deleted
+        || database::tag_filter::selected(
+            &query.tag,
+            &database::inventory::DELETED_TAG_FILTER,
+            false,
+        );
     let parent_filter = has_parent.then_some(query.path.as_str());
     let sort = match query.sort.as_str() {
         "type" | "size" | "modified" | "owner" => query.sort.as_str(),
@@ -4189,8 +4517,8 @@ fn render_drive_explorer(
             description: tag.description.clone(),
             color: tag.color.clone(),
             text_color: tag_text_color(&tag.color),
-            selected: query.tag == tag.slug,
-            excluded: query.tag.strip_prefix('!') == Some(tag.slug.as_str()),
+            selected: database::tag_filter::selected(&query.tag, &tag.slug, false),
+            excluded: database::tag_filter::selected(&query.tag, tag.slug.as_str(), true),
         })
         .collect::<Vec<_>>();
     filter_tags.push(no_tags_filter_pill(&query.tag));
@@ -4202,8 +4530,16 @@ fn render_drive_explorer(
                 .to_string(),
         color: "#6c757d".to_string(),
         text_color: "#ffffff",
-        selected: query.tag == database::inventory::DELETED_TAG_FILTER,
-        excluded: query.tag.strip_prefix('!') == Some(database::inventory::DELETED_TAG_FILTER),
+        selected: database::tag_filter::selected(
+            &query.tag,
+            &database::inventory::DELETED_TAG_FILTER,
+            false,
+        ),
+        excluded: database::tag_filter::selected(
+            &query.tag,
+            database::inventory::DELETED_TAG_FILTER,
+            true,
+        ),
     });
     let directory_tags = database::inventory::list_tags_for_scope(
         &database,
@@ -4218,8 +4554,26 @@ fn render_drive_explorer(
             description: tag.description.clone(),
             color: tag.color.clone(),
             text_color: tag_text_color(&tag.color),
-            owner_selected: query.owner_identity_tag == tag.slug,
-            permission_selected: query.permission_identity_tag == tag.slug,
+            owner_excluded: database::tag_filter::selected(
+                &query.owner_identity_tag,
+                &tag.slug,
+                true,
+            ),
+            permission_excluded: database::tag_filter::selected(
+                &query.permission_identity_tag,
+                &tag.slug,
+                true,
+            ),
+            owner_selected: database::tag_filter::selected(
+                &query.owner_identity_tag,
+                &tag.slug,
+                false,
+            ),
+            permission_selected: database::tag_filter::selected(
+                &query.permission_identity_tag,
+                &tag.slug,
+                false,
+            ),
         })
         .collect();
 
@@ -4756,20 +5110,22 @@ fn google_drive_enabled(state: &AppState) -> bool {
 }
 
 async fn ui_google_drive_primary_nav(State(state): State<Arc<AppState>>) -> Html<String> {
-    if !google_drive_enabled(&state) {
-        return Html(
-            "<li id=\"google-drive-primary-navigation\" class=\"d-none\"></li>".to_string(),
-        );
+    google_primary_navigation(google_drive_enabled(&state))
+}
+
+fn google_primary_navigation(drive: bool) -> Html<String> {
+    if !drive {
+        return Html("<li id=\"google-drive-primary-navigation\" class=\"d-none\"></li>".into());
     }
-    Html(r##"<li id="google-drive-primary-navigation" class="nav-item dropdown">
-<a class="nav-link dropdown-toggle boreal-drive-nav" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false" title="Google Drive"><img class="boreal-service-icon me-1" src="/assets/google-drive-logo.svg" alt="">GDrive</a>
-<ul class="dropdown-menu">
-<li><a class="dropdown-item boreal-drive-nav" href="/my-drive"><i class="bi bi-person-workspace me-2"></i>My Drive</a></li>
-<li><a class="dropdown-item boreal-drive-nav" href="/shared-drives"><i class="bi bi-people-fill me-2"></i>Shared Drives</a></li>
-<li><a class="dropdown-item boreal-drive-nav" href="/shared-with-me"><i class="bi bi-person-down me-2"></i>Shared with me</a></li>
-<li><hr class="dropdown-divider"></li>
-<li><a class="dropdown-item boreal-drive-nav" href="/remotes"><i class="bi bi-cloud-arrow-down-fill me-2"></i>Remotes</a></li>
-</ul></li>"##.to_string())
+    let mut html = String::from(
+        r##"<li id="google-drive-primary-navigation" class="nav-item dropdown">
+<a class="nav-link dropdown-toggle boreal-drive-nav" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false" title="Google resources"><img class="boreal-service-icon me-1" src="/assets/google-g.png" alt="">Google</a><ul class="dropdown-menu">"##,
+    );
+    if drive {
+        html.push_str(r#"<li><a class="dropdown-item fw-semibold" href="/my-drive"><img class="boreal-service-icon me-2" src="/assets/google-drive-logo.svg" alt="">GDrive</a></li><li><a class="dropdown-item" href="/my-drive"><i class="bi bi-folder2 me-2"></i>My Drive</a></li><li><a class="dropdown-item" href="/shared-drives"><i class="bi bi-hdd-network me-2"></i>Shared Drives</a></li><li><a class="dropdown-item" href="/shared-with-me"><i class="bi bi-people me-2"></i>Shared with me</a></li><li><a class="dropdown-item" href="/remotes"><i class="bi bi-plug me-2"></i>Storage remotes</a></li>"#);
+    }
+    html.push_str(r#"<li><hr class="dropdown-divider"></li><li><a class="dropdown-item" href="/settings#google-setup"><i class="bi bi-list-check me-2"></i>Google setup guide</a></li></ul></li>"#);
+    Html(html)
 }
 
 async fn ui_google_drive_launcher(State(state): State<Arc<AppState>>) -> Html<String> {
@@ -4809,7 +5165,7 @@ fn keeper_enabled(state: &AppState) -> bool {
 
 async fn ui_keeper_primary_nav(State(state): State<Arc<AppState>>) -> Html<String> {
     if keeper_enabled(&state) {
-        Html("<li id=\"keeper-primary-navigation\" class=\"nav-item\"><a class=\"nav-link boreal-keeper-nav\" href=\"/keeper\" title=\"Explore Keeper shared-folder metadata\"><i class=\"bi bi-shield-lock-fill me-1\"></i>Keeper</a></li>".to_string())
+        Html("<li id=\"keeper-primary-navigation\" class=\"nav-item\"><a class=\"nav-link boreal-keeper-nav\" href=\"/keeper\" title=\"Explore Keeper vault metadata\"><img class=\"boreal-service-icon me-1\" src=\"/assets/keeper-logo.svg\" alt=\"\">Keeper</a></li>".to_string())
     } else {
         Html("<li id=\"keeper-primary-navigation\" class=\"d-none\"></li>".to_string())
     }
@@ -4817,7 +5173,7 @@ async fn ui_keeper_primary_nav(State(state): State<Arc<AppState>>) -> Html<Strin
 
 async fn ui_keeper_launcher(State(state): State<Arc<AppState>>) -> Html<String> {
     if keeper_enabled(&state) {
-        Html("<li id=\"keeper-launcher\" class=\"nav-item\"><a class=\"nav-link boreal-keeper-nav\" href=\"https://keepersecurity.com/vault/\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"Open Keeper Web Vault\" aria-label=\"Open Keeper Web Vault\"><i class=\"bi bi-shield-lock-fill\" aria-hidden=\"true\"></i></a></li>".to_string())
+        Html("<li id=\"keeper-launcher\" class=\"nav-item\"><a class=\"nav-link boreal-keeper-nav\" href=\"https://keepersecurity.com/vault/\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"Open Keeper Web Vault\" aria-label=\"Open Keeper Web Vault\"><img class=\"boreal-service-icon\" src=\"/assets/keeper-logo.svg\" alt=\"\" aria-hidden=\"true\"></a></li>".to_string())
     } else {
         Html("<li id=\"keeper-launcher\" class=\"d-none\"></li>".to_string())
     }
@@ -4833,21 +5189,26 @@ async fn keeper_page(
     let database = state
         .database()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let folders = database::keeper::list(
-        &database,
-        &query.name,
-        &query.path,
-        &query.shared_to,
-        &query.permission,
-        &query.tag,
-        query.include_inaccessible,
-        &query.sort,
-        query.direction.eq_ignore_ascii_case("desc"),
-    )
-    .map_err(|error| {
-        log::error!("Unable to list Keeper shared folders: {error}");
-        StatusCode::BAD_REQUEST
-    })?;
+    let entries = keeper_entries(&database, &query)?;
+    let locations = database::keeper::folder_locations(&database)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let current_path = locations
+        .iter()
+        .find(|f| f.uid == query.folder)
+        .map(|f| f.path.clone())
+        .unwrap_or_else(|| "/".to_string());
+    let parent_uid = database
+        .connect()
+        .and_then(|c| {
+            c.query_row(
+                "SELECT parent_uid FROM keeper_shared_folders WHERE folder_uid=?1",
+                [&query.folder],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(Into::into)
+        })
+        .unwrap_or_default();
+    let parent_url = format!("/keeper?folder={}", encode_query_value(&parent_uid));
     let tags = database::inventory::list_tags_for_scope(
         &database,
         database::inventory::TagScope::KeeperSharedFolders,
@@ -4861,17 +5222,33 @@ async fn keeper_page(
             description: tag.description.clone(),
             color: tag.color.clone(),
             text_color: tag_text_color(&tag.color),
-            selected: query.tag == tag.slug,
-            excluded: query.tag.strip_prefix('!') == Some(tag.slug.as_str()),
+            selected: database::tag_filter::selected(&query.tag, &tag.slug, false),
+            excluded: database::tag_filter::selected(&query.tag, tag.slug.as_str(), true),
         })
         .collect::<Vec<_>>();
     filter_tags.push(no_tags_filter_pill(&query.tag));
+    let user_filter_tags = database::inventory::list_tags_for_scope(
+        &database,
+        database::inventory::TagScope::Directory,
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .into_iter()
+    .map(|tag| TagFilterPill {
+        selected: database::tag_filter::selected(&query.user_tag, &tag.slug, false),
+        excluded: database::tag_filter::selected(&query.user_tag, tag.slug.as_str(), true),
+        text_color: tag_text_color(&tag.color),
+        slug: tag.slug,
+        name: tag.name,
+        description: tag.description,
+        color: tag.color,
+    })
+    .collect();
     let rclone_state = state.rclone_state();
     let google_client_state = state.google_client_state();
     let google_remotes_state = state.google_remotes_state();
     let metadata_state = state.metadata_state();
     render_template(&KeeperTemplate {
-        title: "Keeper Shared Folders - BOREAL",
+        title: "Keeper Explorer - BOREAL",
         active_page: "keeper",
         alerts: build_alerts(
             &rclone_state,
@@ -4889,11 +5266,188 @@ async fn keeper_page(
             &state.update_state(),
         ),
         poll_rclone: should_poll_ui(&rclone_state, &google_remotes_state, &metadata_state),
-        folders,
+        entries: entries.into_iter().map(keeper_entry_view).collect(),
+        user_filter_tags,
+        locations,
+        current_path,
+        parent_url,
         tags,
         filter_tags,
         query,
     })
+}
+
+fn keeper_entries(
+    database: &database::Database,
+    query: &KeeperQuery,
+) -> Result<Vec<database::keeper::EntryRow>, StatusCode> {
+    database::keeper::list(
+        database,
+        &database::keeper::ListOptions {
+            folder: &query.folder,
+            all: query.all,
+            name: &query.name,
+            path: &query.path,
+            shared_to: &query.shared_to,
+            permission: &query.permission,
+            tag: &query.tag,
+            user_tag: &query.user_tag,
+            include_inaccessible: query.include_inaccessible,
+            sort: &query.sort,
+            descending: query.direction.eq_ignore_ascii_case("desc"),
+        },
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn export_keeper(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<KeeperQuery>,
+) -> Result<Response<Body>, StatusCode> {
+    if !keeper_enabled(&state) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let database = state
+        .database()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let entries = keeper_entries(&database, &query)?;
+    let bytes = keeper_workbook(&entries, &query).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    xlsx_download(bytes, "boreal-keeper-report.xlsx")
+}
+
+fn keeper_workbook(
+    entries: &[database::keeper::EntryRow],
+    query: &KeeperQuery,
+) -> Result<Vec<u8>, zip::result::ZipError> {
+    let context = vec![
+        ("View".into(), "Keeper vault metadata".into()),
+        ("Folder UID (empty = My Vault)".into(), query.folder.clone()),
+        ("All folders".into(), query.all.to_string()),
+        (
+            "Results (folder memberships)".into(),
+            entries.len().to_string(),
+        ),
+        ("Name".into(), filter_value(&query.name)),
+        ("Path".into(), filter_value(&query.path)),
+        ("Shared with".into(), filter_value(&query.shared_to)),
+        ("Permissions".into(), filter_value(&query.permission)),
+        ("Tag".into(), filter_value(&query.tag)),
+        ("User tag".into(), filter_value(&query.user_tag)),
+        (
+            "Include inaccessible".into(),
+            query.include_inaccessible.to_string(),
+        ),
+        (
+            "Sort".into(),
+            format!(
+                "{} {}",
+                if query.sort.is_empty() {
+                    "name"
+                } else {
+                    &query.sort
+                },
+                if query.direction.eq_ignore_ascii_case("desc") {
+                    "desc"
+                } else {
+                    "asc"
+                }
+            ),
+        ),
+        (
+            "Sharing".into(),
+            "Folder sharing context; not direct record grants".into(),
+        ),
+    ];
+    let rows = entries
+        .iter()
+        .map(|entry| {
+            vec![
+                entry.name.clone().into(),
+                (if entry.is_folder { "Folder" } else { "Record" }).into(),
+                entry.item_type.clone().into(),
+                entry.uid.clone().into(),
+                entry.parent_uid.clone().into(),
+                entry.folder_path.clone().into(),
+                entry.modified.clone().into(),
+                if entry.is_folder {
+                    "".into()
+                } else {
+                    xlsx::Cell::Number(entry.attachment_count.into())
+                },
+                if entry.size_bytes > 0 {
+                    xlsx::Cell::Number(entry.size_bytes as u64)
+                } else {
+                    "".into()
+                },
+                entry
+                    .access
+                    .iter()
+                    .map(|a| a.shared_to.as_str())
+                    .collect::<Vec<_>>()
+                    .join(
+                        "
+",
+                    )
+                    .into(),
+                entry
+                    .access
+                    .iter()
+                    .map(|a| format!("{}: {}", a.shared_to, a.permissions))
+                    .collect::<Vec<_>>()
+                    .join(
+                        "
+",
+                    )
+                    .into(),
+                entry
+                    .access
+                    .iter()
+                    .filter(|a| !a.tags.is_empty())
+                    .map(|a| {
+                        format!(
+                            "{}: {}",
+                            a.shared_to,
+                            a.tags
+                                .iter()
+                                .map(|t| t.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .into(),
+                entry
+                    .tags
+                    .iter()
+                    .map(|t| t.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+                    .into(),
+                (if entry.is_accessible { "Yes" } else { "No" }).into(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    xlsx::workbook(
+        &context,
+        &[
+            "Name",
+            "Kind",
+            "Type",
+            "UID",
+            "Parent / containing folder UID",
+            "Path",
+            "Modified (UTC)",
+            "Attachments",
+            "File / attachment bytes",
+            "Folder shared with",
+            "Folder permissions",
+            "User tags",
+            "Tags",
+            "Accessible",
+        ],
+        &rows,
+    )
 }
 
 fn local_files_enabled(state: &AppState) -> bool {
@@ -4982,8 +5536,8 @@ async fn local_files_page(
             description: tag.description.clone(),
             color: tag.color.clone(),
             text_color: tag_text_color(&tag.color),
-            selected: query.tag == tag.slug,
-            excluded: false,
+            selected: database::tag_filter::selected(&query.tag, &tag.slug, false),
+            excluded: database::tag_filter::selected(&query.tag, &tag.slug, true),
         })
         .collect::<Vec<_>>();
     filter_tags.push(no_tags_filter_pill(&query.tag));
@@ -5170,13 +5724,29 @@ fn change_keeper_tag(
     let database = state
         .database()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let changed =
-        database::keeper::change_tags(&database, &ids, &form.tag, remove).map_err(|error| {
-            log::error!("Unable to change Keeper shared-folder tag: {error}");
-            StatusCode::BAD_REQUEST
-        })?;
+    let changed = database::keeper::change_tags(
+        &database,
+        &ids,
+        &form
+            .selected_record_uids
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>(),
+        &form.tag,
+        remove,
+    )
+    .map_err(|error| {
+        log::error!("Unable to change Keeper tag: {error}");
+        StatusCode::BAD_REQUEST
+    })?;
     let url = format!(
-        "/keeper?name={}&path={}&shared_to={}&permission={}&tag={}&sort={}&direction={}&{}={changed}",
+        "/keeper?user_tag={}&folder={}&all={}&include_inaccessible={}&name={}&path={}&shared_to={}&permission={}&tag={}&sort={}&direction={}&{}={changed}",
+        encode_query_value(&form.user_tag),
+        encode_query_value(&form.folder),
+        form.all,
+        form.include_inaccessible,
         encode_query_value(&form.name),
         encode_query_value(&form.path),
         encode_query_value(&form.shared_to),
@@ -5230,8 +5800,8 @@ async fn github_page(
             description: tag.description.clone(),
             color: tag.color.clone(),
             text_color: tag_text_color(&tag.color),
-            selected: query.tag == tag.slug,
-            excluded: query.tag.strip_prefix('!') == Some(tag.slug.as_str()),
+            selected: database::tag_filter::selected(&query.tag, &tag.slug, false),
+            excluded: database::tag_filter::selected(&query.tag, tag.slug.as_str(), true),
         })
         .collect::<Vec<_>>();
     filter_tags.push(no_tags_filter_pill(&query.tag));
@@ -5399,8 +5969,12 @@ fn change_github_tag(
             log::error!("Unable to change GitHub repository tag: {error}");
             StatusCode::BAD_REQUEST
         })?;
-    let url = format!(
-        "/github?q={}&owner={}&visibility={}&permission={}&language={}&size_filter={}&pushed_filter={}&tag={}&sort={}&direction={}&{}={changed}",
+    Ok(Redirect::to(&github_tag_return_url(&form, remove, changed)))
+}
+
+fn github_tag_return_url(form: &GitHubTagForm, remove: bool, changed: usize) -> String {
+    format!(
+        "/github?q={}&owner={}&visibility={}&permission={}&language={}&size_filter={}&pushed_filter={}&tag={}&sort={}&direction={}&include_inaccessible={}&{}={changed}",
         encode_query_value(&form.q),
         encode_query_value(&form.owner),
         encode_query_value(&form.visibility),
@@ -5411,9 +5985,9 @@ fn change_github_tag(
         encode_query_value(&form.tag_filter),
         encode_query_value(&form.sort),
         encode_query_value(&form.direction),
+        form.include_inaccessible,
         if remove { "untagged" } else { "tagged" }
-    );
-    Ok(Redirect::to(&url))
+    )
 }
 
 async fn tags_page(
@@ -5500,8 +6074,8 @@ async fn directory_page(
             description: tag.description.clone(),
             color: tag.color.clone(),
             text_color: tag_text_color(&tag.color),
-            selected: query.tag_filter == tag.slug,
-            excluded: query.tag_filter.strip_prefix('!') == Some(tag.slug.as_str()),
+            selected: database::tag_filter::selected(&query.tag_filter, &tag.slug, false),
+            excluded: database::tag_filter::selected(&query.tag_filter, tag.slug.as_str(), true),
         })
         .collect::<Vec<_>>();
     filter_tags.push(no_tags_filter_pill(&query.tag_filter));
@@ -5549,6 +6123,19 @@ async fn directory_page(
     })
 }
 
+fn directory_tag_return_url(form: &ApplyPrincipalTagForm) -> String {
+    format!(
+        "/directory?name_filter={}&email_filter={}&type_filter={}&status_filter={}&departure_filter={}&organization_filter={}&tag_filter={}",
+        encode_query_value(&form.name_filter),
+        encode_query_value(&form.email_filter),
+        encode_query_value(&form.type_filter),
+        encode_query_value(&form.status_filter),
+        encode_query_value(&form.departure_filter),
+        encode_query_value(&form.organization_filter),
+        encode_query_value(&form.tag_filter),
+    )
+}
+
 async fn apply_directory_tag(
     State(state): State<Arc<AppState>>,
     Form(form): Form<ApplyPrincipalTagForm>,
@@ -5567,7 +6154,7 @@ async fn apply_directory_tag(
             StatusCode::BAD_REQUEST
         },
     )?;
-    Ok(Redirect::to("/directory"))
+    Ok(Redirect::to(&directory_tag_return_url(&form)))
 }
 
 async fn remove_directory_tag(
@@ -5584,7 +6171,7 @@ async fn remove_directory_tag(
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     database::directory::remove_principal_tag(&database, &principal_ids, &form.tag)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    Ok(Redirect::to("/directory"))
+    Ok(Redirect::to(&directory_tag_return_url(&form)))
 }
 
 async fn apply_principal_tag(
@@ -6096,8 +6683,16 @@ fn no_tags_filter_pill(filter: &str) -> TagFilterPill {
         description: "Records that do not have any tags assigned.".to_string(),
         color: "#6c757d".to_string(),
         text_color: "#ffffff",
-        selected: filter == database::inventory::UNTAGGED_TAG_FILTER,
-        excluded: filter.strip_prefix('!') == Some(database::inventory::UNTAGGED_TAG_FILTER),
+        selected: database::tag_filter::selected(
+            filter,
+            database::inventory::UNTAGGED_TAG_FILTER,
+            false,
+        ),
+        excluded: database::tag_filter::selected(
+            filter,
+            database::inventory::UNTAGGED_TAG_FILTER,
+            true,
+        ),
     }
 }
 
@@ -6313,6 +6908,11 @@ async fn ui_metadata_progress(
     })
 }
 
+async fn acknowledge_metadata_error(State(state): State<Arc<AppState>>) -> Redirect {
+    state.acknowledge_metadata_error();
+    Redirect::to("/")
+}
+
 async fn ui_metadata_update_modal(
     State(state): State<Arc<AppState>>,
 ) -> Result<Html<String>, StatusCode> {
@@ -6473,7 +7073,7 @@ fn metadata_scope_progress_views(
     } else {
         (false, false, 0, "Waiting".to_string())
     };
-    let keeper = if phase == "Fetching Keeper shared-folder metadata" {
+    let keeper = if phase == "Fetching Keeper vault metadata" {
         (true, false, 60, phase.to_string())
     } else {
         (false, false, 0, "Waiting".to_string())
@@ -6682,7 +7282,7 @@ async fn import_google_client(
 
             state.refresh_google_remotes_if_ready();
 
-            Ok(Redirect::to("/"))
+            Ok(Redirect::to("/settings#google-setup"))
         }
 
         Err(error) => {
@@ -6692,7 +7292,7 @@ async fn import_google_client(
 
             state.set_google_client_state(GoogleClientState::Error(message));
 
-            Ok(Redirect::to("/"))
+            Ok(Redirect::to("/settings#google-setup"))
         }
     }
 }
@@ -7241,6 +7841,372 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn google_navigation_preserves_color_icons_and_optional_sources() {
+        let html = google_primary_navigation(true).0;
+        assert!(html.contains("boreal-drive-nav"));
+        assert!(html.contains("google-g.png"));
+        assert!(html.contains("google-drive-logo.svg"));
+        assert!(html.contains("bi-folder2"));
+        assert!(html.contains("/shared-drives"));
+        assert!(!html.contains("/google-groups"));
+        assert!(google_primary_navigation(false).0.contains("d-none"));
+    }
+
+    #[test]
+    fn service_settings_only_change_the_selected_service() {
+        let original = InventorySettings {
+            google_drive_enabled: true,
+            directory_sheet_enabled: true,
+            directory_sheet_url: "https://docs.google.com/spreadsheets/d/example/edit".into(),
+            github_enabled: true,
+            keeper_enabled: true,
+            keeper_command: "/test/keeper".into(),
+            local_files_enabled: true,
+            local_file_roots: "/test/files".into(),
+            s3_enabled: true,
+            s3_remote_name: "archive".into(),
+            ..InventorySettings::default()
+        };
+        for service in [
+            "google-drive",
+            "persons",
+            "github",
+            "keeper",
+            "local-files",
+            "s3",
+        ] {
+            let mut actual = original.clone();
+            let form: SettingsForm =
+                serde_json::from_value(serde_json::json!({"service": service})).unwrap();
+            form.apply(&mut actual).unwrap();
+            let mut expected = original.clone();
+            match service {
+                "google-drive" => expected.google_drive_enabled = false,
+                "persons" => {
+                    expected.directory_sheet_enabled = false;
+                    expected.directory_sheet_url.clear();
+                }
+                "github" => expected.github_enabled = false,
+                "keeper" => {
+                    expected.keeper_enabled = false;
+                    expected.keeper_command.clear();
+                }
+                "local-files" => {
+                    expected.local_files_enabled = false;
+                    expected.local_file_roots.clear();
+                    expected.local_exclude_hidden = false;
+                    expected.local_exclude_caches = false;
+                    expected.local_exclude_temporary = false;
+                    expected.local_exclude_patterns.clear();
+                }
+                "s3" => {
+                    expected.s3_enabled = false;
+                    expected.s3_remote_name.clear();
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(
+                format!("{actual:?}"),
+                format!("{expected:?}"),
+                "saving {service} altered another service"
+            );
+        }
+        let invalid: SettingsForm =
+            serde_json::from_value(serde_json::json!({"service": "unknown"})).unwrap();
+        let mut settings = original.clone();
+        assert_eq!(invalid.apply(&mut settings), Err(StatusCode::BAD_REQUEST));
+        assert_eq!(format!("{settings:?}"), format!("{original:?}"));
+    }
+
+    #[test]
+    fn settings_dialogs_render_independent_forms_and_connections_offer_repair() {
+        let services = [
+            (
+                "local-files",
+                "Local Files",
+                "Folders on this computer",
+                "bi-folder2-open",
+                "",
+                "boreal-local-files-color",
+            ),
+            (
+                "persons",
+                "Persons",
+                "People, identities and tags",
+                "bi-person-vcard",
+                "",
+                "boreal-person-color",
+            ),
+            (
+                "google-drive",
+                "Google Drive",
+                "My Drive, Shared Drives and shared files",
+                "",
+                "/assets/google-drive-logo.svg",
+                "boreal-google-drive-color",
+            ),
+            (
+                "github",
+                "GitHub",
+                "Repository metadata",
+                "bi-github",
+                "",
+                "boreal-github-color",
+            ),
+            (
+                "keeper",
+                "Keeper",
+                "Safe vault metadata",
+                "",
+                "/assets/keeper-logo.svg",
+                "boreal-keeper-color",
+            ),
+            (
+                "s3",
+                "S3-compatible storage",
+                "Buckets and objects",
+                "bi-bucket",
+                "",
+                "boreal-s3-color",
+            ),
+        ]
+        .into_iter()
+        .map(
+            |(key, name, description, icon, image, color)| ServiceSettingsView {
+                key,
+                name,
+                description,
+                icon,
+                image,
+                color,
+                enabled: true,
+                status: "Setup needed",
+                status_class: "text-bg-warning",
+                next_step: "Open Configure to complete setup.",
+            },
+        )
+        .collect();
+        let template = SettingsTemplate {
+            title: "Settings - BOREAL",
+            active_page: "settings",
+            alerts: vec![],
+            status_items: vec![],
+            poll_rclone: false,
+            settings: InventorySettings {
+                local_file_roots: "/example/files".into(),
+                ..InventorySettings::default()
+            },
+            saved: false,
+            error: String::new(),
+            notice: String::new(),
+            directory_source: Default::default(),
+            github_connections: vec![],
+            keeper_command_default: "keeper".into(),
+            keeper_setup_command: "keeper".into(),
+            keeper_config_path: "/example/keeper/config.json".into(),
+            keeper_version: String::new(),
+            services,
+            google_client_ready: true,
+            google_client_error: String::new(),
+            s3_connections: vec!["archive-storage".into()],
+        };
+        let html = template.render().unwrap();
+        assert_eq!(html.matches("data-service-form=").count(), 6);
+        assert!(!html.contains("google-groups"));
+        assert!(!html.contains("/google/connect"));
+        for service in [
+            "google-drive",
+            "persons",
+            "github",
+            "keeper",
+            "local-files",
+            "s3",
+        ] {
+            assert!(html.contains(&format!("name=\"service\" value=\"{service}\"")));
+            assert!(html.contains(&format!("id=\"service-{service}\"")));
+        }
+        let remotes = RemotesTemplate {
+            title: "Storage remotes - BOREAL",
+            active_page: "remotes",
+            alerts: vec![],
+            status_items: vec![],
+            poll_rclone: false,
+            remotes: vec![RemoteView {
+                name: "my-drive-ro".into(),
+                backend: "drive".into(),
+                access: "Read only",
+                purpose: "Metadata inventory",
+                status: "Conflict",
+                status_class: "text-bg-danger",
+                detail: "Uses a different Google app setup.".into(),
+                managed: true,
+            }],
+            error: String::new(),
+            my_drive_ro_configured: true,
+            my_drive_rw_configured: true,
+            remote_setup_busy: false,
+            google_client_ready: true,
+            rclone_ready: true,
+        }
+        .render()
+        .unwrap();
+        assert!(remotes.contains("Repair / reconnect"));
+        assert!(remotes.contains("name=\"reconnect\" value=\"true\""));
+        assert!(remotes.contains("Add another remote"));
+        if let Ok(directory) = std::env::var("BOREAL_UI_FIXTURE_DIR") {
+            std::fs::create_dir_all(&directory).unwrap();
+            let html = html.replace("<li id=\"google-drive-primary-navigation\" hx-get=\"/ui/google-drive-primary-nav\" hx-trigger=\"load\" hx-swap=\"outerHTML\"></li>", &google_primary_navigation(true).0);
+            std::fs::write(std::path::Path::new(&directory).join("settings.html"), html).unwrap();
+            std::fs::write(
+                std::path::Path::new(&directory).join("remotes.html"),
+                remotes,
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn keeper_explorer_renders_record_metadata_and_escapes_titles() {
+        let tag = database::inventory::Tag {
+            slug: "needs-review".into(),
+            name: "Needs review".into(),
+            description: String::new(),
+            color: "#123456".into(),
+            directory: false,
+            my_drive: false,
+            shared_drives: false,
+            shared_with_me: false,
+            github_repositories: false,
+            keeper_shared_folders: true,
+            local_files: false,
+        };
+        let mut template = KeeperTemplate {
+            title: "Keeper Explorer",
+            active_page: "keeper",
+            alerts: vec![],
+            status_items: vec![],
+            poll_rclone: false,
+            user_filter_tags: vec![],
+            entries: vec![keeper_entry_view(database::keeper::EntryRow {
+                uid: "record-one".into(),
+                is_folder: false,
+                name: "<script>alert('title')</script>".into(),
+                item_type: "login".into(),
+                folder_path: "/Personal".into(),
+                parent_uid: "personal".into(),
+                is_accessible: true,
+                modified: "2026-09-09 12:34".into(),
+                modified_ms: 1,
+                attachment_count: 2,
+                size_bytes: 321,
+                access: vec![
+                    database::keeper::AccessRow {
+                        shared_to: "known@example.test".into(),
+                        permissions: "Can Manage Users".into(),
+                        target_kind: "user".into(),
+                        known: true,
+                        tags: vec![tag.clone()],
+                    },
+                    database::keeper::AccessRow {
+                        shared_to: "other@example.test".into(),
+                        permissions: "Read Only".into(),
+                        target_kind: "user".into(),
+                        known: false,
+                        tags: vec![],
+                    },
+                ],
+                tags: vec![tag.clone()],
+            })],
+            locations: vec![database::keeper::FolderLocation {
+                uid: "personal".into(),
+                path: "/Personal".into(),
+            }],
+            current_path: "/Personal".into(),
+            parent_url: "/keeper".into(),
+            tags: vec![tag],
+            filter_tags: vec![],
+            query: KeeperQuery {
+                folder: "personal".into(),
+                sort: "modified".into(),
+                direction: "desc".into(),
+                ..Default::default()
+            },
+        };
+        let html = template.render().unwrap();
+        assert!(!html.contains("<script>alert('title')</script>"));
+        for expected in [
+            "record-one",
+            "2026-09-09 12:34",
+            "selected_record_uids",
+            "Needs review",
+            "data-keeper-sort=\"modified\"",
+            "name=\"folder\" value=\"personal\"",
+        ] {
+            assert!(
+                html.contains(expected),
+                "Missing Keeper UI element: {expected}"
+            );
+        }
+        assert_eq!(template.entries[0].permissions.len(), 2);
+        assert_eq!(template.entries[0].permissions[0].label, "Can Manage Users");
+        assert_eq!(
+            template.entries[0].permissions[0].users[0].label,
+            "known@example.test"
+        );
+        assert!(template.entries[0].permissions[0].users[0].tagged);
+        assert!(template.entries[0].permissions[1].users[0].unknown);
+        assert!(html.contains("User tags:"));
+        assert!(html.contains("/directory/new?email=other%40example.test"));
+        assert!(html.contains("/keeper/export.xlsx"));
+        assert!(html.contains("Print to PDF"));
+        assert!(html.contains("/assets/keeper-logo.svg"));
+        template.query.print = true;
+        let print = template.render().unwrap();
+        assert!(print.contains("Print / Save PDF"));
+        assert!(print.contains("document.body.classList.add(\"boreal-print-report\")"));
+        assert!(print.contains("UID: record-one"));
+        template.entries[0].record.name = "=1+1".into();
+        let bytes = keeper_workbook(
+            &template
+                .entries
+                .iter()
+                .map(|e| e.record.clone())
+                .collect::<Vec<_>>(),
+            &template.query,
+        )
+        .unwrap();
+        let mut workbook = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        use std::io::Read;
+        let mut context = String::new();
+        workbook
+            .by_name("xl/worksheets/sheet1.xml")
+            .unwrap()
+            .read_to_string(&mut context)
+            .unwrap();
+        assert!(context.contains("personal"));
+        assert!(context.contains("modified desc"));
+        let mut rows = String::new();
+        workbook
+            .by_name("xl/worksheets/sheet2.xml")
+            .unwrap()
+            .read_to_string(&mut rows)
+            .unwrap();
+        for value in [
+            "record-one",
+            "Needs review",
+            "2026-09-09 12:34",
+            "=1+1",
+            "<v>321</v>",
+        ] {
+            assert!(rows.contains(value), "Missing export value: {value}");
+        }
+        assert!(
+            !rows.contains("<f>"),
+            "Record values must remain text, not Excel formulas"
+        );
+    }
     use crate::app::MetadataProgress;
 
     #[test]
@@ -7360,6 +8326,53 @@ mod tests {
         assert!(!complete.spinner);
         assert_eq!(complete.value, "Complete: Research");
         assert_eq!(complete.value_class, "text-success");
+    }
+
+    #[test]
+    fn tag_action_redirects_preserve_directory_and_github_filters() {
+        let person_form: ApplyPrincipalTagForm = serde_json::from_value(serde_json::json!({
+            "tag": "keep", "selected_principal_ids": "1",
+            "name_filter": "A & B", "email_filter": "person+alias@example.test",
+            "type_filter": "person", "status_filter": "active", "departure_filter": ">2026-01-01",
+            "organization_filter": "Research", "tag_filter": "keep,!needs-review"
+        }))
+        .unwrap();
+        let uri = directory_tag_return_url(&person_form).parse().unwrap();
+        let Query(query) = Query::<DirectoryQuery>::try_from_uri(&uri).unwrap();
+        assert_eq!(query.name_filter, person_form.name_filter);
+        assert_eq!(query.email_filter, person_form.email_filter);
+        assert_eq!(query.type_filter, person_form.type_filter);
+        assert_eq!(query.status_filter, person_form.status_filter);
+        assert_eq!(query.departure_filter, person_form.departure_filter);
+        assert_eq!(query.organization_filter, person_form.organization_filter);
+        assert_eq!(query.tag_filter, person_form.tag_filter);
+
+        let github_form: GitHubTagForm = serde_json::from_value(serde_json::json!({
+            "tag": "keep", "selected_repository_ids": "1", "q": "A & B",
+            "owner": "org", "visibility": "private", "permission": "admin",
+            "language": "Rust", "size_filter": ">50", "pushed_filter": "<2026-01-01",
+            "tag_filter": "keep,!needs-review", "sort": "size", "direction": "desc",
+            "include_inaccessible": true
+        }))
+        .unwrap();
+        for remove in [false, true] {
+            let uri = github_tag_return_url(&github_form, remove, 1)
+                .parse()
+                .unwrap();
+            let Query(query) = Query::<GitHubQuery>::try_from_uri(&uri).unwrap();
+            assert_eq!(query.q, github_form.q);
+            assert_eq!(query.owner, github_form.owner);
+            assert_eq!(query.visibility, github_form.visibility);
+            assert_eq!(query.permission, github_form.permission);
+            assert_eq!(query.language, github_form.language);
+            assert_eq!(query.size_filter, github_form.size_filter);
+            assert_eq!(query.pushed_filter, github_form.pushed_filter);
+            assert_eq!(query.tag, github_form.tag_filter);
+            assert_eq!(query.sort, github_form.sort);
+            assert_eq!(query.direction, github_form.direction);
+            assert!(query.include_inaccessible);
+            assert_eq!(if remove { query.untagged } else { query.tagged }, 1);
+        }
     }
 
     #[test]

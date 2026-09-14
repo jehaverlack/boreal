@@ -5,9 +5,28 @@
 | **Name** | boreal |
 | **Author** | John Haverlack |
 | **License** | MIT |
-| **Version** | 1.1.1 |
+| **Version** | 1.2.0 |
 | **Maturity** | STABLE |
-| **Date** | 2026-09-08 |
+| **Date** | 2026-09-14 |
+
+## v1.2.0 - 2026-09-14 (STABLE)
+
+- Fixing Manage Remotes Button
+- v1.2.0
+- v1.2.0
+- Updating Keeper Docs
+- v1.2.0 Candidate
+- Major Refactor
+- Failed GGroup Attempt
+- Google Services
+- Deep Dive UX
+- Column Widths
+- Keeper Explorer
+- Keeper Explorer
+- Keeper Explorer
+- Keeper Explorer
+- Fixing Github Security Issues
+- Start v1.2.0
 
 ## v1.1.1 - 2026-09-08 (STABLE)
 
@@ -17,6 +36,8 @@ Added Local File Parser
 **Notes**
 Major Feature Rewrite pre 1.2.0
 
+- v1.1.1
+- v1.1.1
 - Fixed Person Association
 - Fixing File Metadata
 - Adding File Search
@@ -322,18 +343,20 @@ Added Migration Assitant and Polished Interfaces
 **Summary**
 Project Initialization
 
-- Fixed Person Association
-- Fixing File Metadata
-- Adding File Search
-- Fixing Metadata Updates
-- Local File Updates
-- vis updates
-- Readme Cleanup
-- Cleaning up Dashboard
-- Menu Cleanup
-- Fixing Wget/curl deps
-- Fixing Rclone Process Issue
-- Adding local file support
-- Start v1.1.1
-- Adding security policy
+- Fixing Manage Remotes Button
+- v1.2.0
+- v1.2.0
+- Updating Keeper Docs
+- v1.2.0 Candidate
+- Major Refactor
+- Failed GGroup Attempt
+- Google Services
+- Deep Dive UX
+- Column Widths
+- Keeper Explorer
+- Keeper Explorer
+- Keeper Explorer
+- Keeper Explorer
+- Fixing Github Security Issues
+- Start v1.2.0
 

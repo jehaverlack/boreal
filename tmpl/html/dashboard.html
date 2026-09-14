@@ -9,17 +9,15 @@
             <div class="card-body p-4 p-md-5">
                 <h1 class="h2 mb-3">Welcome to BOREAL</h1>
                 <p class="lead">BOREAL helps you inventory and manage information across the services you choose.</p>
-                <p class="text-body-secondary">Configure at least one module to get started. Local Files is a quick first module and keeps its metadata on this computer.</p>
+                <p class="text-body-secondary">Choose a service in Settings to get started. Local Files keeps its metadata on this computer; Persons is available for manual entries and CSV imports.</p>
                 <div class="d-flex flex-wrap gap-2">
                     <a class="btn btn-primary" href="/settings#local-files"><i class="bi bi-folder2-open me-1"></i>Configure Local Files</a>
-                    <a class="btn btn-outline-secondary" href="/settings">View all modules</a>
+                    <a class="btn btn-outline-secondary" href="/settings">View all services</a>
                 </div>
             </div>
         </div>
     </div>
 </div>
-{% else if google_drive_enabled && !initial_setup_complete %}
-{% include "partials/setup-progress.html" %}
 {% else %}
 {% include "partials/drive-summaries.html" %}
 {% endif %}

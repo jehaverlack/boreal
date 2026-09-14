@@ -7,7 +7,7 @@
             {% else if metadata.errors > 0 %}
             <i class="bi bi-exclamation-triangle-fill text-danger me-2"></i>Metadata update failed
             {% else %}
-            <i class="bi bi-database-down me-2"></i>Update metadata inventory?
+            <i class="bi bi-database-down me-2"></i>Update your data
             {% endif %}
         </h2>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -19,7 +19,7 @@
         </p>
         <div class="vstack gap-3 mb-3">
             {% for scope in scopes %}
-            <div class="{% if !scope.selected %}opacity-50{% endif %}">
+            {% if scope.selected %}<div>
                 <div class="d-flex justify-content-between align-items-center small mb-1">
                     <strong>{{ scope.name }}</strong>
                     <span>{% if scope.active %}<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>{% endif %}{{ scope.status }}</span>
@@ -29,7 +29,7 @@
                 </div>
                 {% if scope.selected %}<div class="small text-body-secondary mt-1">{{ scope.elapsed_label }}{% if scope.estimate_label.len() > 0 %} &middot; {{ scope.estimate_label }}{% endif %}</div>{% endif %}
             </div>
-            {% endfor %}
+            {% endif %}{% endfor %}
         </div>
         <div class="row g-2 small">
             <div class="col-6"><strong>{{ metadata.progress_files_scanned }}</strong> files scanned</div>
@@ -40,33 +40,29 @@
         {% else if metadata.errors > 0 %}
         <p class="mb-0 text-danger">{{ metadata.phase }}</p>
         {% else %}
-        <p class="mb-2">Select one or more metadata sources. Unselected inventories retain their existing data and timestamps.</p>
-        <div class="alert alert-light border py-2 mb-3"><i class="bi bi-clock-history me-2"></i><strong>Estimated time:</strong> <span id="metadata-selected-estimate">Select a metadata source</span><div class="small text-body-secondary">Calculated from the five most recent completed updates for each source.</div></div>
+        <p class="mb-2">Choose the sources to refresh. Your last selection is remembered; other inventories stay as they are.</p>
+        <div class="small text-body-secondary mb-3"><i class="bi bi-clock-history me-1"></i><span id="metadata-selected-estimate">Select a metadata source</span></div>
         <div class="list-group mb-3">
-            <label class="list-group-item{% if !directory_available %} text-body-secondary{% endif %}"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="directory_info" value="true" data-estimated-seconds="{{ directory_estimate.seconds }}" {% if directory_available %}checked{% else %}disabled{% endif %}>Persons <span class="small text-body-secondary">— {{ directory_estimate.label }}</span>{% if !directory_available %}<span class="small"> — configure a spreadsheet URL in Settings</span>{% endif %}</label>
-            {% if google_available %}
-            <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="my_drive" value="true" data-estimated-seconds="{{ my_drive_estimate.seconds }}" checked>My Drive <span class="small text-body-secondary">— {{ my_drive_estimate.label }}</span></label>
-            <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="shared_with_me" value="true" data-estimated-seconds="{{ shared_with_me_estimate.seconds }}" checked>Shared with me <span class="small text-body-secondary">— {{ shared_with_me_estimate.label }}</span></label>
-            <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" id="allSharedDrivesUpdate" type="checkbox" name="shared_drives" value="true" data-estimated-seconds="{{ shared_drives_estimate.seconds }}">All Shared Drives <span class="small text-body-secondary">— {{ shared_drives_estimate.label }}</span></label>
-            <div class="list-group-item">
-                <label class="form-label mb-1" for="specificSharedDriveUrl"><i class="bi bi-link-45deg me-1"></i>One Shared Drive by URL</label>
-                <input class="form-control form-control-sm" form="metadata-update-form" id="specificSharedDriveUrl" name="specific_shared_drive_url" type="url" data-estimated-seconds="{{ specific_shared_drive_estimate.seconds }}" placeholder="https://drive.google.com/drive/folders/..." oninput="document.getElementById('allSharedDrivesUpdate').checked = false">
-                <div class="form-text">Paste the root URL of a Shared Drive to inventory only that Drive — {{ specific_shared_drive_estimate.label }}.</div>
-            </div>
-            {% endif %}
-            {% if github_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="github" value="true" data-estimated-seconds="{{ github_estimate.seconds }}">GitHub repositories <span class="small text-body-secondary">— {{ github_estimate.label }}</span></label>{% endif %}
-            {% if keeper_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="keeper" value="true" data-estimated-seconds="{{ keeper_estimate.seconds }}">Keeper shared folders <span class="small text-body-secondary">— {{ keeper_estimate.label }}</span></label>{% endif %}
-            {% if local_files_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="local_files" value="true" data-estimated-seconds="{{ local_files_estimate.seconds }}">Local Files <span class="small text-body-secondary">— {{ local_files_estimate.label }}</span></label>{% endif %}
-            {% if s3_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="s3" value="true" data-estimated-seconds="{{ s3_estimate.seconds }}">S3-compatible storage <span class="small text-body-secondary">— {{ s3_estimate.label }}</span></label>{% endif %}
+        {% if directory_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="directory_info" value="true" data-estimated-seconds="{{ directory_estimate.seconds }}" title="{{ directory_estimate.label }}">Persons — linked Google Sheet</label>{% endif %}
+        {% if local_files_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="local_files" value="true" data-estimated-seconds="{{ local_files_estimate.seconds }}" title="{{ local_files_estimate.label }}">Local Files</label>{% endif %}
+        {% if keeper_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="keeper" value="true" data-estimated-seconds="{{ keeper_estimate.seconds }}" title="{{ keeper_estimate.label }}">Keeper vault</label>{% endif %}
+        {% if github_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="github" value="true" data-estimated-seconds="{{ github_estimate.seconds }}" title="{{ github_estimate.label }}">GitHub repositories</label>{% endif %}
+        {% if s3_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="s3" value="true" data-estimated-seconds="{{ s3_estimate.seconds }}" title="{{ s3_estimate.label }}">S3-compatible storage</label>{% endif %}
         </div>
-        <p class="mb-0">Large inventories can take several hours to update. Keep BOREAL running until the update completes.</p>
+        {% if google_available %}<h3 class="h6">Google Resources</h3><div class="list-group mb-3">
+        {% if google_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="my_drive" value="true" data-estimated-seconds="{{ my_drive_estimate.seconds }}" title="{{ my_drive_estimate.label }}">My Drive</label>{% endif %}
+        {% if google_available %}<label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="shared_with_me" value="true" data-estimated-seconds="{{ shared_with_me_estimate.seconds }}" title="{{ shared_with_me_estimate.label }}">Shared with me</label>{% endif %}
+        {% if google_available %}<label class="list-group-item"><input id="allSharedDrivesUpdate" class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="shared_drives" value="true" data-estimated-seconds="{{ shared_drives_estimate.seconds }}" title="{{ shared_drives_estimate.label }}">All Shared Drives</label>{% endif %}
+        </div>{% endif %}
+        {% if google_available %}<details class="mb-3"><summary class="small">Update one Shared Drive by URL</summary><label class="visually-hidden" for="specificSharedDriveUrl">Shared Drive URL</label><input class="form-control form-control-sm mt-2" form="metadata-update-form" id="specificSharedDriveUrl" name="specific_shared_drive_url" type="url" data-estimated-seconds="{{ specific_shared_drive_estimate.seconds }}" title="{{ specific_shared_drive_estimate.label }}" placeholder="https://drive.google.com/drive/folders/..." oninput="document.getElementById('allSharedDrivesUpdate').checked = false"></details>{% endif %}
+        <p class="small text-body-secondary mb-0">Missing a source? <a href="/settings">Enable and connect it in Settings.</a> Persons CSV imports and manual entries are managed in <a href="/directory">Persons</a>.</p>
         {% endif %}
     </div>
     <div class="modal-footer">
         {% if metadata.updating %}
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" data-metadata-background>Continue in background</button>
         {% else if metadata.errors > 0 %}
-        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <form method="post" action="/metadata/acknowledge-error" id="metadata-error-acknowledge"><button type="submit" class="btn btn-primary">Acknowledge and choose sources</button></form>
         {% else %}
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <form id="metadata-update-form" method="post" action="/metadata/update">

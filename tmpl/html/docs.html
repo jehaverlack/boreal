@@ -14,6 +14,7 @@
                 <a class="nav-link" href="#getting-started">Getting started</a>
                 <a class="nav-link" href="#metadata">Metadata updates</a>
                 <a class="nav-link" href="#integrations">GitHub and Keeper</a>
+                <a class="nav-link" href="#keeper-login">Keeper sign-in</a>
                 <a class="nav-link" href="#explorers">Drive explorers</a>
                 <a class="nav-link" href="#tags">Tags</a>
                 <a class="nav-link" href="#persons">Persons</a>
@@ -27,7 +28,7 @@
     </aside>
 
     <div class="col-lg-9">
-        <p class="lead">Use BOREAL to inventory, explore, classify, and report on Google Drive, GitHub repository, and Keeper shared-folder metadata from this computer.</p>
+        <p class="lead">Use BOREAL to inventory, explore, classify, and report on Google Drive, GitHub repository, and Keeper vault metadata from this computer.</p>
         <div id="docs-no-results" class="alert alert-warning d-none">No documentation matched your search. Try a shorter term or visit <a href="/help">Help</a>.</div>
 
         <section id="getting-started" class="mb-4" data-doc-entry>
@@ -36,8 +37,9 @@
                 <ol class="mb-0">
                     <li>Let BOREAL install and verify its private Rclone executable.</li>
                     <li>Upload a Google OAuth <strong>Desktop app</strong> client JSON file. If you need to create one, open <strong>App → Create Google Client ID</strong>.</li>
-                    <li>Set up and authorize the read-only <code>my-drive-ro</code> remote.</li>
-                    <li>Optionally link a Persons Google Sheet in <strong>App → Settings</strong>.</li>
+                    <li>Open <strong>Storage remotes</strong> and authorize <code>my-drive-ro</code> for Drive inventory, downloads and private Persons Sheets.</li>
+                    <li>Use <strong>App → Settings</strong> for the service table. Choose <strong>Configure</strong> to enable a service, configure its account access and save its settings independently. Use <strong>Storage remotes</strong> to manage named Rclone configurations such as <code>my-drive-ro</code> or an S3 remote.</li>
+                    <li>Persons is independent of Google Drive. Add entries manually or import a CSV; optionally link a Persons Google Sheet in <strong>App → Settings</strong>.</li>
                     <li>Open <strong>Update</strong> and import the Google Drive metadata you want to explore.</li>
                 </ol>
             </div></div>
@@ -53,7 +55,7 @@
                     <li><strong>Shared with me (2–20 minutes)</strong> inventories content shared with the authenticated account.</li>
                     <li><strong>Shared Drives (1–6 hours)</strong> discovers and inventories accessible Shared Drives.</li>
                     <li><strong>GitHub repositories</strong> inventories accessible organizations, owners, and repository metadata when the optional integration is enabled.</li>
-                    <li><strong>Keeper shared folders</strong> inventories shared-folder membership and permission metadata when Keeper Commander is configured.</li>
+                    <li><strong>Keeper vault metadata</strong> inventories folders, record metadata, folder memberships and sharing information when Keeper Commander is configured.</li>
                 </ul>
                 <p class="mt-3 mb-0">Times are approximate and depend on inventory size, permissions, and network speed. You may close the update modal while a job runs; progress remains available from the Update control and status bar.</p>
             </div></div>
@@ -70,15 +72,31 @@
                     <li>Apply tags scoped to GitHub Repositories; tags remain local to BOREAL and never modify GitHub.</li>
                     <li>Repositories no longer returned by GitHub are retained as inaccessible historical records.</li>
                 </ul>
-                <h3 class="h6">Keeper shared folders</h3>
-                <p>Install Keeper Commander and use the assistant under <strong>App → Settings</strong> to authenticate it with BOREAL's private Keeper configuration. Windows and macOS use Keeper's downloadable Commander executable; Linux can use <code>keepercommander</code> in a user-owned Python virtual environment.</p>
+                <h3 class="h6">Keeper vault metadata</h3>
+                <p>Install Keeper Commander and use the assistant under <strong>App → Settings</strong> to authenticate it with BOREAL's private Keeper configuration. Use a pip/pipx installation of <code>keepercommander</code> on Linux, macOS or Windows; the metadata helper needs Commander's Python environment.</p>
+                <p><a href="#keeper-login">Keeper sign-in walkthrough and troubleshooting</a></p>
                 <ul class="mb-0">
-                    <li>Select <strong>Keeper shared folders</strong> from Update to import folder names, paths, people or teams, and permission labels.</li>
-                    <li>Use Keeper filters and tags to find access that should be removed during offboarding and folders that need a management handoff.</li>
-                    <li>BOREAL invokes Keeper's shared-folder report only. It does not import record contents, passwords, attachments, or secrets.</li>
-                    <li>Keeper authentication remains in <code>~/.boreal/conf/keeper/config.json</code>, or the equivalent BOREAL configuration directory on Windows.</li>
+                    <li>Select <strong>Keeper vault metadata</strong> from Update to import regular and shared folders, record titles and types, modification dates, attachment counts and sizes, and folder-sharing information.</li>
+                    <li>Open folders to browse their records, sort by column, and add or remove local tags on folders and records. Use Export Excel or Print to PDF to export the current folder or all-folder search with its filters and sorting. A record linked into multiple folders keeps the same tags everywhere. Permissions group users under each access label, with Persons identity pills for matching email addresses and aliases. User tags filter items by the tags on their sharing identities; click a user tag to include it, click again to exclude it, and a third time to clear it. Select multiple tags to require every condition (AND).</li>
+                    <li>The helper emits only approved metadata. It excludes record fields, usernames, passwords, URLs, notes, custom-field values, TOTP seeds, keys and attachment contents.</li>
+                    <li>Keeper manages authentication through its private configuration and system keyring. BOREAL needs a resumable session for background indexing.</li>
                 </ul>
             </div></div>
+        </section>
+
+        <section id="keeper-login" class="mb-4" data-doc-entry>
+            <h2 class="h4">Sign in to Keeper Commander</h2>
+            <p>Use this walkthrough for the first connection or when Keeper no longer reports you as logged in. BOREAL needs Commander to resume a saved login for metadata updates.</p>
+            <h3 class="h5">1. Check your Commander installation</h3>
+            <p>Open <strong>App → Settings → Keeper → Configure → Setup Keeper</strong> for installation instructions and this computer's configured paths. Keep your existing pip or pipx installation if it already works.</p>
+            <h3 class="h5">2. Start Commander and complete sign-in</h3>
+            <p>Use the startup command from Setup Keeper. For a pipx installation available as <code>keeper</code> on Linux or macOS, the default configuration path is:</p>
+            <pre class="border rounded bg-body-tertiary p-2"><code>keeper --config "$HOME/.boreal/conf/keeper/config.json" shell</code></pre>
+            <p>For the Windows PowerShell installation shown in Setup Keeper:</p>
+            <pre class="border rounded bg-body-tertiary p-2"><code>&amp; "$env:LOCALAPPDATA\boreal\keeper-env\Scripts\keeper.exe" --config "$env:LOCALAPPDATA\boreal\conf\keeper\config.json" shell</code></pre>
+            <p>If you use another executable or a custom BOREAL home, use the paths shown in your Settings. Keep the <code>--config</code> argument so Commander uses BOREAL's configuration.</p>
+            {% include "partials/keeper-sso-help.html" %}
+            {% include "partials/keeper-session-help.html" %}
         </section>
 
         <section id="explorers" class="mb-4" data-doc-entry>
@@ -89,7 +107,9 @@
                     <li>Click a folder name to browse it inside BOREAL.</li>
                     <li>Click the Google Drive icon or a file name to open the item in Google Drive.</li>
                     <li>Use column fields to filter by name, type, size, date, owner, or permission.</li>
+                    <li>Drag the right edge of a column header to adjust its width. Widths are remembered in this browser for each explorer, including after sorting, filtering, or changing tags. Use <strong>Reset widths</strong> above the table to restore the default layout. You can also Tab to a column edge and use Left/Right arrows; hold Shift for larger adjustments. Printed reports retain their default layout.</li>
                     <li>Click a hollow tag pill to require that tag. Click the solid pill again to exclude that tag; click the red “Not” pill to clear it.</li>
+                    <li>Additional tags narrow results with AND: for example, <strong>Keep</strong> and <strong>Not Needs Review</strong> require Keep and exclude Needs Review. The same three-click cycle works for item and user tags in every explorer. The Any/All pill clears that tag group; Keeper calls its vault-tag reset <strong>Any Folder</strong>.</li>
                     <li>Use <strong>No tags</strong> to find records with no assigned tags.</li>
                     <li>Prefix an Owner value with <code>!</code> to exclude matching owners.</li>
                     <li>Enable <strong>Include deleted items</strong> to see content retained from an older inventory but missing from the latest completed scan.</li>
@@ -97,6 +117,8 @@
                 <p class="mb-0">Filters combine: an item must satisfy the active column and tag filters. Use <strong>Clear filters</strong> to reset the view.</p>
             </div></div>
         </section>
+
+        <section class="mb-4" data-doc-entry><h2 class="h4">Choose sources to update</h2><p>The Update dialog lists connected sources and remembers your last selection. On first use, select the sources you want; none are selected automatically. Google Resources are grouped together, and updating one Shared Drive by URL is available under its expandable option. Only requested sources appear in progress. After a failure, choose <strong>Acknowledge and choose sources</strong> to return to the main update dialog.</p></section>
 
         <section id="tags" class="mb-4" data-doc-entry>
             <h2 class="h4">Classify content with tags</h2>
@@ -140,7 +162,7 @@
         <section id="migrations" class="mb-4" data-doc-entry>
             <h2 class="h4">Migrate Drive content</h2>
             <div class="card"><div class="card-body">
-                <p>Select one or more active items in <strong>My Drive</strong> or <strong>Shared with me</strong>, then click <strong>Migrate</strong>. The Migration Assistant records the source inventory and guides destination selection and copying.</p>
+                <p>Select one or more active items in <strong>My Drive</strong>, <strong>Shared with me</strong>, or a <strong>Shared Drive</strong>, then click <strong>Migrate</strong>. The Migration Assistant records the source inventory and guides destination selection and copying. Shared Drive folders can be copied to another Shared Drive, a My Drive folder, or a local directory.</p>
                 <ol>
                     <li>Review the selected files, folders, and estimated size.</li>
                     <li>Select a local folder, or paste and validate an allowed Google Drive destination folder URL.</li>

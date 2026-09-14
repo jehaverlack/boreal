@@ -152,10 +152,7 @@ pub fn list_principals_filtered(
 ) -> Result<Vec<PrincipalRow>, DatabaseError> {
     let connection = database.connect()?;
     let (departure_comparison, departure_value) = parse_date_filter(departure_filter)?;
-    let (exclude_tag, tag_slug) = match tag_filter.trim().strip_prefix('!') {
-        Some(slug) => (true, slug.trim()),
-        None => (false, tag_filter.trim()),
-    };
+    let tag_predicates = super::tag_filter::json(tag_filter);
     let mut statement = connection.prepare(
         "WITH identity_emails AS (
             SELECT id AS principal_id, lower(primary_email) AS email
@@ -216,28 +213,18 @@ pub fn list_principals_filtered(
                 (?5 = 4 AND COALESCE(p.departure_date, '') <= ?6) OR
                 (?5 = 5 AND COALESCE(p.departure_date, '') = ?6))
            AND (?7 = '' OR instr(lower(COALESCE(po.names, '')), lower(?7)) > 0)
-           AND (?8 = '' OR
-                (?8 = '__untagged__' AND
-                    ((?9 = 0 AND NOT EXISTS (
-                        SELECT 1 FROM principal_tags untagged_pt
-                        WHERE untagged_pt.principal_id = p.id
-                    )) OR
-                    (?9 = 1 AND EXISTS (
-                        SELECT 1 FROM principal_tags untagged_pt
-                        WHERE untagged_pt.principal_id = p.id
-                    )))) OR
-                (?8 <> '__untagged__' AND ?9 = 0 AND EXISTS (
-                    SELECT 1
-                    FROM principal_tags filter_pt
-                    JOIN tags filter_tag ON filter_tag.id = filter_pt.tag_id
-                    WHERE filter_pt.principal_id = p.id AND filter_tag.slug = ?8
-                )) OR
-                (?8 <> '__untagged__' AND ?9 = 1 AND NOT EXISTS (
-                    SELECT 1
-                    FROM principal_tags filter_pt
-                    JOIN tags filter_tag ON filter_tag.id = filter_pt.tag_id
-                    WHERE filter_pt.principal_id = p.id AND filter_tag.slug = ?8
-                )))
+           AND NOT EXISTS (
+                SELECT 1 FROM json_each(?8) tag_term
+                WHERE (CASE json_extract(tag_term.value, '$[1]')
+                    WHEN '__untagged__' THEN NOT EXISTS (
+                        SELECT 1 FROM principal_tags link WHERE link.principal_id = p.id
+                    )
+                    ELSE EXISTS (
+                        SELECT 1 FROM principal_tags link JOIN tags t ON t.id = link.tag_id
+                        WHERE link.principal_id = p.id AND t.slug = json_extract(tag_term.value, '$[1]')
+                    )
+                END) = json_extract(tag_term.value, '$[0]')
+           )
          ORDER BY p.display_name COLLATE NOCASE, p.primary_email COLLATE NOCASE",
     )?;
     let rows = statement.query_map(
@@ -249,8 +236,7 @@ pub fn list_principals_filtered(
             departure_comparison,
             departure_value,
             organization_filter.trim(),
-            tag_slug,
-            exclude_tag,
+            tag_predicates,
         ],
         |row| {
             Ok(PrincipalRow {

@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::PathBuf, process::Command};
+use std::{
+    collections::HashSet,
+    path::PathBuf,
+    process::{Command, Stdio},
+};
 
 use serde::Deserialize;
 
@@ -6,36 +10,53 @@ use crate::bootstrap::Runtime;
 
 pub type KeeperError = Box<dyn std::error::Error + Send + Sync>;
 
-#[derive(Debug, Clone)]
+const SESSION_REQUIRED: &str = "Keeper cannot resume an authenticated session for background indexing. Open Keeper with BOREAL's configured executable and config path, complete SSO/MFA, and run this-device register. If your organization permits it, run this-device persistent-login on. Verify login-status in a separate terminal process using the same config, then retry Save and test access.";
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SharedFolder {
     pub folder_uid: String,
+    pub parent_uid: String,
     pub name: String,
     pub folder_type: String,
     pub folder_path: String,
     pub access: Vec<FolderAccess>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FolderAccess {
     pub shared_to: String,
     pub permissions: String,
     pub target_kind: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct SharedFolderReportRow {
-    #[serde(rename = "Folder UID")]
-    folder_uid: String,
-    #[serde(rename = "Folder Name")]
-    folder_name: String,
-    #[serde(rename = "Type", default)]
-    folder_type: String,
-    #[serde(rename = "Shared To", default)]
-    shared_to: String,
-    #[serde(rename = "Permissions", default)]
-    permissions: String,
-    #[serde(rename = "Folder Path", default)]
-    folder_path: String,
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VaultSnapshot {
+    pub schema_version: u32,
+    pub folders: Vec<SharedFolder>,
+    pub records: Vec<Record>,
+    pub memberships: Vec<Membership>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Record {
+    pub record_uid: String,
+    pub title: String,
+    pub record_type: String,
+    pub modified_ms: i64,
+    pub version: u32,
+    pub attachment_count: u32,
+    pub size_bytes: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Membership {
+    pub folder_uid: String,
+    pub record_uid: String,
 }
 
 pub fn config_path(runtime: &Runtime) -> Result<PathBuf, KeeperError> {
@@ -78,76 +99,132 @@ pub fn version(command: &str) -> Result<String, KeeperError> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-pub fn login_status(runtime: &Runtime, command: &str) -> Result<String, KeeperError> {
-    let output = keeper_command(runtime, command)?
-        .arg("login-status")
-        .output()?;
-    if !output.status.success() {
-        return Err(command_error("Keeper login check failed", &output.stderr).into());
-    }
-    let status = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if status.is_empty() {
-        return Err("Keeper Commander did not report an authenticated session".into());
-    }
-    Ok(status)
-}
-
-pub fn shared_folders(runtime: &Runtime, command: &str) -> Result<Vec<SharedFolder>, KeeperError> {
-    let output = keeper_command(runtime, command)?
-        .args(["share-report", "--folders", "--format", "json"])
-        .output()?;
-    if !output.status.success() {
-        return Err(command_error("Keeper shared-folder report failed", &output.stderr).into());
-    }
-    let stdout = String::from_utf8(output.stdout)?;
-    let json = json_array(&stdout).ok_or(
-        "Keeper Commander did not return a JSON shared-folder report; sign in and try again",
-    )?;
-    let rows: Vec<SharedFolderReportRow> = serde_json::from_str(json)?;
-    let mut folders: HashMap<String, SharedFolder> = HashMap::new();
-    for row in rows {
-        if row.folder_uid.trim().is_empty() {
-            continue;
-        }
-        let folder = folders
-            .entry(row.folder_uid.clone())
-            .or_insert_with(|| SharedFolder {
-                folder_uid: row.folder_uid,
-                name: row.folder_name,
-                folder_type: row.folder_type,
-                folder_path: row.folder_path,
-                access: Vec::new(),
-            });
-        if !row.shared_to.trim().is_empty() {
-            let target_kind = if row.shared_to.starts_with("(Team User)") {
-                "team-user"
-            } else if row.shared_to.starts_with("(Team)") {
-                "team"
-            } else {
-                "user"
-            };
-            folder.access.push(FolderAccess {
-                shared_to: row.shared_to,
-                permissions: row.permissions,
-                target_kind: target_kind.to_string(),
-            });
-        }
-    }
-    let mut folders: Vec<_> = folders.into_values().collect();
-    folders.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
-    Ok(folders)
-}
-
-fn keeper_command(runtime: &Runtime, command: &str) -> Result<Command, KeeperError> {
-    if command.trim().is_empty() {
-        return Err("Configure the Keeper Commander executable path".into());
-    }
-    let mut process = Command::new(command_path(command)?);
-    process
-        .arg("--silent")
+pub fn vault_snapshot(runtime: &Runtime, command: &str) -> Result<VaultSnapshot, KeeperError> {
+    let output = Command::new(commander_python(command)?)
+        .arg("-c")
+        .arg(include_str!("metadata_report.py"))
         .arg("--config")
-        .arg(config_path(runtime)?);
-    Ok(process)
+        .arg(config_path(runtime)?)
+        .stdin(Stdio::null())
+        .output()?;
+    if output.status.code() == Some(2) {
+        return Err(SESSION_REQUIRED.into());
+    }
+    if !output.status.success() {
+        return Err("Keeper metadata report failed. Verify the session and use a Python/pipx installation of Keeper Commander.".into());
+    }
+    parse_snapshot(&output.stdout)
+}
+
+fn parse_snapshot(output: &[u8]) -> Result<VaultSnapshot, KeeperError> {
+    // Do not include raw JSON, parser errors or subprocess output in diagnostics.
+    let snapshot: VaultSnapshot = serde_json::from_slice(output)
+        .map_err(|_| "Keeper returned an invalid metadata-only report")?;
+    validate_snapshot(&snapshot)?;
+    Ok(snapshot)
+}
+
+pub fn validate_snapshot(snapshot: &VaultSnapshot) -> Result<(), KeeperError> {
+    let folders: HashSet<_> = snapshot
+        .folders
+        .iter()
+        .map(|f| f.folder_uid.as_str())
+        .collect();
+    let records: HashSet<_> = snapshot
+        .records
+        .iter()
+        .map(|r| r.record_uid.as_str())
+        .collect();
+    let safe_uid = |uid: &str| {
+        uid.bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+    };
+    if folders.iter().any(|uid| !safe_uid(uid)) || records.iter().any(|uid| !safe_uid(uid)) {
+        return Err("Keeper metadata report contains an invalid identifier".into());
+    }
+    let located_records: HashSet<_> = snapshot
+        .memberships
+        .iter()
+        .map(|m| m.record_uid.as_str())
+        .collect();
+    if records != located_records {
+        return Err("Keeper metadata report is missing record memberships".into());
+    }
+    if snapshot.schema_version != 1
+        || !folders.contains("")
+        || folders.len() != snapshot.folders.len()
+        || records.len() != snapshot.records.len()
+        || records.contains("")
+        || snapshot
+            .records
+            .iter()
+            .any(|r| r.modified_ms < 0 || r.size_bytes < 0)
+        || snapshot.memberships.iter().any(|m| {
+            !folders.contains(m.folder_uid.as_str()) || !records.contains(m.record_uid.as_str())
+        })
+    {
+        return Err("Keeper metadata report is incomplete or unsupported".into());
+    }
+    let parents: std::collections::HashMap<_, _> = snapshot
+        .folders
+        .iter()
+        .map(|f| (f.folder_uid.as_str(), f.parent_uid.as_str()))
+        .collect();
+    if parents.get("") != Some(&"") {
+        return Err("Keeper metadata report has an invalid vault root".into());
+    }
+    for folder in &snapshot.folders {
+        let mut current = folder.folder_uid.as_str();
+        let mut seen = HashSet::new();
+        while !current.is_empty() {
+            if !seen.insert(current) {
+                return Err("Keeper metadata report contains a folder cycle".into());
+            }
+            current = parents
+                .get(current)
+                .copied()
+                .ok_or("Keeper metadata report is missing a parent folder")?;
+        }
+    }
+    Ok(())
+}
+
+fn commander_python(command: &str) -> Result<PathBuf, KeeperError> {
+    let path = command_path(command)?;
+    let executable = if path.components().count() > 1 || path.is_absolute() {
+        path
+    } else {
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .map(|dir| dir.join(&path))
+            .find(|candidate| candidate.is_file())
+            .ok_or("Keeper Commander executable was not found")?
+    };
+    let executable = executable.canonicalize()?;
+    let directory = executable.parent().ok_or("Invalid Keeper Commander path")?;
+    for name in ["python", "python3", "python.exe"] {
+        let python = directory.join(name);
+        if python.is_file() {
+            return Ok(python);
+        }
+    }
+    // Console scripts installed outside a virtualenv may name their interpreter.
+    let script = std::fs::read_to_string(&executable).unwrap_or_default();
+    if let Some(interpreter) = script
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("#!"))
+    {
+        let interpreter = PathBuf::from(interpreter.trim());
+        if interpreter.is_absolute()
+            && interpreter.is_file()
+            && interpreter
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("python"))
+        {
+            return Ok(interpreter);
+        }
+    }
+    Err("Vault metadata requires Keeper Commander's Python environment. Configure the keeper executable installed with pip or pipx; standalone bundled executables are not supported.".into())
 }
 
 fn command_path(command: &str) -> Result<PathBuf, KeeperError> {
@@ -165,37 +242,37 @@ fn command_path(command: &str) -> Result<PathBuf, KeeperError> {
     Ok(PathBuf::from(command))
 }
 
-fn json_array(output: &str) -> Option<&str> {
-    let start = output.find('[')?;
-    let end = output.rfind(']')?;
-    (end >= start).then_some(&output[start..=end])
-}
-
-fn command_error(prefix: &str, stderr: &[u8]) -> String {
-    let detail = String::from_utf8_lossy(stderr);
-    let detail = detail.trim();
-    if detail.is_empty() {
-        prefix.to_string()
-    } else {
-        format!("{prefix}: {detail}")
-    }
+fn command_error(prefix: &str, _stderr: &[u8]) -> String {
+    // Commander errors may contain account data; never forward raw diagnostics.
+    prefix.to_string()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{SharedFolderReportRow, command_path, json_array};
+    use super::{command_path, parse_snapshot};
 
     #[test]
-    fn parses_only_the_expected_shared_folder_metadata() {
-        let json = r#"[{"Folder UID":"uid","Folder Name":"Operations","Type":"Shared Folder","Shared To":"person@example.edu","Permissions":"Can Manage Users","Folder Path":"/Operations","password":"must-not-be-modeled"}]"#;
-        let rows: Vec<SharedFolderReportRow> = serde_json::from_str(json).unwrap();
-        assert_eq!(rows[0].folder_name, "Operations");
-        assert_eq!(rows[0].shared_to, "person@example.edu");
-    }
-
-    #[test]
-    fn extracts_json_from_commander_output() {
-        assert_eq!(json_array("notice\n[]\n"), Some("[]"));
+    fn metadata_protocol_rejects_unknown_fields_and_redacts_errors() {
+        let safe = serde_json::json!({"schema_version":1,"folders":[{"folder_uid":"","parent_uid":"","name":"My Vault","folder_type":"Vault","folder_path":"/","access":[]}],"records":[{"record_uid":"one","title":"Title","record_type":"login","modified_ms":0,"version":3,"attachment_count":0,"size_bytes":0}],"memberships":[{"folder_uid":"","record_uid":"one"}]});
+        assert!(parse_snapshot(safe.to_string().as_bytes()).is_ok());
+        let mut secret = safe.clone();
+        secret["records"][0]["password"] = serde_json::json!("SECRET-VALUE");
+        let error = parse_snapshot(secret.to_string().as_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains("SECRET"));
+        let mut invalid = safe.clone();
+        invalid["schema_version"] = serde_json::json!(2);
+        assert!(parse_snapshot(invalid.to_string().as_bytes()).is_err());
+        let mut invalid = safe.clone();
+        invalid["records"][0]["record_uid"] = serde_json::json!("bad&uid");
+        assert!(parse_snapshot(invalid.to_string().as_bytes()).is_err());
+        assert!(
+            !parse_snapshot(b"SECRET-malformed")
+                .unwrap_err()
+                .to_string()
+                .contains("SECRET")
+        );
     }
 
     #[test]

@@ -7,6 +7,7 @@ pub mod migration;
 mod migrations;
 pub mod s3;
 pub mod settings;
+pub mod tag_filter;
 
 use std::{
     error::Error,
@@ -230,7 +231,7 @@ mod tests {
             })
             .expect("migration count should be readable");
 
-        assert_eq!(migration_count, 35,);
+        assert_eq!(migration_count, 37,);
 
         let safe_to_delete_scope_count: i64 = connection
             .query_row(
@@ -397,11 +398,61 @@ mod tests {
     }
 
     #[test]
+    fn shared_drive_folder_migration_preserves_scope_and_supports_google_targets() {
+        let root = temporary_directory();
+        let db = Database::initialize(&runtime(&root)).unwrap();
+        let scan = db.start_scan_run("shared-drives").unwrap();
+        let c = db.connect().unwrap();
+        c.execute("INSERT INTO shared_drives(drive_id,name,inventory_scope) VALUES('source','Research','shared-drive:source')", []).unwrap();
+        c.execute("INSERT INTO drive_items(remote_name,item_id,name,relative_path,is_directory,last_seen_scan_id) VALUES('shared-drive:source','folder','Folder','Research/Folder',1,?1)", [scan]).unwrap();
+        let id = migration::create(
+            &db,
+            "shared-drive:source",
+            "shared-drive",
+            &["folder".into()],
+            "drive-copy",
+        )
+        .unwrap();
+        let job = migration::get(&db, id).unwrap().unwrap();
+        assert_eq!(job.source_scope, "shared-drive:source");
+        assert_eq!(job.sources[0].relative_path, "Research/Folder");
+        assert_eq!(job.sources[0].item_id, "folder");
+        for drive in ["target", ""] {
+            migration::set_destination(
+                &db,
+                id,
+                "https://drive.google.com/drive/folders/dest",
+                drive,
+                "Destination",
+                "dest",
+                "Folder",
+            )
+            .unwrap();
+            let job = migration::get(&db, id).unwrap().unwrap();
+            assert_eq!(job.destination_kind, "google-drive");
+            assert_eq!(job.destination_drive_id, drive);
+            assert_eq!(job.source_scope, "shared-drive:source");
+        }
+        assert!(
+            migration::create(
+                &db,
+                "shared-drive:unknown",
+                "shared-drive",
+                &["folder".into()],
+                "drive-copy"
+            )
+            .is_err()
+        );
+        drop(c);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn persists_inventory_settings() {
         let root = temporary_directory();
         let database = Database::initialize(&runtime(&root)).expect("database should initialize");
         let expected = settings::InventorySettings {
-            google_drive_enabled: true,
+            google_drive_enabled: false,
             automatic_updates: false,
             refresh_interval_hours: 12,
             full_reconciliation_days: 14,
@@ -424,6 +475,10 @@ mod tests {
 
         assert_eq!(actual.automatic_updates, expected.automatic_updates,);
         assert_eq!(actual.google_drive_enabled, expected.google_drive_enabled);
+        assert!(
+            actual.directory_sheet_enabled,
+            "Persons Sheet remains independent of Drive enablement"
+        );
         assert_eq!(
             actual.refresh_interval_hours,
             expected.refresh_interval_hours,
@@ -1876,6 +1931,147 @@ mod tests {
     }
 
     #[test]
+    fn explorers_combine_tag_predicates_with_and() {
+        let root = temporary_directory();
+        let database = Database::initialize(&runtime(&root)).unwrap();
+        let scan = database.start_scan_run("my-drive").unwrap();
+        let c = database.connect().unwrap();
+        c.execute_batch("INSERT INTO tags(slug,name,color) VALUES('filter-a','A','#123456'),('filter-b','B','#234567');").unwrap();
+        for id in 1..=4 {
+            c.execute("INSERT INTO principals(id,display_name,primary_email) VALUES(?1,?1,?1||'@example.test')", [id]).unwrap();
+            c.execute(
+                "INSERT INTO principal_emails(principal_id,email) VALUES(?1,?1||'@example.test')",
+                [id],
+            )
+            .unwrap();
+            c.execute("INSERT INTO local_file_items(id,root_path,relative_path,name) VALUES(?1,'/test',?1,?1)", [id]).unwrap();
+            c.execute("INSERT INTO github_repositories(repository_id,name,full_name,html_url,owner_id,owner_login,owner_url,owner_kind,visibility) VALUES(?1,?1,?1,'',1,'owner','','User','private')", [id]).unwrap();
+            c.execute("INSERT INTO shared_drives(drive_id,name,inventory_scope) VALUES(?1,?1,'scope-'||?1)", [id]).unwrap();
+            c.execute("INSERT INTO drive_items(remote_name,item_id,name,relative_path,is_directory,last_seen_scan_id,owner_email) VALUES('my-drive-ro',?1,?1,?1,0,?2,?1||'@example.test')", params![id,scan]).unwrap();
+            c.execute("INSERT INTO drive_permissions(remote_name,item_id,permission_key,email_address,raw_json,last_seen_scan_id) VALUES('my-drive-ro',?1,'reader',?1||'@example.test','{}',?2)", params![id,scan]).unwrap();
+            for slug in match id {
+                1 => vec!["filter-a"],
+                2 => vec!["filter-a", "filter-b"],
+                3 => vec!["filter-b"],
+                _ => vec![],
+            } {
+                for (table, key) in [
+                    ("principal_tags", "principal_id"),
+                    ("local_file_tags", "local_file_id"),
+                    ("github_repository_tags", "repository_id"),
+                    ("shared_drive_tags", "drive_id"),
+                ] {
+                    c.execute(
+                        &format!(
+                            "INSERT INTO {table}({key},tag_id) SELECT ?1,id FROM tags WHERE slug=?2"
+                        ),
+                        params![id, slug],
+                    )
+                    .unwrap();
+                }
+                c.execute("INSERT INTO drive_item_tags(remote_name,item_id,tag_id) SELECT 'my-drive-ro',?1,id FROM tags WHERE slug=?2",params![id,slug]).unwrap();
+            }
+        }
+        for (filter, expected) in [
+            ("", 4),
+            ("filter-a", 2),
+            ("filter-a,filter-b", 1),
+            ("filter-a,!filter-b", 1),
+            ("!filter-a,!filter-b", 1),
+            ("filter-a,!filter-a", 0),
+            ("__untagged__", 1),
+            ("!__untagged__,!filter-b", 1),
+            ("filter-a,missing", 0),
+        ] {
+            assert_eq!(
+                directory::list_principals_filtered(&database, "", "", "", "", "", "", filter)
+                    .unwrap()
+                    .len(),
+                expected,
+                "Persons: {filter}"
+            );
+            assert_eq!(
+                local_files::list_children(
+                    &database, "/test", "", "", "", "", "", "", "", "", "", filter, false, "name",
+                    false
+                )
+                .unwrap()
+                .len(),
+                expected,
+                "Local: {filter}"
+            );
+            assert_eq!(
+                github::list(
+                    &database, "", "", "", "", "", "", "", filter, false, "name", false
+                )
+                .unwrap()
+                .len(),
+                expected,
+                "GitHub: {filter}"
+            );
+            assert_eq!(
+                inventory::list_shared_drives_filtered(
+                    &database, "", filter, "", "", "", "", "", ""
+                )
+                .unwrap()
+                .len(),
+                expected,
+                "Shared drives: {filter}"
+            );
+            assert_eq!(
+                inventory::list_my_drive_directory(
+                    &database, None, "", filter, "", "", "", "", false, "", "", "", false, "name",
+                    false
+                )
+                .unwrap()
+                .len(),
+                expected,
+                "Drive items: {filter}"
+            );
+            if !filter.contains("__untagged__") {
+                for (owner, permission) in [(filter, ""), ("", filter)] {
+                    assert_eq!(
+                        inventory::list_my_drive_directory(
+                            &database, None, "", "", "", "", "", "", false, "", owner, permission,
+                            false, "name", false
+                        )
+                        .unwrap()
+                        .len(),
+                        expected,
+                        "Identity tags: {filter}"
+                    );
+                }
+            }
+        }
+        c.execute("UPDATE drive_items SET is_deleted=1 WHERE item_id='1'", [])
+            .unwrap();
+        assert_eq!(
+            inventory::list_my_drive_directory(
+                &database,
+                None,
+                "",
+                "__deleted__,filter-a,!filter-b",
+                "",
+                "",
+                "",
+                "",
+                false,
+                "",
+                "",
+                "",
+                false,
+                "name",
+                false
+            )
+            .unwrap()
+            .len(),
+            1
+        );
+        drop(c);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn tag_application_enforces_each_configured_scope() {
         let root = temporary_directory();
         let database = Database::initialize(&runtime(&root)).expect("database should initialize");
@@ -2029,6 +2225,7 @@ mod tests {
 
         let keeper_folder = crate::keeper::client::SharedFolder {
             folder_uid: "keeper-folder-1".to_string(),
+            parent_uid: String::new(),
             name: "Operations".to_string(),
             folder_type: "Shared Folder".to_string(),
             folder_path: "/Operations".to_string(),
@@ -2038,8 +2235,26 @@ mod tests {
                 target_kind: "user".to_string(),
             }],
         };
-        keeper::synchronize(&database, &[keeper_folder])
-            .expect("Keeper inventory should synchronize");
+        keeper::synchronize(
+            &database,
+            &crate::keeper::client::VaultSnapshot {
+                schema_version: 1,
+                folders: vec![
+                    crate::keeper::client::SharedFolder {
+                        folder_uid: String::new(),
+                        parent_uid: String::new(),
+                        name: "My Vault".into(),
+                        folder_type: "Vault".into(),
+                        folder_path: "/".into(),
+                        access: vec![],
+                    },
+                    keeper_folder,
+                ],
+                records: vec![],
+                memberships: vec![],
+            },
+        )
+        .expect("Keeper inventory should synchronize");
         let keeper_summary = keeper::summary(&database).expect("Keeper summary should load");
         assert_eq!(keeper_summary.shared_folders, 1);
         assert_eq!(keeper_summary.shared_with, 1);

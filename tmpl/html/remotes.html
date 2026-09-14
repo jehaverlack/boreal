@@ -1,80 +1,48 @@
 {% extends "base.html" %}
-
 {% block content %}
-
-<div class="row">
-    <div class="col-xl-10 col-xxl-8">
-        <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
-            <div>
-                <h1 class="h3 mb-1">Remotes</h1>
-                <p class="text-body-secondary mb-0">
-                    Rclone remotes configured for BOREAL. Credential details are never displayed.
-                </p>
-            </div>
-            <div class="d-flex align-items-center gap-2"><span class="badge text-bg-primary">{{ remotes.len() }} configured</span><button class="btn btn-sm btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#addRemoteModal"><i class="bi bi-plus-circle me-1"></i>Add Remote</button></div>
-        </div>
-
-        {% if error.len() > 0 %}
-        <div class="alert alert-danger" role="alert">
-            <i class="bi bi-exclamation-triangle me-2"></i>{{ error }}
-        </div>
-        {% endif %}
-
-        <div class="card">
-            <div class="table-responsive">
-                <table class="table table-hover align-middle mb-0">
-                    <thead class="table-light">
-                        <tr>
-                            <th scope="col">Name</th>
-                            <th scope="col">Backend</th>
-                            <th scope="col">Access</th>
-                            <th scope="col">Purpose</th>
-                            <th scope="col">Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for remote in remotes %}
-                        <tr>
-                            <th scope="row"><i class="bi bi-cloud me-2 text-primary"></i>{{ remote.name }}</th>
-                            <td>{{ remote.backend }}</td>
-                            <td>{{ remote.access }}</td>
-                            <td>{{ remote.purpose }}</td>
-                            <td><span class="badge {{ remote.status_class }}">{{ remote.status }}</span></td>
-                        </tr>
-                        {% endfor %}
-                        {% if remotes.is_empty() %}
-                        <tr>
-                            <td colspan="5" class="text-center text-body-secondary py-4">
-                                No configured remotes were found.
-                            </td>
-                        </tr>
-                        {% endif %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
+<div class="mx-auto" style="max-width: 1200px">
+<a href="/settings" class="btn btn-sm btn-link px-0 mb-2"><i class="bi bi-arrow-left me-1"></i>Back to Settings</a>
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+<div><h1 class="h3"><i class="bi bi-plug me-2"></i>Storage remotes</h1><p class="text-body-secondary mb-0">Named Rclone configurations used to access storage. Each Google remote has its own account authorization. Credential details are never displayed here.</p></div>
+<button class="btn btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#addRemoteModal"><i class="bi bi-plus-circle me-1"></i>Add remote</button>
 </div>
-
-<div class="modal fade" id="addRemoteModal" tabindex="-1" aria-labelledby="addRemoteModalLabel" aria-hidden="true">
-    <div class="modal-dialog"><div class="modal-content">
-        <div class="modal-header"><h2 class="modal-title fs-5" id="addRemoteModalLabel">Add BOREAL Remote</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
-        <form method="post" action="/remotes/add"><div class="modal-body">
-            <p>BOREAL creates managed Google Drive remotes with fixed names and access scopes.</p>
-            <label class="form-label" for="remoteKind">Remote</label>
-            <select class="form-select" id="remoteKind" name="remote_kind" required>
-                {% if !my_drive_rw_configured %}<option value="my-drive-rw">My Drive RW — read/write migration access</option>{% endif %}
-                {% if !my_drive_ro_configured %}<option value="my-drive-ro">My Drive RO — read-only inventory access</option>{% endif %}
-                {% if my_drive_rw_configured && my_drive_ro_configured %}<option value="" disabled selected>All BOREAL remotes are configured</option>{% endif %}
-            </select>
-            <div class="form-text">Google authorization may open in your browser. For migration copies, authorize My Drive RW using the account that can write to the destination Shared Drive.</div>
-            {% if !google_client_ready %}<div class="alert alert-warning mt-3 mb-0">Configure the Google Client ID before adding a remote.</div>{% endif %}
-            {% if !rclone_ready %}<div class="alert alert-warning mt-3 mb-0">Rclone must finish initializing before adding a remote.</div>{% endif %}
-            {% if remote_setup_busy %}<div class="alert alert-info mt-3 mb-0"><span class="spinner-border spinner-border-sm me-2"></span>A remote is currently being configured.</div>{% endif %}
-        </div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary" {% if !google_client_ready || !rclone_ready || remote_setup_busy || (my_drive_rw_configured && my_drive_ro_configured) %}disabled{% endif %}>Add Remote</button></div></form>
-    </div></div>
+{% if !error.is_empty() %}<div class="alert alert-danger alert-dismissible" role="alert">{{ error }}<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Dismiss"></button></div>{% endif %}
+{% if !google_client_ready %}<div class="alert alert-info">To connect Google Drive, <a href="/settings#google-setup">complete Google setup</a> first. Other storage providers can be added using the Rclone remote manager.</div>{% endif %}
+{% if !rclone_ready %}<div class="alert alert-info">The Rclone remote manager is starting. Refresh this page when Rclone is ready.</div>{% endif %}
+{% if remote_setup_busy %}<div class="alert alert-info" role="status"><span class="spinner-border spinner-border-sm me-2"></span>Waiting for Google sign-in. Complete it in the Google tab; this page will update automatically.</div>{% endif %}
+<div class="card"><div class="table-responsive"><table class="table align-middle mb-0">
+<thead><tr><th scope="col">Remote name</th><th scope="col">Provider</th><th scope="col">Access / purpose</th><th scope="col">Status</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+<tbody>{% for remote in remotes %}<tr>
+<th scope="row"><i class="bi bi-cloud me-2 text-primary"></i>{{ remote.name }}{% if remote.managed %}<div class="small text-body-secondary fw-normal">Boreal default</div>{% endif %}</th><td>{{ remote.backend }}</td><td>{{ remote.access }}<div class="small text-body-secondary">{{ remote.purpose }}</div></td>
+<td><span class="badge {{ remote.status_class }}">{{ remote.status }}</span>{% if !remote.detail.is_empty() %}<div class="small mt-2" style="max-width: 28rem">{{ remote.detail }}</div>{% endif %}</td>
+<td>{% if remote.managed %}<button class="btn btn-sm btn-outline-primary text-nowrap" type="button" data-bs-toggle="modal" data-bs-target="#reconnect-{{ remote.name }}" {% if !google_client_ready || !rclone_ready || remote_setup_busy %}disabled{% endif %}>{% if remote.status == "Conflict" || remote.status == "Error" %}Repair / reconnect{% else %}Reconnect{% endif %}</button>{% else %}<a class="btn btn-sm btn-outline-secondary" href="/rclone-gui" target="_blank" rel="noopener noreferrer">Manage<i class="bi bi-box-arrow-up-right ms-1"></i></a>{% endif %}</td>
+</tr>{% endfor %}
+{% if remotes.is_empty() %}<tr><td colspan="5" class="text-center py-4">No storage remotes yet. Add a remote to get started.</td></tr>{% endif %}
+</tbody></table></div></div>
+<p class="small text-body-secondary mt-3">The defaults are <strong>my-drive-ro</strong> for read-only Google inventory and <strong>my-drive-rw</strong> for migration destinations. Keep these names. Additional remotes can use your own names; creating one does not automatically add it to the Google inventory.</p>
+<a class="btn btn-sm btn-outline-secondary" href="/remotes"><i class="bi bi-arrow-clockwise me-1"></i>Refresh remotes</a>
+<details class="mt-3"><summary>Advanced Rclone remote manager</summary><p class="small mt-2">Add other storage providers, rename extra remotes, or change provider-specific options in Rclone. Changes are saved in Boreal’s private configuration. Return here and refresh when finished.</p><a class="btn btn-sm btn-outline-secondary" href="/rclone-gui" target="_blank" rel="noopener noreferrer">Open Rclone remote manager<i class="bi bi-box-arrow-up-right ms-1"></i></a></details>
 </div>
-
+{% for remote in remotes %}{% if remote.managed %}
+<div class="modal fade" id="reconnect-{{ remote.name }}" tabindex="-1" aria-labelledby="reconnect-title-{{ remote.name }}" aria-hidden="true"><div class="modal-dialog"><div class="modal-content">
+<div class="modal-header"><h2 class="modal-title fs-5" id="reconnect-title-{{ remote.name }}">Reconnect {{ remote.name }}</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+<form method="post" action="/remotes/add"><input type="hidden" name="remote_kind" value="{{ remote.name }}"><input type="hidden" name="reconnect" value="true"><div class="modal-body"><p>This applies Boreal’s current Google app setup and <strong>{{ remote.access }}</strong> permissions to this remote, then opens Google sign-in.</p><p>Choose the account you want to use for {{ remote.purpose }}. Other remotes and your files are preserved.</p>{% if remote.name == "my-drive-rw" %}<p class="small">This account must be able to write to your migration destination.</p>{% endif %}</div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Reconnect with Google</button></div></form>
+</div></div></div>
+{% endif %}{% endfor %}
+<div class="modal fade" id="addRemoteModal" tabindex="-1" aria-labelledby="addRemoteModalLabel" aria-hidden="true"><div class="modal-dialog"><div class="modal-content">
+<div class="modal-header"><h2 class="modal-title fs-5" id="addRemoteModalLabel">Add remote</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+<div class="modal-body">
+<h3 class="h6"><img class="boreal-service-icon me-1" src="/assets/google-drive-logo.svg" alt="">Google Drive defaults</h3>
+{% if !my_drive_ro_configured || !my_drive_rw_configured %}
+<form method="post" action="/remotes/add"><label class="form-label" for="remoteKind">Choose access</label><select class="form-select mb-2" id="remoteKind" name="remote_kind">
+{% if !my_drive_ro_configured %}<option value="my-drive-ro">Read-only — inventory (recommended)</option>{% endif %}
+{% if !my_drive_rw_configured %}<option value="my-drive-rw">Read/write — migration destinations</option>{% endif %}</select>
+<p class="small text-body-secondary">Google opens in a new tab. Complete sign-in and grant the requested access.</p>
+<button type="submit" class="btn btn-primary" {% if !google_client_ready || !rclone_ready || remote_setup_busy %}disabled{% endif %}>Connect with Google</button></form>
+{% else %}<p class="small">Both default names are present. Use <strong>Repair / reconnect</strong> in the table to fix a conflict or sign in again.</p>{% endif %}
+<hr><h3 class="h6">Additional accounts or storage</h3><p class="small">Open the Rclone remote manager, choose <strong>New Config</strong>, give the remote a unique name, and select a provider such as Google Drive or S3. Follow its sign-in steps, then return to this page and refresh.</p>
+<a class="btn btn-outline-primary{% if !rclone_ready || remote_setup_busy %} disabled{% endif %}" href="/rclone-gui" target="_blank" rel="noopener noreferrer">Add another remote<i class="bi bi-box-arrow-up-right ms-1"></i></a>
+</div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Done</button></div>
+</div></div></div>
 {% if remote_setup_busy %}<script>window.setTimeout(function () { window.location.reload(); }, 2000);</script>{% endif %}
-
 {% endblock %}

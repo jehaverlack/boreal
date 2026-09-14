@@ -1,0 +1,13 @@
+<p>If Commander opens at a <strong>Not logged in</strong> prompt, enter <code>login</code> and provide your Keeper account email when asked.</p>
+<p><strong>If Commander shows an SSO Login URL and a <code>Selection:</code> prompt:</strong></p>
+<ol>
+    <li>Type <code>o</code> and press Enter to open the sign-in page. If that option is unavailable or the browser does not open, type <code>c</code> to copy the SSO Login URL and paste it into your browser's address bar. If copying fails, select and copy the URL displayed in the terminal manually.</li>
+    <li>Complete your organization's sign-in and MFA in the browser.</li>
+    <li>On the resulting Keeper SSO page, click <strong>Copy login token</strong>.</li>
+    <li>Return to the Commander terminal, type <code>p</code>, and press Enter to paste the token from the clipboard. If Commander displays <code>Paste SSO Token:</code>, paste it there and press Enter. You can also paste the token directly at Commander's <code>Selection:</code> prompt.</li>
+    <li>If Commander asks for two-factor authentication, choose your method from its menu. For <strong>WebAuthN (FIDO2 Security Key)</strong>, follow the prompt and touch the flashing key. Menu numbers may vary.</li>
+    <li>If Commander requests SSO device approval, choose <strong>Keeper Push</strong> to approve from an existing signed-in Keeper device, or <strong>Admin Approval</strong> to request approval from your administrator. Once approved, use the displayed <strong>Resume</strong> option (<code>r</code>) to continue. This approval happens before the device-registration command in step 3.</li>
+    <li>Wait for Commander to confirm successful authentication and display its vault prompt. Completing the browser sign-in alone does not finish the Commander login.</li>
+</ol>
+<p>If your account does not use SSO, follow Commander's login and MFA prompts instead.</p>
+<div class="alert alert-warning"><i class="bi bi-shield-exclamation me-1"></i>Keep the SSO Login URL and login token private. Paste the token only into Keeper Commander. Never put tokens, passwords, or MFA codes into BOREAL, support messages, or screenshots.</div>

@@ -240,10 +240,10 @@
         .navbar .boreal-local-files-nav.active { color: #36454f !important; }
         .navbar .boreal-local-files-nav:hover,
         .navbar .boreal-local-files-nav:focus { color: #212529 !important; }
-        .navbar .boreal-keeper-nav,
-        .navbar .boreal-keeper-nav.active { color: #daa520; }
-        .navbar .boreal-keeper-nav:hover,
-        .navbar .boreal-keeper-nav:focus { color: #ffda6a; }
+        .navbar .nav-link.boreal-keeper-nav,
+        .navbar .nav-link.boreal-keeper-nav.active,
+        .navbar .nav-link.boreal-keeper-nav:hover,
+        .navbar .nav-link.boreal-keeper-nav:focus { color: #ffc700 !important; }
 
         body.boreal-print-report {
             height: auto !important;
@@ -307,6 +307,13 @@
             white-space: normal !important;
         }
 
+        body.boreal-print-report .boreal-keeper-table { width: 100%; table-layout: fixed; font-size: 9pt; }
+        body.boreal-print-report .boreal-keeper-table td { overflow-wrap: anywhere; white-space: normal !important; }
+        body.boreal-print-report .boreal-keeper-table thead { position: static !important; }
+        body.boreal-print-report .boreal-keeper-table tr { break-inside: avoid; }
+        body.boreal-print-report .boreal-keeper-table th:last-child { width: 30%; }
+        body.boreal-print-report .boreal-keeper-table .badge { white-space: normal; max-width: 100%; }
+
         @page {
             size: legal landscape;
             margin: 0.4in;
@@ -334,7 +341,22 @@
         }
     </style>
 
-</head>
+<script>
+        // Shared by every explorer: include → exclude → clear; retain other AND terms.
+        window.borealToggleTag = (value, slug, exclude = false) => {
+            if (!slug) return '';
+            const terms = [...new Set(value.split(',').map(term => term.trim()).filter(Boolean))];
+            const included = terms.includes(slug);
+            const excluded = terms.includes(`!${slug}`);
+            const remaining = terms.filter(term => term !== slug && term !== `!${slug}`);
+            if (exclude) {
+                if (!excluded) remaining.push(`!${slug}`);
+            } else if (included) remaining.push(`!${slug}`);
+            else if (!excluded) remaining.push(slug);
+            return remaining.join(',');
+        };
+    </script>
+    </head>
 
 <body class="d-flex flex-column min-vh-100{% if active_page == "my-drive" || active_page == "shared-drives" || active_page == "shared-with-me" || active_page == "directory" || active_page == "tags" || active_page == "github" || active_page == "keeper" || active_page == "local-files" %} vh-100 overflow-hidden{% endif %}">
 
@@ -370,6 +392,7 @@
             >
 
                 <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+
 
                     <li class="nav-item">
 
@@ -521,10 +544,10 @@
 
                                 <a
                                     class="dropdown-item{% if active_page == "google-client" %} active{% endif %}"
-                                    href="/google-client"
+                                    href="/settings#google-setup"
                                 >
                                     <i class="bi bi-key me-2"></i>
-                                    Create Google Client ID
+                                    Google setup guide
                                 </a>
 
                             </li>
@@ -647,14 +670,14 @@
                 <div class="modal-body">
                     <p>Select one or more metadata sources. Unselected inventories retain their existing data and timestamps.</p>
                     <div class="list-group mb-3">
-                        <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="my_drive" value="true" checked>My Drive (2–20 min)</label>
+                        <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="my_drive" value="true">My Drive (2–20 min)</label>
                         <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" id="allSharedDrivesUpdateFallback" type="checkbox" name="shared_drives" value="true">All Shared Drives (1–6 hours)</label>
                         <div class="list-group-item">
                             <label class="form-label mb-1" for="specificSharedDriveUrlFallback"><i class="bi bi-link-45deg me-1"></i>One Shared Drive by URL</label>
                             <input class="form-control form-control-sm" form="metadata-update-form" id="specificSharedDriveUrlFallback" name="specific_shared_drive_url" type="url" placeholder="https://drive.google.com/drive/folders/..." oninput="document.getElementById('allSharedDrivesUpdateFallback').checked = false">
                             <div class="form-text">Paste the root URL of a Shared Drive to inventory only that Drive.</div>
                         </div>
-                        <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="shared_with_me" value="true" checked>Shared with me (2–20 min)</label>
+                        <label class="list-group-item"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="shared_with_me" value="true">Shared with me (2–20 min)</label>
                         <label class="list-group-item text-body-secondary"><input class="form-check-input me-2" form="metadata-update-form" type="checkbox" name="directory_info" value="true" disabled>Persons (~10 sec) <span class="small">— checking configuration…</span></label>
                     </div>
                     <p class="mb-0">
@@ -706,7 +729,7 @@
 
                     <p>
                         The BOREAL application is no longer running.
-                        Use the button below to close this browser tab.
+                        This tab can now be closed.
                     </p>
 
                     <div class="alert alert-warning mb-0 d-none" id="boreal-close-tab-blocked" role="alert">
@@ -716,15 +739,7 @@
 
                 </div>
 
-                <div class="modal-footer">
-                    <button
-                        type="button"
-                        class="btn btn-primary"
-                        id="boreal-close-tab"
-                    >
-                        Close Tab
-                    </button>
-                </div>
+
 
             </div>
 
@@ -840,6 +855,9 @@
                 catch (_error) { return false; }
             })();
             let metadataRefreshPending = false;
+            let metadataPollInFlight = false;
+            let metadataUpdateObserved = metadataModalDismissed || metadataModalElement
+                ?.querySelector("#metadata-update-modal-content")?.dataset.updating === "true";
 
             async function replaceFromEndpoint(url, selector) {
                 const current = document.querySelector(selector);
@@ -907,13 +925,24 @@
                 refreshMetadataStatusAge();
             }
 
+            function restoreMetadataSelection() {
+                try {
+                    const selected = JSON.parse(window.localStorage.getItem('boreal.metadata.sources') || '[]');
+                    if (!Array.isArray(selected)) return;
+                    metadataModalElement.querySelectorAll('input[type="checkbox"][data-estimated-seconds]').forEach(input => {
+                        input.checked = !input.disabled && selected.includes(input.name);
+                    });
+                } catch (_error) {}
+            }
+
             async function refreshMetadataModal(autoShow = false) {
-                if (!metadataModalElement) return;
+                if (!metadataModalElement || metadataRefreshPending || metadataPollInFlight) return;
+                metadataPollInFlight = true;
                 try {
                     const response = await fetch("/ui/metadata-update-modal", { cache: "no-store" });
                     if (!response.ok) return;
                     const modalContent = metadataModalElement.querySelector(".modal-content");
-                    const wasUpdating = modalContent
+                    const wasUpdating = metadataUpdateObserved || modalContent
                         .querySelector("#metadata-update-modal-content")
                         ?.dataset.updating === "true";
                     const responseHtml = await response.text();
@@ -922,7 +951,7 @@
                     const isUpdating = parsed
                         .querySelector("#metadata-update-modal-content")
                         ?.dataset.updating === "true";
-                    const wasBackgrounded = metadataModalDismissed;
+                    metadataUpdateObserved = isUpdating;
                     if (!isUpdating) {
                         try { window.sessionStorage.removeItem(metadataBackgroundKey); } catch (_error) {}
                     }
@@ -930,22 +959,24 @@
                         .querySelector("#metadata-update-modal-content")
                         ?.dataset.complete === "true";
                     modalContent.innerHTML = responseHtml;
+                    if (!isUpdating) restoreMetadataSelection();
                     refreshMetadataEstimate();
                     if (wasUpdating && !isUpdating && completed) {
                         metadataModalDismissed = false;
-                        if (wasBackgrounded) {
-                            if (document.querySelector("#boreal-drive-summaries")) refreshMetadataUi();
-                            return;
-                        }
                         metadataRefreshPending = true;
                         modalContent.innerHTML = `
                             <div class="modal-header">
-                                <h2 class="modal-title fs-5"><i class="bi bi-check-circle-fill text-success me-2"></i>Metadata update complete</h2>
+                                <h2 class="modal-title fs-5" id="metadataUpdateModalLabel"><i class="bi bi-check-circle-fill text-success me-2"></i>Metadata update complete</h2>
                                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                             </div>
                             <div class="modal-body">The local metadata inventory has finished updating.</div>
                             <div class="modal-footer"><button type="button" class="btn btn-primary" data-bs-dismiss="modal">Done</button></div>`;
+                        metadataModal.show();
                         return;
+                    }
+                    if (wasUpdating && !isUpdating) {
+                        // Show failures too, including updates continued in the background.
+                        metadataModal.show();
                     }
                     if (!isUpdating) metadataModalDismissed = false;
                     const updating = metadataModalElement
@@ -954,6 +985,8 @@
                     if (updating && autoShow && !metadataModalDismissed) metadataModal.show();
                 } catch (_error) {
                     // The footer heartbeat reports application connectivity failures.
+                } finally {
+                    metadataPollInFlight = false;
                 }
             }
 
@@ -978,6 +1011,18 @@
                     refreshMetadataModal(false);
                 });
                 metadataModalElement.addEventListener("submit", async (event) => {
+                    if (event.target.id === "metadata-error-acknowledge") {
+                        event.preventDefault();
+                        const button = event.target.querySelector('button');
+                        button.disabled = true;
+                        try {
+                            const response = await fetch('/metadata/acknowledge-error', {method: 'POST'});
+                            if (!response.ok) throw new Error('Acknowledgement failed');
+                            metadataUpdateObserved = false;
+                            await refreshMetadataModal(false);
+                        } catch (_error) { button.disabled = false; button.textContent = 'Try acknowledging again'; }
+                        return;
+                    }
                     if (event.target.id !== "metadata-update-form") return;
                     event.preventDefault();
                     const button = event.target.querySelector("button[type=submit]");
@@ -990,6 +1035,7 @@
                         button.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Select at least one';
                         return;
                     }
+                    try { window.localStorage.setItem('boreal.metadata.sources', JSON.stringify(selectedSources.map(input => input.name))); } catch (_error) {}
                     button.disabled = true;
                     button.innerHTML = '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>Starting…';
                     try {
@@ -998,6 +1044,7 @@
                             body: new URLSearchParams(new FormData(event.target)),
                         });
                         if (!response.ok) throw new Error("Unable to start metadata update");
+                        metadataUpdateObserved = true;
                         metadataModalDismissed = false;
                         try { window.sessionStorage.removeItem(metadataBackgroundKey); } catch (_error) {}
                         await refreshMetadataModal(false);
@@ -1011,7 +1058,7 @@
                     const updating = metadataModalElement
                         .querySelector("#metadata-update-modal-content")
                         ?.dataset.updating === "true";
-                    if (updating) refreshMetadataModal(false);
+                    if (updating || metadataUpdateObserved) refreshMetadataModal(false);
                 }, 1000);
             }
 
@@ -1020,9 +1067,6 @@
 
             const stoppedModalElement =
                 document.getElementById("borealStoppedModal");
-
-            const closeTabButton =
-                document.getElementById("boreal-close-tab");
 
             const closeTabBlocked =
                 document.getElementById("boreal-close-tab-blocked");
@@ -1035,54 +1079,25 @@
 
             let heartbeatFailures = 0;
             let stopped = false;
-            let closeRequested = false;
-
-            if (closeTabButton) {
-                closeTabButton.addEventListener("click", () => {
-                    if (closeRequested) return;
-                    closeRequested = true;
-                    closeTabButton.disabled = true;
-                    closeTabButton.innerHTML =
-                        '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>Closing…';
-                    closeTabBlocked?.classList.add("d-none");
-
-                    // Keep every close attempt inside the original user
-                    // gesture. The _self handle is accepted by some browsers
-                    // that decline a direct close on externally opened tabs.
-                    try {
-                        const currentTab = window.open("", "_self");
-                        currentTab?.close();
-                    } catch (_error) {
-                        // Continue to the standards-based close attempt.
-                    }
-                    window.close();
-
-                    // A rejected window.close() does not throw an exception.
-                    // If the page remains, restore the close control and
-                    // explain the browser-level restriction.
-                    window.setTimeout(() => {
-                        closeRequested = false;
-                        const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
-                        const shortcut = isMac ? "Command-W (⌘W)" : "Ctrl-W";
-                        if (closeTabBlockedMessage) {
-                            closeTabBlockedMessage.textContent =
-                                `This browser does not permit websites to close externally opened tabs. Press ${shortcut}, or try the button again.`;
-                        }
-                        closeTabBlocked?.classList.remove("d-none");
-                        closeTabButton.disabled = false;
-                        closeTabButton.innerHTML =
-                            '<i class="bi bi-x-lg me-1" aria-hidden="true"></i>Try Closing Again';
-                    }, 200);
-                });
-            }
-
             function showStopped() {
-                if (stopped) {
-                    return;
-                }
-
+                if (stopped) return;
                 stopped = true;
-                stoppedModal.show();
+                try {
+                    window.close();
+                } catch (_error) {
+                    // Some browsers throw; others silently refuse to close.
+                }
+                window.setTimeout(() => {
+                    if (window.closed) return;
+                    const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+                    const shortcut = isMac ? "Command+W (⌘W)" : "Ctrl+W";
+                    if (closeTabBlockedMessage) {
+                        closeTabBlockedMessage.textContent =
+                            `Press ${shortcut} to close this tab.`;
+                    }
+                    closeTabBlocked?.classList.remove("d-none");
+                    stoppedModal.show();
+                }, 200);
             }
 
             async function checkBoreal() {
@@ -1150,19 +1165,8 @@
                             // accepted response reaches the browser.
                         }
 
-                        try {
-                            const currentTab = window.open("", "_self");
-                            currentTab?.close();
-                        } catch (_error) {
-                            // Continue to the standards-based close attempt.
-                        }
-                        window.close();
-
-                        /*
-                         * If the browser refuses to close an externally
-                         * opened tab, show the stopped modal after BOREAL's
-                         * delayed shutdown has had time to begin.
-                         */
+                        // Let the accepted shutdown begin, then try closing
+                        // once and show keyboard instructions if it is blocked.
                         window.setTimeout(
                             showStopped,
                             1000,
@@ -1178,6 +1182,7 @@
         })();
     </script>
 
+{% include "partials/column-widths.html" %}
 </body>
 
 </html>

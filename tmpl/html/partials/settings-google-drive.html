@@ -1,0 +1,7 @@
+<div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" id="googleDriveEnabled" name="google_drive_enabled" value="true" {% if settings.google_drive_enabled %}checked{% endif %}>
+                        <label class="form-check-label" for="googleDriveEnabled">Enable Google Drive metadata</label>
+                    </div>
+                    <div class="form-text">When enabled, BOREAL walks you through OAuth credentials and a read-only Drive connection. Disabling preserves existing credentials and inventory data.</div>
+<ol class="mt-3"><li><a href="#google-setup" data-bs-toggle="modal" data-bs-target="#googleSetupModal">Prepare your Google project</a> (once for all Google services).</li><li><a href="/remotes">Connect or repair the read-only inventory account</a>.</li><li>Save, then choose Google Drive sources in Update.</li></ol>
+<p class="small text-body-secondary">Connect a read/write account only when you need to copy files to Google Drive.</p>

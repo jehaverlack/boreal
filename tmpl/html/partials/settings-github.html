@@ -1,0 +1,29 @@
+<div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch" id="githubEnabled" name="github_enabled" value="true" {% if settings.github_enabled %}checked{% endif %}>
+                        <label class="form-check-label" for="githubEnabled">Enable GitHub repository metadata</label>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div>
+                            <div class="fw-semibold">Resource-owner connections</div>
+                            <div class="small text-body-secondary">GitHub requires a separate fine-grained token for each resource owner.</div>
+                        </div>
+                        <button class="btn btn-sm btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#githubTokenSetupModal">
+                            <i class="bi bi-plus-lg me-1"></i>Add token
+                        </button>
+                    </div>
+                    {% if github_connections.is_empty() %}
+                    <div class="border rounded p-3 text-body-secondary small">No GitHub resource owners are configured.</div>
+                    {% else %}
+                    <div class="list-group">
+                        {% for connection in github_connections %}
+                        <div class="list-group-item d-flex justify-content-between align-items-center gap-3">
+                            <div>
+                                <div class="fw-semibold"><i class="bi bi-building me-1"></i>{{ connection.resource_owner }}</div>
+                                <div class="small text-body-secondary">Authenticated as {{ connection.authenticated_login }}{% if connection.expires_on.len() > 0 %} · Expires {{ connection.expires_on }}{% else %} · Expiration not recorded{% endif %}</div>
+                            </div>
+                            <button class="btn btn-sm btn-outline-danger" type="submit" form="delete-github-connection-{{ loop.index }}" onclick="return confirm('Remove the GitHub token for {{ connection.resource_owner }}?')" title="Remove connection"><i class="bi bi-trash"></i></button>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    {% if settings.github_last_sync_at.len() > 0 %}<div class="small text-body-secondary mt-1">Last updated {{ settings.github_last_sync_at }} UTC</div>{% endif %}

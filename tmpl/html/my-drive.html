@@ -18,16 +18,7 @@
     </div>
     <div class="d-flex gap-2 boreal-report-hide">
         {% if drive_id.len() > 0 %}<a class="btn btn-sm btn-outline-secondary" href="/shared-drives"><i class="bi bi-arrow-left me-1"></i>All Shared Drives</a>{% endif %}
-        <a class="btn btn-sm btn-outline-primary" href="{{ explorer_path }}"><i class="bi bi-house-door me-1"></i>{{ root_label }} root</a>
-    </div>
-</div>
-
-{% if error.len() > 0 %}
-<div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-triangle me-2"></i>{{ error }}</div>
-{% endif %}
-
-{% if has_parent %}
-<div class="d-flex align-items-center gap-2 mb-3">
+        {% if has_parent %}
     <form method="get" action="{{ explorer_path }}">
         <input type="hidden" name="drive" value="{{ drive_id }}">
         <input type="hidden" name="path" value="{{ parent_path }}">
@@ -42,12 +33,22 @@
         <input type="hidden" name="owner_identity_tag" value="{{ owner_identity_tag_filter }}">
         <input type="hidden" name="permission_identity_tag" value="{{ permission_identity_tag_filter }}">
         <input type="hidden" name="include_deleted" value="{{ include_deleted }}">
-        <button class="btn btn-sm btn-outline-secondary" type="submit" title="Browse parent folder"><i class="bi bi-arrow-up"></i></button>
+        <button class="btn btn-sm btn-outline-secondary" type="submit" title="Browse parent folder"><i class="bi bi-arrow-up me-1"></i>Up</button>
     </form>
-    <span class="small text-body-secondary">Location:</span>
-    <span class="fw-semibold">{{ current_path }}</span>
+        {% else %}<button class="btn btn-sm btn-outline-secondary" type="button" disabled><i class="bi bi-arrow-up me-1"></i>Up</button>{% endif %}
+        <form method="get" action="{{ explorer_path }}">
+            <input type="hidden" name="drive" value="{{ drive_id }}">
+            <input type="hidden" name="sort" value="{{ sort }}"><input type="hidden" name="direction" value="{{ direction }}">
+            <button class="btn btn-sm btn-outline-primary" type="submit" title="Browse {{ root_label }} base"><i class="bi bi-house-door me-1"></i>Base</button>
+        </form>
+    </div>
 </div>
+
+{% if error.len() > 0 %}
+<div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-triangle me-2"></i>{{ error }}</div>
 {% endif %}
+
+{% if has_parent %}<div class="d-flex align-items-center gap-2 mb-3"><span class="small text-body-secondary">Location:</span><span class="fw-semibold">{{ current_path }}</span></div>{% endif %}
 
 <form id="my-drive-filter-form" method="get" action="{{ explorer_path }}" class="row g-2 mb-3 boreal-report-hide" role="search">
     <input type="hidden" name="drive" value="{{ drive_id }}">
@@ -63,8 +64,8 @@
         </button>
         {% for tag in filter_tags %}
         <button class="btn btn-sm rounded-pill boreal-tag-filter-pill{% if tag.excluded %} boreal-tag-filter-pill-excluded{% endif %}"
-                type="button" data-filter-input="my-drive-tag-filter" data-tag-value="{{ tag.slug }}" data-negatable="true" aria-pressed="{% if tag.selected || tag.excluded %}true{% else %}false{% endif %}"
-                title="{{ tag.description }}"
+                type="button" data-filter-input="my-drive-tag-filter" data-tag-value="{{ tag.slug }}" aria-pressed="{% if tag.selected || tag.excluded %}true{% else %}false{% endif %}"
+                title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)"
                 style="border-color: {{ tag.color }}; background-color: {% if tag.selected %}{{ tag.color }}{% else %}transparent{% endif %}; color: {% if tag.selected %}{{ tag.text_color }}{% else %}{{ tag.color }}{% endif %};">
             {% if tag.selected %}<i class="bi bi-check-lg me-1" aria-hidden="true"></i>{% else if tag.excluded %}<i class="bi bi-slash-circle me-1" aria-hidden="true"></i>Not {% endif %}{{ tag.name }}
         </button>
@@ -78,11 +79,11 @@
             {% if owner_identity_tag_filter.len() == 0 %}<i class="bi bi-check-lg me-1" aria-hidden="true"></i>{% endif %}Any owner
         </button>
         {% for tag in identity_filter_tags %}
-        <button class="btn btn-sm rounded-pill boreal-tag-filter-pill" type="button"
+        <button class="btn btn-sm rounded-pill boreal-tag-filter-pill{% if tag.owner_excluded %} boreal-tag-filter-pill-excluded{% endif %}" type="button"
                 data-filter-input="my-drive-owner-identity-tag-filter" data-tag-value="{{ tag.slug }}"
-                aria-pressed="{% if tag.owner_selected %}true{% else %}false{% endif %}" title="{{ tag.description }}"
+                aria-pressed="{% if tag.owner_selected || tag.owner_excluded %}true{% else %}false{% endif %}" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)"
                 style="border-color: {{ tag.color }}; background-color: {% if tag.owner_selected %}{{ tag.color }}{% else %}transparent{% endif %}; color: {% if tag.owner_selected %}{{ tag.text_color }}{% else %}{{ tag.color }}{% endif %};">
-            {% if tag.owner_selected %}<i class="bi bi-check-lg me-1" aria-hidden="true"></i>{% endif %}{{ tag.name }}
+            {% if tag.owner_selected %}<i class="bi bi-check-lg me-1" aria-hidden="true"></i>{% else if tag.owner_excluded %}Not {% endif %}{{ tag.name }}
         </button>
         {% endfor %}
     </div>
@@ -94,11 +95,11 @@
             {% if permission_identity_tag_filter.len() == 0 %}<i class="bi bi-check-lg me-1" aria-hidden="true"></i>{% endif %}Any permission
         </button>
         {% for tag in identity_filter_tags %}
-        <button class="btn btn-sm rounded-pill boreal-tag-filter-pill" type="button"
+        <button class="btn btn-sm rounded-pill boreal-tag-filter-pill{% if tag.permission_excluded %} boreal-tag-filter-pill-excluded{% endif %}" type="button"
                 data-filter-input="my-drive-permission-identity-tag-filter" data-tag-value="{{ tag.slug }}"
-                aria-pressed="{% if tag.permission_selected %}true{% else %}false{% endif %}" title="{{ tag.description }}"
+                aria-pressed="{% if tag.permission_selected || tag.permission_excluded %}true{% else %}false{% endif %}" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)"
                 style="border-color: {{ tag.color }}; background-color: {% if tag.permission_selected %}{{ tag.color }}{% else %}transparent{% endif %}; color: {% if tag.permission_selected %}{{ tag.text_color }}{% else %}{{ tag.color }}{% endif %};">
-            {% if tag.permission_selected %}<i class="bi bi-check-lg me-1" aria-hidden="true"></i>{% endif %}{{ tag.name }}
+            {% if tag.permission_selected %}<i class="bi bi-check-lg me-1" aria-hidden="true"></i>{% else if tag.permission_excluded %}Not {% endif %}{{ tag.name }}
         </button>
         {% endfor %}
     </div>
@@ -156,7 +157,7 @@
     <div class="d-flex align-items-center gap-2 mb-2 boreal-report-hide">
         <label class="small fw-semibold" for="my-drive-apply-tag">Apply {% if active_page == "my-drive" %}My Drive{% else if active_page == "shared-with-me" %}Shared with me{% else %}Shared Drive{% endif %} tag:</label>
         <select id="my-drive-apply-tag" class="form-select form-select-sm w-auto" name="tag" required>
-            {% for tag in tags %}<option value="{{ tag.slug }}" title="{{ tag.description }}">{{ tag.name }}</option>{% endfor %}
+            {% for tag in tags %}<option value="{{ tag.slug }}" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)">{{ tag.name }}</option>{% endfor %}
         </select>
         <button id="my-drive-apply-tag-button" class="btn btn-sm btn-outline-primary" type="submit" disabled>
             <i class="bi bi-tag me-1"></i>Apply
@@ -167,7 +168,7 @@
         <button id="my-drive-update-metadata-button" class="btn btn-sm btn-outline-primary" type="submit" formaction="/metadata/update-selected" disabled>
             <i class="bi bi-arrow-clockwise me-1"></i>Update metadata
         </button>
-        {% if active_page == "my-drive" || active_page == "shared-with-me" %}
+        {% if active_page == "my-drive" || active_page == "shared-with-me" || active_page == "shared-drives" %}
         <button id="my-drive-migrate-button" class="btn btn-sm btn-outline-success" type="submit" formaction="/migrations/new" disabled>
             <i class="bi bi-arrow-right-circle me-1"></i>Migrate
         </button>
@@ -178,7 +179,7 @@
 
 <div class="card boreal-explorer-card flex-grow-1 overflow-hidden">
     <div class="table-responsive boreal-explorer-table">
-        <table class="table table-hover align-middle mb-0">
+        <table data-column-widths="my-drive" class="table table-hover align-middle mb-0">
             <colgroup>
                 <col class="boreal-col-select">
                 <col class="boreal-col-gdrive">
@@ -232,7 +233,7 @@
                             {{ row.name }}
                         </a>
                         <a class="boreal-print-only small ms-1" href="{{ row.drive_url }}" title="Open {{ row.name }} in Google Drive">Open in Google Drive</a>
-                        <span class="boreal-item-tags">{% for tag in row.tags %}<span class="badge rounded-pill ms-1" style="background-color: {{ tag.color }}; color: {{ tag.text_color }};" title="{{ tag.description }}">{{ tag.name }}</span>{% endfor %}</span>
+                        <span class="boreal-item-tags">{% for tag in row.tags %}<span class="badge rounded-pill ms-1" style="background-color: {{ tag.color }}; color: {{ tag.text_color }};" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)">{{ tag.name }}</span>{% endfor %}</span>
                         {% if row.is_deleted %}<span class="badge rounded-pill text-bg-secondary ms-1">Deleted</span>{% endif %}
                     </th>
                     <td class="text-nowrap small">{{ row.size }}</td>
@@ -280,13 +281,7 @@
             button.addEventListener("click", () => {
                 const tagFilterInput = document.getElementById(button.dataset.filterInput);
                 const requestedTag = button.dataset.tagValue;
-                if (button.dataset.negatable === "true" && requestedTag !== "") {
-                    tagFilterInput.value = tagFilterInput.value === requestedTag
-                        ? `!${requestedTag}`
-                        : tagFilterInput.value === `!${requestedTag}` ? "" : requestedTag;
-                } else {
-                    tagFilterInput.value = requestedTag === tagFilterInput.value ? "" : requestedTag;
-                }
+                tagFilterInput.value = window.borealToggleTag(tagFilterInput.value, requestedTag);
                 tagFilterForm.requestSubmit();
             });
         });

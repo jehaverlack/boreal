@@ -87,6 +87,30 @@ async fn run_boreal() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
+    if !matches!(webapp.listen.as_str(), "127.0.0.1" | "localhost" | "::1") {
+        return Err("BOREAL refuses to listen on a non-local address".into());
+    }
+    // Reserve the port before starting services so simultaneous launches do not
+    // initialize two copies of the database, tray, or Rclone services.
+    let listener = match tokio::net::TcpListener::bind((webapp.listen.as_str(), webapp.port)).await
+    {
+        Ok(listener) => listener,
+        Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            while tokio::time::Instant::now() < deadline {
+                if existing_instance(&webapp.listen, webapp.port).await {
+                    if let Err(error) = webbrowser::open(&web_url) {
+                        std::eprintln!("Unable to open the existing BOREAL WebUI: {error}");
+                    }
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            return Err(error.into());
+        }
+        Err(error) => return Err(error.into()),
+    };
+
     let metadata: serde_json::Value = serde_json::from_str(include_str!("../metadata.json"))?;
     let maturity = metadata
         .pointer("/METADATA/maturity")
@@ -102,13 +126,7 @@ async fn run_boreal() -> Result<(), Box<dyn Error>> {
         env!("CARGO_PKG_VERSION")
     );
 
-    println!("BOREAL home: {}", runtime.boreal_home.display());
-
-    println!("Configured directories:");
-
-    for (name, path) in &runtime.directories {
-        println!("  {:<12} {}", name, path.display());
-    }
+    log::info!("BOREAL runtime directories initialized");
 
     let state = Arc::new(AppState::new(runtime));
     desktop::register_state(&state);
@@ -119,7 +137,7 @@ async fn run_boreal() -> Result<(), Box<dyn Error>> {
     AppState::initialize_rclone(Arc::clone(&state));
     AppState::start_update_monitor(Arc::clone(&state));
 
-    let web_result = web::run(Arc::clone(&state)).await;
+    let web_result = web::run(Arc::clone(&state), listener).await;
 
     state.request_shutdown();
 
@@ -142,19 +160,25 @@ async fn run_boreal() -> Result<(), Box<dyn Error>> {
 /// Confirm that the configured local endpoint is another running BOREAL
 /// instance, rather than treating every occupied port as BOREAL.
 async fn existing_instance(host: &str, port: u16) -> bool {
-    let address = format!("{host}:{port}");
+    if !matches!(host, "127.0.0.1" | "localhost" | "::1") {
+        return false;
+    }
+    let authority = if host == "::1" {
+        format!("[::1]:{port}")
+    } else {
+        format!("{host}:{port}")
+    };
     let probe = async {
-        let mut stream = tokio::net::TcpStream::connect(address).await.ok()?;
-        let request = format!(
-            "GET /app/instance HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n"
-        );
+        let mut stream = tokio::net::TcpStream::connect((host, port)).await.ok()?;
+        let request =
+            format!("GET /app/instance HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n");
         stream.write_all(request.as_bytes()).await.ok()?;
-        let mut response = [0_u8; 512];
-        let count = stream.read(&mut response).await.ok()?;
-        let response = std::str::from_utf8(&response[..count]).ok()?;
+        let mut response = Vec::new();
+        stream.take(4096).read_to_end(&mut response).await.ok()?;
+        let response = std::str::from_utf8(&response).ok()?;
         Some(is_boreal_instance_response(response))
     };
-    tokio::time::timeout(Duration::from_millis(750), probe)
+    tokio::time::timeout(Duration::from_secs(2), probe)
         .await
         .ok()
         .flatten()
@@ -163,12 +187,39 @@ async fn existing_instance(host: &str, port: u16) -> bool {
 
 fn is_boreal_instance_response(response: &str) -> bool {
     (response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200"))
-        && response.contains("\r\n\r\nBOREAL")
+        && response
+            .split_once("\r\n\r\n")
+            .is_some_and(|(_, body)| body.trim() == "BOREAL")
 }
 
 #[cfg(test)]
 mod desktop_instance_tests {
     use super::is_boreal_instance_response;
+
+    #[tokio::test]
+    async fn detects_an_instance_with_a_fragmented_response() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request).await.unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nBO")
+                .await
+                .unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            stream.write_all(b"REAL").await.unwrap();
+        });
+        assert!(super::existing_instance("127.0.0.1", port).await);
+        server.await.unwrap();
+        assert!(!is_boreal_instance_response(
+            "HTTP/1.1 200 OK\r\n\r\nBOREAL-OTHER"
+        ));
+    }
 
     #[test]
     fn recognizes_an_existing_boreal_status_response() {

@@ -1,0 +1,37 @@
+<p class="small">Persons is an independent local dataset. <a href="/directory">Add people or import a CSV</a> without enabling Google Drive. Linking a Google Sheet below is optional and requires a read-only Google connection.</p>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+                        <span class="small text-body-secondary">Need a persons spreadsheet?</span>
+                        <a class="btn btn-sm btn-outline-success"
+                           href="https://docs.google.com/spreadsheets/d/1Z7899ztliEN3SHHG6cLOc0rORf5f0V0gTsexIW0WUtU/copy"
+                           target="_blank" rel="noopener noreferrer">
+                            <i class="bi bi-files me-1"></i>Create from BOREAL template
+                        </a>
+                    </div>
+                    <label class="form-label" for="directorySheetUrl">Google Sheets URL</label>
+                    <input class="form-control" type="url" id="directorySheetUrl"
+                           name="directory_sheet_url" value="{{ settings.directory_sheet_url }}"
+                           placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=0">
+                    <div class="form-text text-body">
+                        BOREAL uses the authenticated read-only Drive account. That account must be able to view and export the selected worksheet.
+                    </div>
+                    {% if settings.directory_sheet_enabled && settings.directory_sheet_url.len() > 0 %}
+                    <div class="mt-3">
+                        <a class="btn btn-sm btn-outline-primary"
+                           href="{{ settings.directory_sheet_url }}"
+                           target="_blank" rel="noopener noreferrer">
+                            <i class="bi bi-file-earmark-spreadsheet me-1"></i>Open Persons Sheet
+                        </a>
+                    </div>
+                    {% endif %}
+                    {% if directory_source.configured %}
+                    <div class="small mt-3">
+                        {% if directory_source.last_error.len() > 0 %}
+                        <div class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i>{{ directory_source.last_error }}</div>
+                        {% else if directory_source.last_success_at.len() > 0 %}
+                        <div class="text-success"><i class="bi bi-check-circle me-1"></i>Last imported {{ directory_source.last_success_at }} UTC</div>
+                        {% endif %}
+                        {% if directory_source.last_attempt_at.len() > 0 %}
+                        <div class="text-body-secondary">Last attempted {{ directory_source.last_attempt_at }} UTC</div>
+                        {% endif %}
+                    </div>
+                    {% endif %}<div class="mt-3 d-flex flex-wrap gap-2"><a class="btn btn-sm btn-outline-secondary" href="/remotes">Manage Google remote</a><button type="submit" class="btn btn-sm btn-outline-primary" formaction="/settings/directory/test">Save and test Sheet access</button></div>

@@ -1,7 +1,4 @@
-use std::{
-    fmt, fs,
-    path::{Path, PathBuf},
-};
+use std::{fmt, fs, path::PathBuf};
 
 use serde::Deserialize;
 
@@ -88,8 +85,8 @@ pub fn detect(runtime: &Runtime) -> Result<Option<GoogleClientConfig>, GoogleErr
 
 /// Validate a Google Desktop OAuth credentials JSON file.
 pub fn validate(data: &[u8]) -> Result<GoogleClientConfig, GoogleError> {
-    let credentials: GoogleCredentialsFile = serde_json::from_slice(data)
-        .map_err(|error| format!("Invalid Google client JSON: {error}"))?;
+    let credentials: GoogleCredentialsFile =
+        serde_json::from_slice(data).map_err(|_| "Invalid Google Desktop client JSON")?;
 
     let installed = credentials.installed;
 
@@ -131,46 +128,92 @@ pub fn validate(data: &[u8]) -> Result<GoogleClientConfig, GoogleError> {
 /// The original Google-generated JSON is preserved.
 pub fn import(runtime: &Runtime, data: &[u8]) -> Result<GoogleClientConfig, GoogleError> {
     let config = validate(data)?;
-
-    let config_path = path(runtime)?;
-
-    let parent = config_path
-        .parent()
-        .ok_or("Unable to determine Google client configuration directory")?;
-
-    fs::create_dir_all(parent)?;
-
-    fs::write(&config_path, data).map_err(|error| {
-        format!(
-            "Unable to save Google client configuration {}: {error}",
-            config_path.display()
-        )
-    })?;
-
-    set_private_permissions(&config_path)?;
-
-    println!(
-        "Google OAuth client configuration saved: {}",
-        config_path.display()
-    );
-
+    // Import only Desktop application configuration. Retired shared-account/profile
+    // fields must never change the existing per-remote Rclone authorization.
+    let value: serde_json::Value =
+        serde_json::from_slice(data).map_err(|_| "Invalid Google Desktop client JSON")?;
+    let data = serde_json::to_vec(&serde_json::json!({"installed": value["installed"]}))?;
+    private_write(&path(runtime)?, &data)?;
     Ok(config)
 }
 
-#[cfg(unix)]
-fn set_private_permissions(path: &Path) -> Result<(), GoogleError> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let mut permissions = fs::metadata(path)?.permissions();
-
-    permissions.set_mode(0o600);
-
-    fs::set_permissions(path, permissions)?;
-
-    Ok(())
+fn private_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), GoogleError> {
+    use std::io::Write;
+    let parent = path
+        .parent()
+        .ok_or("Invalid Google client configuration path")?;
+    fs::create_dir_all(parent)?;
+    let mut random = [0u8; 16];
+    getrandom::fill(&mut random).map_err(|_| "Unable to prepare private client configuration")?;
+    let suffix: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    let temp = parent.join(format!(".google-client-{suffix}.tmp"));
+    let result = (|| -> Result<(), GoogleError> {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        fs::rename(&temp, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temp);
+    }
+    result.map_err(|_| "Unable to save Google client configuration privately".into())
 }
 
-#[cfg(windows)]
-fn set_private_permissions(_path: &Path) -> Result<(), GoogleError> {
-    Ok(())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn desktop_import_preserves_remote_credentials_and_ignores_retired_profile() {
+        let folder = std::env::temp_dir().join(format!(
+            "boreal-client-restore-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&folder).unwrap();
+        let runtime = Runtime {
+            boreal_home: folder.clone(),
+            boreal: serde_json::json!({}),
+            directories: std::collections::BTreeMap::from([("CONF".into(), folder.clone())]),
+        };
+        let remote = b"[my-drive-ro]\ntoken = synthetic-ro\n[my-drive-rw]\ntoken = synthetic-rw\n";
+        fs::write(folder.join("rclone.conf"), remote).unwrap();
+        let input = serde_json::json!({"installed":{"client_id":"test.apps.googleusercontent.com","client_secret":"synthetic-client","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token"},"boreal_google":{"groups_deployment":"old-helper","directory_admin":true}});
+        import(&runtime, input.to_string().as_bytes()).unwrap();
+        assert_eq!(fs::read(folder.join("rclone.conf")).unwrap(), remote);
+        assert!(!folder.join("google-account.json").exists());
+        assert!(!folder.join("google-connection.json").exists());
+        let saved = fs::read(path(&runtime).unwrap()).unwrap();
+        assert!(
+            serde_json::from_slice::<serde_json::Value>(&saved)
+                .unwrap()
+                .get("boreal_google")
+                .is_none()
+        );
+        assert!(import(&runtime, b"invalid").is_err());
+        assert_eq!(fs::read(path(&runtime).unwrap()).unwrap(), saved);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(path(&runtime).unwrap())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        fs::remove_dir_all(folder).unwrap();
+    }
 }

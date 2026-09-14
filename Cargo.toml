@@ -1,15 +1,17 @@
 [package]
 name = "boreal"
-version = "1.1.1"
+version = "1.2.0"
 edition = "2024"
 
 [dependencies]
+base64 = "0.22.1"
+getrandom = "0.4.3"
 askama = "0.16.0"
 axum = { version = "0.8.9", features = ["multipart"] }
 dirs = "6.0.0"
 libc = "0.2.189"
 log = "0.4.34"
-reqwest = { version = "0.13.2", default-features = false, features = ["blocking", "json", "query", "rustls"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["blocking", "form", "json", "query", "rustls"] }
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal", "pollster"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }

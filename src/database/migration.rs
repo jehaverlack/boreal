@@ -6,6 +6,7 @@ use super::{Database, DatabaseError};
 pub struct MigrationJob {
     pub id: i64,
     pub source_kind: String,
+    pub source_scope: String,
     pub operation_kind: String,
     pub status: String,
     pub phase: String,
@@ -89,11 +90,27 @@ pub fn create(
     item_ids: &[String],
     operation_kind: &str,
 ) -> Result<i64, DatabaseError> {
-    if !matches!(source_kind, "my-drive" | "shared-with-me")
+    if !matches!(source_kind, "my-drive" | "shared-with-me" | "shared-drive")
         || !matches!(operation_kind, "drive-copy" | "local-download")
         || item_ids.is_empty()
     {
-        return Err("Select at least one My Drive or Shared with Me item".into());
+        return Err("Select at least one Drive item".into());
+    }
+    if source_kind == "shared-drive" {
+        let drive_id = source_scope
+            .strip_prefix(super::inventory::SHARED_DRIVE_SCOPE_PREFIX)
+            .filter(|id| {
+                !id.is_empty()
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            })
+            .ok_or("Invalid Shared Drive source")?;
+        let drive = super::inventory::get_shared_drive(database, drive_id)?
+            .ok_or("Shared Drive is not indexed")?;
+        if !drive.is_accessible || drive.inventory_scope != source_scope {
+            return Err("Shared Drive source is unavailable".into());
+        }
     }
     let mut connection = database.connect()?;
     let transaction = connection.transaction()?;
@@ -222,7 +239,7 @@ pub fn list(
                 files_copied, bytes_copied, exceptions_count, created_at,
                 COALESCE(started_at, ''), COALESCE(completed_at, ''), error_message,
                 COALESCE(archived_at, ''), destination_drive_id, destination_folder_id,
-                COALESCE(copy_completed_at, ''), resume_count
+                COALESCE(copy_completed_at, ''), resume_count, source_scope
          FROM migration_jobs mj
          WHERE (?1 OR mj.archived_at IS NULL)
            AND (?2 = '' OR CAST(mj.id AS TEXT) LIKE ?3 OR mj.source_kind LIKE ?3
@@ -260,7 +277,7 @@ pub fn get(database: &Database, id: i64) -> Result<Option<MigrationJob>, Databas
                     files_copied, bytes_copied, exceptions_count, created_at,
                     COALESCE(started_at, ''), COALESCE(completed_at, ''), error_message
                     , COALESCE(archived_at, ''), destination_drive_id, destination_folder_id,
-                    COALESCE(copy_completed_at, ''), resume_count
+                    COALESCE(copy_completed_at, ''), resume_count, source_scope
              FROM migration_jobs WHERE id = ?1",
             [id],
             job_from_row,
@@ -451,6 +468,7 @@ pub fn complete_copy(database: &Database, id: i64) -> Result<(), DatabaseError> 
           AND scope.scope = CASE job.source_kind
               WHEN 'my-drive' THEN 'my-drive'
               WHEN 'shared-with-me' THEN 'shared-with-me'
+              WHEN 'shared-drive' THEN 'shared-drives'
           END
          WHERE job.id = ?1 AND job.operation_kind = 'drive-copy'
            AND source.status = 'completed'",
@@ -560,6 +578,7 @@ fn job_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MigrationJob> {
     Ok(MigrationJob {
         id: row.get(0)?,
         source_kind: row.get(1)?,
+        source_scope: row.get(25)?,
         operation_kind: row.get(2)?,
         status: row.get(3)?,
         phase: row.get(4)?,

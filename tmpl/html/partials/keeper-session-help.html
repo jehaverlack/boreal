@@ -1,0 +1,24 @@
+<h3 class="h5">3. Allow Commander to resume your login</h3>
+<p>At the authenticated <strong>Keeper vault prompt</strong>, run:</p>
+<pre class="border rounded bg-body-tertiary p-2"><code>this-device register</code></pre>
+<p>If your organization permits persistent login (Stay Logged In), then run:</p>
+<pre class="border rounded bg-body-tertiary p-2"><code>this-device persistent-login on</code></pre>
+<p>These are Commander commands, not commands for your normal terminal. A message that the device is already registered is fine. Persistent login lets Commander resume access for BOREAL's background updates; it does not guarantee that you will never need to sign in again.</p>
+<h3 class="h5">4. Check access from a separate terminal</h3>
+<p>Leave the Keeper shell open. In a <strong>second terminal window</strong>, run the same startup command from step 2, changing only the final <code>shell</code> to <code>login-status</code>.</p>
+<p>For an installation available as <code>keeper</code> on Linux or macOS:</p>
+<pre class="border rounded bg-body-tertiary p-2"><code>keeper --config "$HOME/.boreal/conf/keeper/config.json" login-status</code></pre>
+<p>For the Windows PowerShell installation shown in Setup Keeper:</p>
+<pre class="border rounded bg-body-tertiary p-2"><code>&amp; "$env:LOCALAPPDATA\boreal\keeper-env\Scripts\keeper.exe" --config "$env:LOCALAPPDATA\boreal\conf\keeper\config.json" login-status</code></pre>
+<p>Use the same executable and configuration path as BOREAL, including any custom paths. The result should be <strong>Logged in</strong>. An authenticated shell or a browser signed into Keeper alone does not prove that a new process can resume access.</p>
+<p>In BOREAL, open <strong>App → Settings → Keeper → Configure</strong>, enable Keeper, and select <strong>Save and test access</strong>. Once the test succeeds, use <strong>Update metadata → Keeper vault metadata</strong>.</p>
+<details class="mb-3">
+    <summary>Still not logged in, or access stopped working?</summary>
+    <ul class="mt-2">
+        <li>Repeat step 2 using BOREAL's configured executable and config path, complete SSO/MFA, and repeat the separate-terminal check. Restoring an older <code>.boreal</code> directory may restore an older configuration without a usable saved session.</li>
+        <li>Run BOREAL and Commander as the same operating-system user, with access to the same unlocked system keyring. A message such as <strong>Config stored in system keyring (Secret Service)</strong> means Commander uses protected system storage; the JSON file alone is not the complete login state.</li>
+        <li>If persistent login is blocked by your organization's policy, BOREAL cannot bypass it. Your Keeper administrator can confirm whether background access is allowed.</li>
+        <li>If <code>login-status</code> says <strong>Logged in</strong> but BOREAL's test fails, check the executable path in Configure Keeper and use the pip or pipx installation described in step 1.</li>
+    </ul>
+    <p class="mb-0"><a href="https://docs.keeper.io/secrets-manager/commander-cli/using-commander/command-reference/misc-commands" target="_blank" rel="noopener noreferrer">Keeper's device and login-status command reference</a></p>
+</details>

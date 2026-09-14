@@ -2,7 +2,8 @@
     <div class="d-flex flex-column">
     {% if google_drive_enabled %}
     <section class="mb-4 order-3" aria-labelledby="google-drive-summary-heading">
-        <h1 class="h4 mb-3 boreal-google-drive-color" id="google-drive-summary-heading"><img class="boreal-service-icon me-2" src="/assets/google-drive-logo.svg" alt="">Google Drive</h1>
+        <h1 class="h4 mb-3 boreal-google-drive-color" id="google-drive-summary-heading"><img class="boreal-service-icon me-2" src="/assets/google-drive-logo.svg" alt="">Google Resources</h1>
+    {% if google_drive_enabled %}
     <div class="mb-4" aria-labelledby="my-drive-summary-heading">
         <div class="d-flex justify-content-between align-items-center mb-2">
             <h2 class="h5 mb-0" id="my-drive-summary-heading">
@@ -78,6 +79,7 @@
             {% endif %}
         </div></div>
     </div>
+    {% endif %}
     </section>
     {% endif %}
 
@@ -123,18 +125,20 @@
         {% if keeper_enabled %}
         <section class="mb-4" style="order: 6" aria-labelledby="keeper-summary-heading">
             <div class="d-flex justify-content-between align-items-center mb-2">
-                <h2 class="h4 mb-0" id="keeper-summary-heading"><a class="boreal-keeper-color text-decoration-none" href="/keeper"><i class="bi bi-shield-lock-fill me-2"></i>Keeper</a></h2>
+                <h2 class="h4 mb-0" id="keeper-summary-heading"><a class="boreal-keeper-color text-decoration-none" href="/keeper"><img class="boreal-service-icon me-2" src="/assets/keeper-logo.svg" alt="">Keeper</a></h2>
                 {% if keeper_summary.completed_at.len() > 0 %}<span class="badge text-bg-success">Indexed</span>{% else %}<span class="badge text-bg-warning">Not indexed</span>{% endif %}
             </div>
             <div class="card"><div class="card-body">
                 {% if keeper_summary.completed_at.len() > 0 %}
-                <div class="row g-3">
-                    <div class="col-6 col-xl"><div class="small text-body-secondary">Shared folders</div><div class="fs-4 fw-semibold">{{ keeper_summary.shared_folders }}</div></div>
-                    <div class="col-6 col-xl"><div class="small text-body-secondary">People / teams</div><div class="fs-4 fw-semibold">{{ keeper_summary.shared_with }}</div></div>
-                    <div class="col-6 col-xl"><div class="small text-body-secondary">Managed folders</div><div class="fs-4 fw-semibold">{{ keeper_summary.managed_folders }}</div></div>
-                    <div class="col-12"><div class="small text-body-secondary">Metadata age</div><div class="fs-5 fw-semibold boreal-data-age" data-synchronized-at="{{ keeper_summary.completed_at }}">just now</div></div>
+                <div class="d-flex flex-nowrap justify-content-between gap-3 overflow-auto">
+                    <div class="flex-shrink-0 text-nowrap"><div class="small text-body-secondary">Folders</div><div class="fs-4 fw-semibold">{{ keeper_summary.folders }}</div></div>
+                    <div class="flex-shrink-0 text-nowrap"><div class="small text-body-secondary">Records</div><div class="fs-4 fw-semibold">{{ keeper_summary.records }}</div></div>
+                    <div class="flex-shrink-0 text-nowrap"><div class="small text-body-secondary">Shared folders</div><div class="fs-4 fw-semibold">{{ keeper_summary.shared_folders }}</div></div>
+                    <div class="flex-shrink-0 text-nowrap"><div class="small text-body-secondary">People / teams</div><div class="fs-4 fw-semibold">{{ keeper_summary.shared_with }}</div></div>
+                    <div class="flex-shrink-0 text-nowrap"><div class="small text-body-secondary">Managed folders</div><div class="fs-4 fw-semibold">{{ keeper_summary.managed_folders }}</div></div>
+                    <div class="flex-shrink-0 text-nowrap"><div class="small text-body-secondary">Metadata age</div><div class="fs-4 fw-semibold boreal-data-age" data-synchronized-at="{{ keeper_summary.completed_at }}">just now</div></div>
                 </div>
-                {% else %}<p class="text-body-secondary mb-0">Select Keeper shared folders from Update to populate this summary.</p>{% endif %}
+                {% else %}<p class="text-body-secondary mb-0">Select Keeper from Update to populate this summary.</p>{% endif %}
             </div></div>
         </section>
         {% endif %}
