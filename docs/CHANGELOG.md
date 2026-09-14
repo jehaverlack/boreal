@@ -11,6 +11,9 @@
 
 ## v1.2.0 - 2026-09-14 (STABLE)
 
+- Fixing Manage Remotes Button
+- v1.2.0
+- v1.2.0
 - Updating Keeper Docs
 - v1.2.0 Candidate
 - Major Refactor
@@ -340,6 +343,9 @@ Added Migration Assitant and Polished Interfaces
 **Summary**
 Project Initialization
 
+- Fixing Manage Remotes Button
+- v1.2.0
+- v1.2.0
 - Updating Keeper Docs
 - v1.2.0 Candidate
 - Major Refactor
