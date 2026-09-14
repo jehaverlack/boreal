@@ -1,6 +1,18 @@
 {% extends "base.html" %}
 {% block content %}
 <style>
+.btn-manage-remotes {
+    --bs-btn-color: #6f42c1;
+    --bs-btn-bg: transparent;
+    --bs-btn-border-color: #6f42c1;
+    --bs-btn-hover-color: #fff;
+    --bs-btn-hover-bg: #6f42c1;
+    --bs-btn-hover-border-color: #6f42c1;
+    --bs-btn-focus-shadow-rgb: 111, 66, 193;
+    --bs-btn-active-color: #fff;
+    --bs-btn-active-bg: #4e2e87;
+    --bs-btn-active-border-color: #4e2e87;
+}
 @media (max-width: 767.98px) {
     #boreal-service-table thead { display: none; }
     #boreal-service-table tbody { display: block; }
@@ -14,7 +26,7 @@
 <div class="mx-auto" style="max-width: 1200px">
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
 <div><h1 class="h3"><i class="bi bi-gear me-2"></i>Settings</h1><p class="text-body-secondary mb-0">Choose a data source, configure its access, then use Update to import metadata.</p></div>
-<a class="btn btn-outline-secondary" href="/remotes"><i class="bi bi-plug me-1"></i>Storage remotes</a></div>
+<a class="btn btn-sm btn-manage-remotes text-nowrap" href="/remotes"><i class="bi bi-plug me-1"></i>Manage Remotes</a></div>
 {% if saved %}<div class="alert alert-success alert-dismissible" role="status">Changes saved. <button class="btn-close" type="button" data-bs-dismiss="alert" aria-label="Dismiss"></button></div>{% endif %}
 {% if !error.is_empty() %}<div class="alert alert-danger alert-dismissible" role="alert">{{ error }}<button class="btn-close" type="button" data-bs-dismiss="alert" aria-label="Dismiss"></button></div>{% endif %}
 {% if !notice.is_empty() %}<div class="alert alert-success alert-dismissible" role="status">{{ notice }}<button class="btn-close" type="button" data-bs-dismiss="alert" aria-label="Dismiss"></button></div>{% endif %}
@@ -24,7 +36,9 @@
 <th scope="row"><div class="d-flex align-items-center gap-2 {{ service.color }}">{% if service.image.is_empty() %}<i class="bi {{ service.icon }}"></i>{% else %}<img class="boreal-service-icon" src="{{ service.image }}" alt="">{% endif %}{{ service.name }}{% if service.key == "s3" %}<span class="badge text-bg-warning">Experimental</span>{% endif %}</div><div class="small text-body-secondary fw-normal mt-1">{{ service.description }}</div></th>
 <td><span class="badge {% if service.enabled %}text-bg-success{% else %}text-bg-secondary{% endif %}">{% if service.key == "persons" %}Always available{% else if service.enabled %}On{% else %}Off{% endif %}</span></td>
 <td><span class="badge {{ service.status_class }}">{{ service.status }}</span><div class="small text-body-secondary mt-1">{{ service.next_step }}</div></td>
-<td class="text-end"><button class="btn btn-sm btn-outline-primary text-nowrap" type="button" data-bs-toggle="modal" data-bs-target="#service-{{ service.key }}" aria-label="Configure {{ service.name }}"><i class="bi bi-gear me-1"></i>Configure</button></td>
+<td class="text-end"><div class="d-inline-flex flex-column gap-2"><button class="btn btn-sm btn-outline-primary text-nowrap" type="button" data-bs-toggle="modal" data-bs-target="#service-{{ service.key }}" aria-label="Configure {{ service.name }}"><i class="bi bi-gear me-1"></i>Configure</button>
+{% if service.key == "google-drive" %}<a class="btn btn-sm btn-manage-remotes text-nowrap" href="/remotes"><i class="bi bi-plug me-1"></i>Manage Remotes</a>{% endif %}
+</div></td>
 </tr>{% endfor %}</tbody></table></div></div>
 <p class="small text-body-secondary mt-3">Each service saves independently. Turning a service off preserves its connections and imported data. Persons works without any connected service.</p>
 <div class="d-flex flex-wrap gap-2"><button type="button" class="btn btn-outline-success" data-bs-toggle="modal" data-bs-target="#googleSetupModal"><img class="boreal-service-icon me-1" src="/assets/google-g.png" alt="">Google setup guide</button><button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#metadataUpdateModal"><i class="bi bi-arrow-repeat me-1"></i>Update metadata</button></div>
