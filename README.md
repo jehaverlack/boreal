@@ -10,7 +10,7 @@
 | **License** | MIT |
 | **Version** | 1.2.0 |
 | **Maturity** | STABLE |
-| **Date** | 2026-09-08 |
+| **Date** | 2026-09-14 |
 
 > AI Attestation: Generative AI was used in the development of this codebase.
 > The architecture and design goals are those of the author.
