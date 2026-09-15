@@ -1,6 +1,13 @@
 {
   "releases": [
     {
+      "version": "1.2.1",
+      "date": "2026-09-15",
+      "maturity": "STABLE",
+      "summary": "",
+      "notes": ""
+    },
+    {
       "version": "1.2.0",
       "date": "2026-09-14",
       "maturity": "STABLE",

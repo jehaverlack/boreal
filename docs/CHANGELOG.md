@@ -5,12 +5,20 @@
 | **Name** | boreal |
 | **Author** | John Haverlack |
 | **License** | MIT |
-| **Version** | 1.2.0 |
+| **Version** | 1.2.1 |
 | **Maturity** | STABLE |
-| **Date** | 2026-09-14 |
+| **Date** | 2026-09-15 |
+
+## v1.2.1 - 2026-09-15 (STABLE)
+
+- Adding Duplicate Detection
+- Fixed Explorer Performance
+- Start v1.2.1
 
 ## v1.2.0 - 2026-09-14 (STABLE)
 
+- v1.2.0
+- v1.2.0
 - Fixing Manage Remotes Button
 - v1.2.0
 - v1.2.0
@@ -343,20 +351,7 @@ Added Migration Assitant and Polished Interfaces
 **Summary**
 Project Initialization
 
-- Fixing Manage Remotes Button
-- v1.2.0
-- v1.2.0
-- Updating Keeper Docs
-- v1.2.0 Candidate
-- Major Refactor
-- Failed GGroup Attempt
-- Google Services
-- Deep Dive UX
-- Column Widths
-- Keeper Explorer
-- Keeper Explorer
-- Keeper Explorer
-- Keeper Explorer
-- Fixing Github Security Issues
-- Start v1.2.0
+- Adding Duplicate Detection
+- Fixed Explorer Performance
+- Start v1.2.1
 
