@@ -5,12 +5,18 @@
 | **Name** | boreal |
 | **Author** | John Haverlack |
 | **License** | MIT |
-| **Version** | 1.2.1 |
+| **Version** | 1.2.2 |
 | **Maturity** | STABLE |
 | **Date** | 2026-09-15 |
 
+## v1.2.2 - 2026-09-15 (STABLE)
+
+- Start v1.2.2
+
 ## v1.2.1 - 2026-09-15 (STABLE)
 
+- v1.2.1
+- v1.2.1
 - Adding Duplicate Detection
 - Fixed Explorer Performance
 - Start v1.2.1
@@ -351,7 +357,5 @@ Added Migration Assitant and Polished Interfaces
 **Summary**
 Project Initialization
 
-- Adding Duplicate Detection
-- Fixed Explorer Performance
-- Start v1.2.1
+- Start v1.2.2
 

@@ -38,7 +38,7 @@ window.fetch = (url, options = {}) => {
  assert(scroll.clientHeight <= 200 && scroll.scrollHeight > scroll.clientHeight, 'permission entries must scroll within 200px');
  assert(document.querySelector('[data-page-step="-1"]').disabled, 'first page has no Previous');
  assert(!document.querySelector('[data-page-step="1"]').disabled, 'Next is enabled');
- select(true,true);
+ assert(!document.getElementById('explorer-select-matching').hidden, 'all-page selection is available before selecting rows');
  document.getElementById('explorer-select-matching').click(); submit('apply');
  assert(posts.length === 1 && posts[0].get('selected_item_ids') === 'one,two' && posts[0].get('all_matching') === 'true', 'first operation captures first selection');
  assert(document.querySelector('.boreal-pending-tag')?.textContent === 'Review', 'optimistic tag appears immediately');

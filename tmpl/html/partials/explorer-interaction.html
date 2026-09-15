@@ -60,7 +60,7 @@
     });
     function selectionChanged() {
         const selected = boxes().filter(box => box.checked);
-        selectMatching.hidden = !form || resultsStale || busy() || allMatching || selected.length !== boxes().length || !selected.length || Number(pager.dataset.total) <= boxes().length;
+        selectMatching.hidden = !form || resultsStale || busy() || allMatching || Number(pager.dataset.total) === 0;
         clear.hidden = !allMatching && !selected.length;
     }
     document.addEventListener('change', event => {
@@ -74,6 +74,8 @@
     });
     selectMatching.addEventListener('click', () => {
         if (resultsStale || busy()) { status.textContent = 'Refresh saved results before selecting all matching entries.'; return; }
+        boxes().forEach(box => box.checked = true);
+        boxes()[0]?.dispatchEvent(new Event('change', {bubbles:true}));
         allMatching = true; selectionChanged();
         status.textContent = `All ${pager.dataset.total} matching entries selected for the next tag action. Drive folder tags also apply to descendants.`;
     });

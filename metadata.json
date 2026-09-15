@@ -5,7 +5,7 @@
     "description": "Browser-based Organizer for Rclone Exploration, Audit and Lookup",
     "abbr": "BOREAL",
     "icon": "fa-solid fa-cloud-bolt",
-    "version": "1.2.1",
+    "version": "1.2.2",
     "version_date": "2026-09-15",
     "maturity": "STABLE",
     "author": "John Haverlack",
