@@ -194,7 +194,9 @@ struct DirectoryBatch {
 
 #[derive(Default)]
 struct OwnershipCache {
+    #[cfg(unix)]
     users: HashMap<u32, String>,
+    #[cfg(unix)]
     groups: HashMap<u32, String>,
 }
 

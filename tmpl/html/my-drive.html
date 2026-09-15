@@ -48,7 +48,8 @@
 <div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-triangle me-2"></i>{{ error }}</div>
 {% endif %}
 
-{% if has_parent %}<div class="d-flex align-items-center gap-2 mb-3"><span class="small text-body-secondary">Location:</span><span class="fw-semibold">{{ current_path }}</span></div>{% endif %}
+{% if duplicates && !duplicates_current %}<p class="small text-body-secondary">Showing live duplicate candidates across all indexed folders in this Drive inventory. Other filters can hide members of a matching group.</p>{% endif %}
+{% if has_parent && (!duplicates || duplicates_current) %}<div class="d-flex align-items-center gap-2 mb-3"><span class="small text-body-secondary">Location:</span><span class="fw-semibold">{{ current_path }}</span></div>{% endif %}
 
 <form id="my-drive-filter-form" method="get" action="{{ explorer_path }}" class="row g-2 mb-3 boreal-report-hide" role="search">
     <input type="hidden" name="drive" value="{{ drive_id }}">
@@ -103,6 +104,16 @@
         </button>
         {% endfor %}
     </div>
+    <div class="col-12 form-check ms-2">
+        <input class="form-check-input" type="checkbox" name="duplicates" value="true" id="drive-duplicates" {% if duplicates %}checked{% endif %}>
+        <label class="form-check-label" for="drive-duplicates">Duplicate candidates (all folders in this Drive inventory)</label>
+        <div class="small text-body-secondary">Files: same exact name, type, and known size. Folders: same exact name. Matching metadata does not prove identical contents.</div>
+    </div>
+    <div class="col-12 form-check ms-2">
+        <input class="form-check-input" type="checkbox" name="duplicates_current" value="true" id="drive-duplicates-current" {% if duplicates_current %}checked{% endif %}>
+        <label class="form-check-label" for="drive-duplicates-current">Duplicate candidates (current folder only)</label>
+        <div class="small text-body-secondary">Compare immediate children of the current folder, including the top level. Takes priority when both options are checked. Other filters can hide matching group members.</div>
+    </div>
     <div class="col-auto"><button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel me-1"></i>Apply filters</button></div>
     <div class="col-auto"><a class="btn btn-sm btn-outline-secondary" href="{{ clear_search_url }}">Clear filters</a></div>
     <div class="col-auto"><button class="btn btn-sm btn-outline-success" type="submit" formaction="{{ export_path }}"><i class="bi bi-file-earmark-excel me-1"></i>Export Excel</button></div>
@@ -153,6 +164,8 @@
     <input type="hidden" name="owner_identity_tag_filter" value="{{ owner_identity_tag_filter }}">
     <input type="hidden" name="permission_identity_tag_filter" value="{{ permission_identity_tag_filter }}">
     <input type="hidden" name="include_deleted" value="{{ include_deleted }}">
+    <input type="hidden" name="duplicates" value="{{ duplicates }}">
+    <input type="hidden" name="duplicates_current" value="{{ duplicates_current }}">
     <input type="hidden" name="inventory_scope" value="{{ inventory_scope }}">
     <input type="hidden" id="my-drive-selected-item-ids" name="selected_item_ids" value="">
     <div class="d-flex align-items-center gap-2 mb-2 boreal-report-hide">
@@ -234,6 +247,7 @@
                             {{ row.name }}
                         </a>
                         <a class="boreal-print-only small ms-1" href="{{ row.drive_url }}" title="Open {{ row.name }} in Google Drive">Open in Google Drive</a>
+                        {% if row.duplicate_count > 1 %}<span class="badge text-bg-warning" title="Matching metadata, not verified identical content">{{ row.duplicate_count }} candidates</span><div class="small text-body-secondary text-break">{{ row.relative_path }}</div>{% endif %}
                         <span class="boreal-item-tags" data-explorer-tags-cell>{% for tag in row.tags %}<span class="badge rounded-pill ms-1" style="background-color: {{ tag.color }}; color: {{ tag.text_color }};" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)">{{ tag.name }}</span>{% endfor %}</span>
                         {% if row.is_deleted %}<span class="badge rounded-pill text-bg-secondary ms-1">Deleted</span>{% endif %}
                     </th>

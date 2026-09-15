@@ -308,6 +308,142 @@ mod tests {
     }
 
     #[test]
+    fn drive_duplicate_candidates_cross_folders_but_not_inventory_scopes() {
+        let root = temporary_directory();
+        let database = Database::initialize(&runtime(&root)).unwrap();
+        let scan = database.start_scan_run("duplicates-test").unwrap();
+        let c = database.connect().unwrap();
+        for (id, name, parent, directory, size, mime, deleted) in [
+            (
+                "a",
+                "Report.pdf",
+                "One",
+                false,
+                Some(42),
+                "application/pdf",
+                false,
+            ),
+            (
+                "b",
+                "Report.pdf",
+                "Two",
+                false,
+                Some(42),
+                "application/pdf",
+                false,
+            ),
+            (
+                "c",
+                "Report.pdf",
+                "Three",
+                false,
+                Some(43),
+                "application/pdf",
+                false,
+            ),
+            (
+                "d",
+                "Report.pdf",
+                "Four",
+                false,
+                Some(42),
+                "text/plain",
+                false,
+            ),
+            (
+                "e",
+                "Report.pdf",
+                "Five",
+                false,
+                Some(42),
+                "application/pdf",
+                true,
+            ),
+            ("f", "Unknown", "One", false, None, "", false),
+            ("g", "Unknown", "Two", false, None, "", false),
+            ("h", "Photos", "One", true, None, "inode/directory", false),
+            ("i", "Photos", "Two", true, None, "inode/directory", false),
+            (
+                "j",
+                "report.pdf",
+                "One",
+                false,
+                Some(42),
+                "application/pdf",
+                false,
+            ),
+        ] {
+            c.execute("INSERT INTO drive_items(remote_name,item_id,name,relative_path,parent_path,is_directory,size_bytes,mime_type,is_deleted,last_seen_scan_id) VALUES ('my-drive-ro',?1,?2,?3||'/'||?2,?3,?4,?5,?6,?7,?8)", params![id,name,parent,directory,size,mime,deleted,scan]).unwrap();
+        }
+        c.execute("INSERT INTO drive_items(remote_name,item_id,name,relative_path,is_directory,size_bytes,mime_type,last_seen_scan_id) VALUES ('shared-with-me', 'other', 'Report.pdf', 'Report.pdf', 0, 42, 'application/pdf', ?1)", [scan]).unwrap();
+        let list = |scope, page, search: &str, duplicates, current| {
+            inventory::list_drive_directory_filtered(
+                &database,
+                scope,
+                Some("One"),
+                search,
+                "",
+                "",
+                "",
+                "",
+                "",
+                false,
+                "",
+                "",
+                "",
+                true,
+                "name",
+                false,
+                Some((page, 2)),
+                duplicates,
+                current,
+            )
+            .unwrap()
+        };
+        let (folders, total) = list(inventory::MY_DRIVE_SCOPE, 1, "", true, false);
+        assert_eq!(total, 4);
+        assert!(
+            folders
+                .iter()
+                .all(|entry| entry.is_directory && entry.duplicate_count == 2)
+        );
+        let (files, _) = list(inventory::MY_DRIVE_SCOPE, 2, "", true, false);
+        assert_eq!(
+            files
+                .iter()
+                .map(|entry| entry.item_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
+        assert!(files.iter().all(|entry| entry.duplicate_count == 2));
+        assert_eq!(
+            list(inventory::SHARED_WITH_ME_SCOPE, 1, "", true, false).1,
+            0
+        );
+        assert_eq!(
+            list(inventory::MY_DRIVE_SCOPE, 1, "Report", true, false).1,
+            2
+        );
+        assert_eq!(list(inventory::MY_DRIVE_SCOPE, 1, "", false, false).1, 4);
+        assert_eq!(list(inventory::MY_DRIVE_SCOPE, 1, "", false, true).1, 0);
+        // A second same-name folder in this location forms a local group.
+        c.execute("INSERT INTO drive_items(remote_name,item_id,name,relative_path,parent_path,is_directory,last_seen_scan_id) VALUES ('my-drive-ro','local-copy','Photos','One/Photos','One',1,?1)", [scan]).unwrap();
+        let (local, total) = list(inventory::MY_DRIVE_SCOPE, 1, "", false, true);
+        assert_eq!(total, 2);
+        assert!(
+            local
+                .iter()
+                .all(|item| item.is_directory && item.duplicate_count == 2)
+        );
+        assert_eq!(list(inventory::MY_DRIVE_SCOPE, 1, "", true, true).1, 2);
+        assert_eq!(
+            list(inventory::MY_DRIVE_SCOPE, 1, "Report", false, true).1,
+            0
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn initializes_and_reopens_database() {
         let root = temporary_directory();
         let runtime = runtime(&root);

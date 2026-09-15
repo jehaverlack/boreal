@@ -565,6 +565,7 @@ pub struct ScanTimingEstimate {
 
 #[derive(Debug, Clone)]
 pub struct DriveExplorerItem {
+    pub duplicate_count: usize,
     pub item_id: String,
     pub name: String,
     pub relative_path: String,
@@ -631,6 +632,7 @@ pub struct Tag {
 }
 
 #[allow(dead_code)]
+#[cfg(test)]
 pub fn list_my_drive_directory(
     database: &Database,
     parent_path: Option<&str>,
@@ -668,6 +670,7 @@ pub fn list_my_drive_directory(
     )
 }
 
+#[cfg(test)]
 pub fn list_drive_directory(
     database: &Database,
     inventory_scope: &str,
@@ -708,6 +711,7 @@ pub fn list_drive_directory(
     .map(|(items, _)| items)
 }
 
+#[cfg(test)]
 pub fn list_drive_directory_page(
     database: &Database,
     inventory_scope: &str,
@@ -726,6 +730,50 @@ pub fn list_drive_directory_page(
     sort: &str,
     descending: bool,
     window: Option<(usize, usize)>,
+) -> Result<(Vec<DriveExplorerItem>, usize), DatabaseError> {
+    list_drive_directory_filtered(
+        database,
+        inventory_scope,
+        parent_path,
+        search,
+        tag_filter,
+        type_filter,
+        size_filter,
+        modified_filter,
+        owner_filter,
+        exclude_owner,
+        permission_filter,
+        owner_identity_tag_filter,
+        permission_identity_tag_filter,
+        include_deleted,
+        sort,
+        descending,
+        window,
+        false,
+        false,
+    )
+}
+
+pub fn list_drive_directory_filtered(
+    database: &Database,
+    inventory_scope: &str,
+    parent_path: Option<&str>,
+    search: &str,
+    tag_filter: &str,
+    type_filter: &str,
+    size_filter: &str,
+    modified_filter: &str,
+    owner_filter: &str,
+    exclude_owner: bool,
+    permission_filter: &str,
+    owner_identity_tag_filter: &str,
+    permission_identity_tag_filter: &str,
+    include_deleted: bool,
+    sort: &str,
+    descending: bool,
+    window: Option<(usize, usize)>,
+    duplicates_only: bool,
+    duplicates_current: bool,
 ) -> Result<(Vec<DriveExplorerItem>, usize), DatabaseError> {
     let connection = database.connect()?;
     let (size_comparison, size_bytes) = parse_size_filter(size_filter)?;
@@ -749,8 +797,30 @@ pub fn list_drive_directory_page(
     } else {
         ""
     };
+    let (duplicate_cte, duplicate_join, duplicate_count) = if duplicates_only || duplicates_current
+    {
+        (
+            "WITH duplicate_groups AS (
+                SELECT name AS dup_name, is_directory AS dup_kind,
+                    CASE WHEN is_directory THEN '' ELSE COALESCE(mime_type, '') END AS dup_mime,
+                    CASE WHEN is_directory THEN 0 ELSE size_bytes END AS dup_size,
+                    COUNT(*) AS copies
+                FROM drive_items WHERE remote_name = ?1 AND is_deleted = 0
+                    AND (is_directory = 1 OR size_bytes >= 0)
+                    AND (?17 = 0 OR (?2 IS NULL AND parent_path IS NULL) OR parent_path = ?2)
+                GROUP BY dup_name, dup_kind, dup_mime, dup_size HAVING COUNT(*) > 1
+            )",
+            "JOIN duplicate_groups g ON g.dup_name = drive_items.name
+                AND g.dup_kind = drive_items.is_directory
+                AND g.dup_mime = CASE WHEN drive_items.is_directory THEN '' ELSE COALESCE(drive_items.mime_type, '') END
+                AND g.dup_size = CASE WHEN drive_items.is_directory THEN 0 ELSE drive_items.size_bytes END",
+            "g.copies"
+        )
+    } else {
+        ("", "", "0")
+    };
     let sql = format!(
-        "SELECT item_id, name, relative_path, is_directory, mime_type,
+        "{duplicate_cte} SELECT item_id, name, relative_path, is_directory, mime_type,
                 CASE WHEN is_directory THEN cumulative_size_bytes ELSE size_bytes END,
                 modified_at, owner_email,
                 (SELECT group_concat(t.name || char(30) || t.color || char(30) || t.description, char(31))
@@ -767,11 +837,12 @@ pub fn list_drive_directory_page(
                       AND p.item_id = drive_items.item_id
                       AND COALESCE(p.email_address, '') <> COALESCE(drive_items.owner_email, '')
                     ORDER BY label COLLATE NOCASE
-                )), is_deleted
-         FROM drive_items
+                )), is_deleted, {duplicate_count}
+         FROM drive_items {duplicate_join}
          WHERE remote_name = ?1
            AND (?13 = 1 OR is_deleted = 0)
-           AND ((?2 IS NULL AND parent_path IS NULL) OR parent_path = ?2)
+           AND ((?16 = 1 AND ?17 = 0) OR (?2 IS NULL AND parent_path IS NULL) OR parent_path = ?2)
+           AND ((?16 = 0 AND ?17 = 0) OR is_deleted = 0)
            AND (?3 = '' OR instr(lower(name), lower(?3)) > 0)
            AND NOT EXISTS (
                 SELECT 1 FROM json_each(?4) tag_term
@@ -857,6 +928,8 @@ pub fn list_drive_directory_page(
         include_deleted || super::tag_filter::selected(tag_filter, DELETED_TAG_FILTER, false),
         super::tag_filter::json(owner_identity_tag_filter),
         super::tag_filter::json(permission_identity_tag_filter),
+        duplicates_only,
+        duplicates_current,
     ];
     // Count before hydration; LIMIT applies before per-item tag and permission rendering.
     let total: i64 = if window.is_some() {
@@ -883,6 +956,7 @@ pub fn list_drive_directory_page(
     let rows = statement.query_map(parameters, |row| {
         let size: Option<i64> = row.get(5)?;
         Ok(DriveExplorerItem {
+            duplicate_count: row.get::<_, i64>(11)? as usize,
             item_id: row.get(0)?,
             name: row.get(1)?,
             relative_path: row.get(2)?,

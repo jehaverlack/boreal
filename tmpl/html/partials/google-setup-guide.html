@@ -1,9 +1,101 @@
-<div class="card mb-3 order-3" id="google-setup"><div class="card-header fw-semibold"><img class="boreal-service-icon me-1" src="/assets/google-g.png" alt="">Google setup guide</div><div class="card-body">
-<p class="small text-body-secondary">Follow the steps for the Google sources you use. This guide opens Google’s configuration pages; it does not change your Cloud project automatically.</p>
-<div data-google-setup-step><h3 class="h6">1. Select the Boreal project</h3><p>Open the <a href="https://console.cloud.google.com/apis/library" target="_blank" rel="noopener noreferrer">Google Cloud Console API Library</a>. Check the project selector at the top and choose the project used by Boreal’s Google Client ID.</p></div>
-<div data-google-setup-step hidden><h3 class="h6">2. Enable Google Drive API</h3><p>For Drive or a private Persons Sheet, enable <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noopener noreferrer">Google Drive API</a> in the selected Boreal project. If it is already enabled, continue.</p></div>
-<div data-google-setup-step hidden><h3 class="h6">3. Configure the Desktop OAuth client</h3><p>Configure the project’s OAuth consent screen for your audience. Create an OAuth client of type <strong>Desktop app</strong>, download its JSON file, and upload it through <a href="/google-client">Boreal’s Google Client ID setup</a>. If the app is in testing, add your account as a test user when required.</p><a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener noreferrer">Open Google Auth Platform clients</a></div>
-<div data-google-setup-step hidden><h3 class="h6">4. Authorize your storage remote</h3><p>Open <a href="/remotes">Storage remotes</a> and set up or reconnect <strong>my-drive-ro</strong> for Drive inventory, downloads and private Persons Sheets. Add <strong>my-drive-rw</strong> only for migrations; it can use a different destination account.</p><p>Rclone opens Google sign-in and renews access for later updates. After setup, use Update metadata. Persons CSV import and manual entries require no Google authorization.</p></div>
-<div class="d-flex gap-2 align-items-center mt-3"><button type="button" class="btn btn-sm btn-outline-secondary" id="google-setup-back" disabled>Back</button><span class="small" id="google-setup-count">Step 1 of 4</span><button type="button" class="btn btn-sm btn-primary" id="google-setup-next">Next</button></div>
-</div></div>
-<script>(()=>{const steps=[...document.querySelectorAll('[data-google-setup-step]')],back=document.getElementById('google-setup-back'),next=document.getElementById('google-setup-next');let index=0;const show=()=>{steps.forEach((step,i)=>step.hidden=i!==index);back.disabled=index===0;next.disabled=index===steps.length-1;document.getElementById('google-setup-count').textContent=`Step ${index+1} of ${steps.length}`;};back.addEventListener('click',()=>{index--;show();});next.addEventListener('click',()=>{index++;show();});})();</script>
+<div class="card mb-3" id="google-setup">
+    <div class="card-header d-flex flex-wrap justify-content-between gap-2">
+        <strong>Google setup guide</strong><span id="google-setup-count" role="status" aria-live="polite">Step 1 of 5</span>
+    </div>
+    <div class="card-body">
+        <p class="text-body-secondary">Open Google with the button in each step, follow the instructions, then return here to continue. Upload your downloaded JSON file in step 5.</p>
+        <section data-google-setup-step>
+            <h2 class="h5">Step 1. Choose a Google Cloud project</h2>
+            <a class="btn btn-primary mb-3" href="https://console.cloud.google.com/projectselector2/home/dashboard" target="_blank" rel="noopener noreferrer"><i class="bi bi-box-arrow-up-right me-1"></i>Open Google Project Selection</a>
+            <p class="small text-body-secondary">Opens in a new tab. Keep this guide open.</p>
+            <ol>
+                <li class="mb-2">Choose the Google account you want to use for setup.</li>
+                <li class="mb-2">Select an existing project, or click <strong>Create project</strong> and name it <strong>BOREAL</strong>.</li>
+                <li class="mb-2">Confirm that your selected project appears in the Google Cloud header. Use this same project for steps 2–4.</li>
+            </ol>
+            <details class="mb-3"><summary>Show example screenshots</summary>
+                <figure class="mt-2 mb-2"><img class="img-fluid border rounded" src="/assets/google-cloud-project-selection.png" alt="Google Cloud header showing the selected project"><figcaption class="small text-body-secondary">Google Cloud header showing the selected project.</figcaption></figure>
+            </details>
+            <p class="mb-0">When you have finished, return here and select <strong>Proceed to Step 2</strong>.</p>
+        </section>
+        <section data-google-setup-step hidden>
+            <h2 class="h5">Step 2. Enable the Google Drive API</h2>
+            <a class="btn btn-primary mb-3" href="https://console.cloud.google.com/flows/enableapi?apiid=drive.googleapis.com" target="_blank" rel="noopener noreferrer"><i class="bi bi-box-arrow-up-right me-1"></i>Open Google Drive API Setup</a>
+            <p class="small text-body-secondary">Opens in a new tab. Keep this guide open.</p>
+            <ol>
+                <li class="mb-2">Confirm that Google shows the project you selected in step 1.</li>
+                <li class="mb-2">Click <strong>Enable</strong> for the Google Drive API. If it is already enabled, you can continue.</li>
+            </ol>
+            <details class="mb-3"><summary>Show example screenshots</summary>
+                <figure class="mt-2 mb-2"><img class="img-fluid border rounded" src="/assets/google-cloud-enable-api.png" alt="Google Drive API page showing the Enable button"><figcaption class="small text-body-secondary">Google Drive API page showing the Enable button.</figcaption></figure>
+            </details>
+            <p class="mb-0">When you have finished, return here and select <strong>Proceed to Step 3</strong>.</p>
+        </section>
+        <section data-google-setup-step hidden>
+            <h2 class="h5">Step 3. Configure Google Auth Platform</h2>
+            <a class="btn btn-primary mb-3" href="https://console.cloud.google.com/auth/overview" target="_blank" rel="noopener noreferrer"><i class="bi bi-box-arrow-up-right me-1"></i>Open Google Auth Platform</a>
+            <p class="small text-body-secondary">Opens in a new tab. Keep this guide open.</p>
+            <ol>
+                <li class="mb-2">If prompted, click <strong>Get Started</strong>. If the project is already configured, review its Branding and Audience settings.</li>
+                <li class="mb-2">Enter <strong>BOREAL</strong> as the app name and choose your user support email.</li>
+                <li class="mb-2">Choose <strong>Internal</strong> if available and only people in your organization will use the app. Otherwise, choose <strong>External</strong>.</li>
+                <li class="mb-2">Enter your contact email, accept the required policy, and finish creating the configuration.</li>
+                <li class="mb-2">For an External app in testing, open <strong>Audience → Test users → Add users</strong> and add each Google account you will connect to BOREAL.</li>
+            </ol>
+            <p class="mb-0">When you have finished, return here and select <strong>Proceed to Step 4</strong>.</p>
+        </section>
+        <section data-google-setup-step hidden>
+            <h2 class="h5">Step 4. Create the client and download JSON</h2>
+            <a class="btn btn-primary mb-3" href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener noreferrer"><i class="bi bi-box-arrow-up-right me-1"></i>Open Google OAuth Clients</a>
+            <p class="small text-body-secondary">Opens in a new tab. Keep this guide open.</p>
+            <ol>
+                <li class="mb-2">Click <strong>+ Create client</strong> in the same Google Cloud project.</li>
+                <li class="mb-2">Choose <strong>Desktop app</strong> as the application type.</li>
+                <li class="mb-2">Enter <strong>BOREAL</strong> as the name and click <strong>Create</strong>.</li>
+                <li class="mb-2">Click <strong>Download JSON</strong> and save the file before closing the confirmation dialog.</li>
+            </ol>
+            <details class="mb-3"><summary>Show example screenshots</summary>
+                <figure class="mt-2 mb-2"><img class="img-fluid border rounded" src="/assets/google-cloud-create-client.png" alt="Google Auth Platform Clients page showing Create client"><figcaption class="small text-body-secondary">Google Auth Platform Clients page showing Create client.</figcaption></figure>
+                <figure class="mt-2 mb-2"><img class="img-fluid border rounded" src="/assets/google-cloud-oauth-json.png" alt="Example client confirmation with credentials redacted and Download JSON visible"><figcaption class="small text-body-secondary">Example client confirmation with credentials redacted and Download JSON visible.</figcaption></figure>
+            </details>
+            <p class="mb-0">When you have finished, return here and select <strong>Proceed to Step 5</strong>.</p>
+        </section>
+        <section data-google-setup-step hidden>
+            <h2 class="h5">Step 5. Upload your JSON file</h2>
+            <ol>
+                <li>Select the original JSON file you downloaded in step 4.</li>
+                <li>Click <strong>Upload JSON</strong> to save it in BOREAL.</li>
+            </ol>
+            <form method="post" action="/setup/google-client/import" enctype="multipart/form-data">
+                <label class="form-label" for="google-guide-credentials">Google Desktop app credentials JSON</label>
+                <input class="form-control mb-3" id="google-guide-credentials" name="credentials" type="file" accept=".json,application/json" required>
+                <button class="btn btn-primary" type="submit"><i class="bi bi-upload me-1"></i>Upload JSON</button>
+            </form>
+            <p class="small text-body-secondary mt-3">BOREAL saves this file locally in its private configuration directory.</p>
+            <p class="mb-0">After uploading, use <a href="/remotes">Manage Remotes</a> to connect your Google account. Use <strong>my-drive-ro</strong> for inventory and downloads; add <strong>my-drive-rw</strong> when you need a migration destination.</p>
+        </section>
+    </div>
+    <div class="card-footer d-flex flex-wrap justify-content-between gap-2">
+        <button type="button" class="btn btn-outline-secondary" id="google-setup-back" disabled>Back</button>
+        <button type="button" class="btn btn-primary" id="google-setup-next">Proceed to Step 2</button>
+    </div>
+</div>
+<script>
+(() => {
+    const steps = [...document.querySelectorAll('[data-google-setup-step]')];
+    const back = document.getElementById('google-setup-back');
+    const next = document.getElementById('google-setup-next');
+    let index = 0;
+    const show = () => {
+        steps.forEach((step, i) => step.hidden = i !== index);
+        back.disabled = index === 0;
+        next.disabled = index === steps.length - 1;
+        next.hidden = index === steps.length - 1;
+        next.textContent = `Proceed to Step ${index + 2}`;
+        document.getElementById('google-setup-count').textContent = `Step ${index + 1} of ${steps.length}`;
+    };
+    back.addEventListener('click', () => { index = Math.max(0, index - 1); show(); });
+    next.addEventListener('click', () => { index = Math.min(steps.length - 1, index + 1); show(); });
+    show();
+})();
+</script>

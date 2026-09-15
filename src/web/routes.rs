@@ -384,6 +384,8 @@ struct RemotesTemplate {
 
 #[allow(dead_code)]
 pub struct DriveExplorerRow {
+    pub duplicate_count: usize,
+    pub relative_path: String,
     pub item_id: String,
     pub name: String,
     pub is_directory: bool,
@@ -459,6 +461,8 @@ pub struct IdentityTagFilterPill {
 #[derive(Template)]
 #[template(path = "my-drive.html", config = "askama.toml")]
 struct MyDriveTemplate {
+    duplicates: bool,
+    duplicates_current: bool,
     pagination: PageView,
     title: String,
     active_page: &'static str,
@@ -939,6 +943,10 @@ struct PageView {
 
 #[derive(serde::Deserialize, Default)]
 struct DrivePathQuery {
+    #[serde(default)]
+    duplicates: bool,
+    #[serde(default)]
+    duplicates_current: bool,
     #[serde(flatten)]
     pagination: PageQuery,
     #[serde(default)]
@@ -989,6 +997,10 @@ struct DrivePathQuery {
 
 #[derive(Debug, serde::Deserialize)]
 struct ApplyTagForm {
+    #[serde(default)]
+    duplicates: bool,
+    #[serde(default)]
+    duplicates_current: bool,
     #[serde(default)]
     operation_id: String,
     #[serde(default)]
@@ -3845,7 +3857,7 @@ fn export_drive_view(
         Some(owner) => (true, owner.trim()),
         None => (false, query.owner_filter.trim()),
     };
-    let items = database::inventory::list_drive_directory(
+    let (items, _) = database::inventory::list_drive_directory_filtered(
         &database,
         inventory_scope,
         (!query.path.is_empty()).then_some(query.path.as_str()),
@@ -3862,6 +3874,9 @@ fn export_drive_view(
         query.include_deleted,
         sort,
         query.direction == "desc",
+        None,
+        query.duplicates,
+        query.duplicates_current,
     )
     .map_err(|error| {
         eprintln!("Unable to export {view_name}: {error}");
@@ -3941,11 +3956,21 @@ fn drive_export_context(
         ("View".into(), view_name.into()),
         (
             "Location".into(),
-            if query.path.is_empty() {
+            if query.duplicates && !query.duplicates_current {
+                "All folders in this Drive inventory".into()
+            } else if query.path.is_empty() {
                 view_name.into()
             } else {
                 query.path.clone()
             },
+        ),
+        (
+            "Duplicate candidates (all folders)".into(),
+            (query.duplicates && !query.duplicates_current).to_string(),
+        ),
+        (
+            "Duplicate candidates (current folder only)".into(),
+            query.duplicates_current.to_string(),
         ),
         ("Results".into(), result_count.to_string()),
         ("Search".into(), filter_value(&query.q)),
@@ -4458,7 +4483,7 @@ fn render_drive_explorer(
         Some(owner) => (true, owner.trim()),
         None => (false, query.owner_filter.trim()),
     };
-    let (items, total, error) = match database::inventory::list_drive_directory_page(
+    let (items, total, error) = match database::inventory::list_drive_directory_filtered(
         &database,
         inventory_scope,
         parent_filter,
@@ -4476,6 +4501,8 @@ fn render_drive_explorer(
         sort,
         descending,
         (!query.print).then(|| (query.pagination.page, query.pagination.size())),
+        query.duplicates,
+        query.duplicates_current,
     ) {
         Ok((items, total)) => (items, total, String::new()),
         Err(error) => {
@@ -4511,6 +4538,8 @@ fn render_drive_explorer(
                 })
                 .collect();
             DriveExplorerRow {
+                duplicate_count: item.duplicate_count,
+                relative_path: item.relative_path.clone(),
                 drive_url: if item.is_directory {
                     format!("https://drive.google.com/drive/folders/{}", item.item_id)
                 } else {
@@ -4534,6 +4563,8 @@ fn render_drive_explorer(
                         sort,
                         if descending { "desc" } else { "asc" },
                         include_deleted,
+                        false,
+                        false,
                     )
                 } else {
                     format!("https://drive.google.com/open?id={}", item.item_id)
@@ -4650,6 +4681,8 @@ fn render_drive_explorer(
         .collect();
 
     let template = MyDriveTemplate {
+        duplicates: query.duplicates,
+        duplicates_current: query.duplicates_current,
         pagination,
         title: heading.to_string(),
         active_page,
@@ -4704,6 +4737,8 @@ fn render_drive_explorer(
             "",
             sort,
             if descending { "desc" } else { "asc" },
+            false,
+            false,
             false,
         ),
         tags,
@@ -4835,9 +4870,11 @@ fn explorer_url(
     sort: &str,
     direction: &str,
     include_deleted: bool,
+    duplicates: bool,
+    duplicates_current: bool,
 ) -> String {
     format!(
-        "{explorer_path}{}path={}&q={}&tag={}&type_filter={}&size_filter={}&modified_filter={}&owner_filter={}&permission_filter={}&owner_identity_tag={}&permission_identity_tag={}&sort={}&direction={}&include_deleted={include_deleted}",
+        "{explorer_path}{}path={}&q={}&tag={}&type_filter={}&size_filter={}&modified_filter={}&owner_filter={}&permission_filter={}&owner_identity_tag={}&permission_identity_tag={}&sort={}&direction={}&include_deleted={include_deleted}&duplicates={duplicates}&duplicates_current={duplicates_current}",
         if explorer_path.contains('?') {
             "&"
         } else {
@@ -4885,6 +4922,8 @@ fn sort_url(
         requested_sort,
         next_direction,
         query.include_deleted,
+        query.duplicates,
+        query.duplicates_current,
     )
 }
 
@@ -5076,7 +5115,7 @@ fn change_drive_tag(
                 .strip_prefix('!')
                 .map(|value| (true, value.trim()))
                 .unwrap_or((false, form.owner_filter.trim()));
-            selected_items = database::inventory::list_drive_directory(
+            selected_items = database::inventory::list_drive_directory_filtered(
                 &database,
                 inventory_scope,
                 (!form.path.is_empty()).then_some(form.path.as_str()),
@@ -5093,8 +5132,12 @@ fn change_drive_tag(
                 form.include_deleted,
                 &form.sort,
                 form.direction == "desc",
+                None,
+                form.duplicates,
+                form.duplicates_current,
             )
             .map_err(|error| -> database::DatabaseError { error })?
+            .0
             .into_iter()
             .map(|item| item.item_id)
             .collect();
@@ -5150,6 +5193,8 @@ fn change_drive_tag(
         &form.sort,
         &form.direction,
         form.include_deleted,
+        form.duplicates,
+        form.duplicates_current,
     );
     url.push_str(&format!(
         "&{}={changed}",
@@ -8165,13 +8210,20 @@ mod tests {
 
     #[test]
     fn explorer_pagination_parses_urls_and_bounds_page_sizes() {
-        let uri = "/my-drive?page=2&page_size=25&tag=needs-review"
+        let uri = "/my-drive?page=2&page_size=25&tag=needs-review&duplicates=true&duplicates_current=true"
             .parse()
             .unwrap();
         let Query(query) = Query::<DrivePathQuery>::try_from_uri(&uri).unwrap();
         assert_eq!(query.pagination.page, 2);
         assert_eq!(query.pagination.size(), 25);
         assert_eq!(query.tag, "needs-review");
+        assert!(query.duplicates);
+        assert!(query.duplicates_current);
+        assert!(
+            sort_url("/my-drive", &query, "name", false, "size")
+                .contains("duplicates_current=true")
+        );
+        assert!(sort_url("/my-drive", &query, "name", false, "size").contains("duplicates=true"));
         let uri = "/keeper?page=0&page_size=999&all=true".parse().unwrap();
         let Query(query) = Query::<KeeperQuery>::try_from_uri(&uri).unwrap();
         let view = query.pagination.view(0);

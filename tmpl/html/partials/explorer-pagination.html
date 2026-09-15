@@ -1,10 +1,10 @@
 {% if pagination.size > 0 %}
 <div class="boreal-report-hide d-flex flex-wrap align-items-center gap-2 my-2" id="explorer-pagination" data-page="{{ pagination.page }}" data-size="{{ pagination.size }}" data-total="{{ pagination.total }}" data-pages="{{ pagination.pages }}">
-    <label class="small" for="explorer-page-size">Entries per page</label>
+    <label class="small" for="explorer-page-size">Entries per page:</label>
+    <button type="button" class="btn btn-sm btn-outline-secondary" data-page-step="-1" aria-label="Previous page" title="Previous page"><i class="bi bi-chevron-left" aria-hidden="true"></i></button>
     <select id="explorer-page-size" class="form-select form-select-sm w-auto"><option>25</option><option>50</option><option>100</option><option>200</option></select>
-    <button type="button" class="btn btn-sm btn-outline-secondary" data-page-step="-1">Previous</button>
+    <button type="button" class="btn btn-sm btn-outline-secondary" data-page-step="1" aria-label="Next page" title="Next page"><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
     <span class="small">Page {{ pagination.page }} of {{ pagination.pages }} · {{ pagination.total }} matching entries</span>
-    <button type="button" class="btn btn-sm btn-outline-secondary" data-page-step="1">Next</button>
     <button type="button" class="btn btn-sm btn-link" id="explorer-select-page">Select this page</button>
     <button type="button" class="btn btn-sm btn-link" id="explorer-select-matching" hidden>Select all {{ pagination.total }} matching entries</button>
     <button type="button" class="btn btn-sm btn-link" id="explorer-clear-selection" hidden>Clear selection</button>

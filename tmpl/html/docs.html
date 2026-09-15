@@ -17,6 +17,7 @@
                 <a class="nav-link" href="#keeper-login">Keeper sign-in</a>
                 <a class="nav-link" href="#explorers">Drive explorers</a>
                 <a class="nav-link" href="#explorer-interaction">Pages and saving tags</a>
+                <a class="nav-link" href="#duplicates">Duplicate candidates</a>
                 <a class="nav-link" href="#tags">Tags</a>
                 <a class="nav-link" href="#persons">Persons</a>
                 <a class="nav-link" href="#reports">Reports and downloads</a>
@@ -127,6 +128,13 @@
             <p>Select rows with their checkboxes or use <strong>Select this page</strong>. Then choose <strong>Select all matching entries</strong> to apply the next tag action across pages. That selection uses the current folder and filters. Drive folder tags also apply to descendants. All-page selection is consumed by the next tag action; refresh the saved results before selecting all pages for another bulk change.</p>
             <p>Tags update immediately with a <strong>Saving…</strong> indicator while changes are sent in order. You can keep selecting and tagging on the current page. Wait for <strong>Tags saved</strong> before navigating away. Use <strong>Refresh results</strong> afterward to update tag-dependent filters, sorting, and totals without losing track of an unfinished save.</p>
             <p>If saving fails, use <strong>Retry saving</strong>. Pending changes remain only in this tab, not in browser storage. <strong>Discard pending changes and refresh</strong> reloads the saved state; earlier changes may already have reached the database. Retries expire after 24 hours. Permission lists scroll within a 200px area and expand when printed.</p>
+        </section>
+
+        <section id="duplicates" class="mb-4" data-doc-entry>
+            <h2 class="h4">Find duplicate candidates</h2>
+            <p>In My Drive, Shared with me, or a Shared Drive folder explorer, check <strong>Duplicate candidates (all folders in this Drive inventory)</strong> and select <strong>Apply filters</strong>. BOREAL compares live indexed entries across that inventory, including other folders. Each candidate shows its path and the number of entries with matching metadata. Choose <strong>Duplicate candidates (current folder only)</strong> to compare immediate children at the current location, including top-level entries. This option takes priority if both boxes are checked; other filters still apply.</p>
+            <p>Files match on exact, case-sensitive name, type, and known size. Folders match on exact name only. These are candidates for review, not proof of identical contents. Deleted entries and files with unknown sizes do not establish a match. Counts describe the full matching group; other active filters can hide some members. Pagination, sorting, exports, and all-matching tag selection respect the candidate filter. Opening a folder returns to normal folder browsing.</p>
+            <p>Local Files already provides <strong>Duplicates only</strong> based on available file checksums. Folder contents are not compared. Duplicate detection does not delete or merge items.</p>
         </section>
 
         <section id="tags" class="mb-4" data-doc-entry>

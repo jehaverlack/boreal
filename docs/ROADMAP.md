@@ -26,7 +26,8 @@
    -  Improved People Statuses
 - [x] Cleanup Dashboard for modules and colorize modules.
 - [x] Cleanup Menu order
-- [ ] Deduplication Feature
+- [x] Identify and filter duplicate file/folder candidates in Drive explorers; preserve checksum-based duplicate filtering in Local Files.
+- [ ] Verify matching folder contents and provide a deduplication workflow.
 - [ ] Linux SystemD service
 - [ ] Update Documenation
 - [ ] Security Docs Sensitivity of Meta Data
