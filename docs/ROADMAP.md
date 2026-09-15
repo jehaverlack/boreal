@@ -26,7 +26,8 @@
    -  Improved People Statuses
 - [x] Cleanup Dashboard for modules and colorize modules.
 - [x] Cleanup Menu order
-- [ ] Deduplication Feature
+- [x] Identify and filter duplicate file/folder candidates in Drive explorers; preserve checksum-based duplicate filtering in Local Files.
+- [ ] Verify matching folder contents and provide a deduplication workflow.
 - [ ] Linux SystemD service
 - [ ] Update Documenation
 - [ ] Security Docs Sensitivity of Meta Data
@@ -36,6 +37,16 @@
 - [x] Add S3-compatible object-storage metadata indexing
 - [ ] Consider CryptPad as an optional metadata source
 - [ ] Consider Nextcloud as an optional metadata source
+- [ ] Add Custom Comment to items Via Modal
+- [ ] Manage tags per item via Modal
+- [x] Apply and remove tags without page reloads in Drive folder explorers, Keeper, GitHub, and Local Files. Queue background saves while users continue selecting and tagging; show saving, retry, and refresh controls.
+- [x] Show loading feedback during explorer navigation and prevent leaving while tag saves are pending.
+- [x] Limit Drive and Keeper permissions lists to 200px with vertical scrolling; expand them for printing.
+- [x] Paginate Drive folder, Keeper, GitHub, and Local Files results with 25/50/100/200 entries per page, a remembered page-size preference, and explicit current-page/all-matching selection.
+- [ ]  On startup the terminal message shows:  Startup status: WebUI ready; background initialization is continuing.  This is confusing and should be more clear once Boreal is finsishe initalizing.
+- [ ] When pages load the Nav Bar menus loads items slowly.  The navbar should load quickly and be consistend regardless of page load status.
+
+
 
 ## Future Implementation: Per-User Installation, Startup, and Updates
 

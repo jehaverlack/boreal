@@ -48,7 +48,8 @@
 <div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-triangle me-2"></i>{{ error }}</div>
 {% endif %}
 
-{% if has_parent %}<div class="d-flex align-items-center gap-2 mb-3"><span class="small text-body-secondary">Location:</span><span class="fw-semibold">{{ current_path }}</span></div>{% endif %}
+{% if duplicates && !duplicates_current %}<p class="small text-body-secondary">Showing live duplicate candidates across all indexed folders in this Drive inventory. Other filters can hide members of a matching group.</p>{% endif %}
+{% if has_parent && (!duplicates || duplicates_current) %}<div class="d-flex align-items-center gap-2 mb-3"><span class="small text-body-secondary">Location:</span><span class="fw-semibold">{{ current_path }}</span></div>{% endif %}
 
 <form id="my-drive-filter-form" method="get" action="{{ explorer_path }}" class="row g-2 mb-3 boreal-report-hide" role="search">
     <input type="hidden" name="drive" value="{{ drive_id }}">
@@ -103,6 +104,16 @@
         </button>
         {% endfor %}
     </div>
+    <div class="col-12 form-check ms-2">
+        <input class="form-check-input" type="checkbox" name="duplicates" value="true" id="drive-duplicates" {% if duplicates %}checked{% endif %}>
+        <label class="form-check-label" for="drive-duplicates">Duplicate candidates (all folders in this Drive inventory)</label>
+        <div class="small text-body-secondary">Files: same exact name, type, and known size. Folders: same exact name. Matching metadata does not prove identical contents.</div>
+    </div>
+    <div class="col-12 form-check ms-2">
+        <input class="form-check-input" type="checkbox" name="duplicates_current" value="true" id="drive-duplicates-current" {% if duplicates_current %}checked{% endif %}>
+        <label class="form-check-label" for="drive-duplicates-current">Duplicate candidates (current folder only)</label>
+        <div class="small text-body-secondary">Compare immediate children of the current folder, including the top level. Takes priority when both options are checked. Other filters can hide matching group members.</div>
+    </div>
     <div class="col-auto"><button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel me-1"></i>Apply filters</button></div>
     <div class="col-auto"><a class="btn btn-sm btn-outline-secondary" href="{{ clear_search_url }}">Clear filters</a></div>
     <div class="col-auto"><button class="btn btn-sm btn-outline-success" type="submit" formaction="{{ export_path }}"><i class="bi bi-file-earmark-excel me-1"></i>Export Excel</button></div>
@@ -116,7 +127,7 @@
 <section class="card mb-3" aria-labelledby="explorer-summary-heading">
     <div class="card-body py-2">
         <div class="d-flex flex-wrap align-items-center gap-3 gap-lg-4">
-            <span id="explorer-summary-heading" class="small fw-semibold text-body-secondary">Filtered results</span>
+            <span id="explorer-summary-heading" class="small fw-semibold text-body-secondary">{% if print_view %}Filtered results{% else %}Current page{% endif %}</span>
             <span class="small"><strong id="explorer-summary-items">{{ summary.items }}</strong> items</span>
             <span class="small"><strong id="explorer-summary-files">{{ summary.files }}</strong> files</span>
             <span class="small"><strong id="explorer-summary-folders">{{ summary.folders }}</strong> folders</span>
@@ -137,7 +148,8 @@
 </div>
 {% endif %}
 
-<form method="post" action="{{ tag_action }}" class="d-flex flex-column flex-grow-1 overflow-hidden">
+{% include "partials/explorer-pagination.html" %}
+<form data-explorer-tags method="post" action="{{ tag_action }}" class="d-flex flex-column flex-grow-1 overflow-hidden">
     <input type="hidden" name="drive" value="{{ drive_id }}">
     <input type="hidden" name="path" value="{% if has_parent %}{{ current_path }}{% endif %}">
     <input type="hidden" name="q" value="{{ search }}">
@@ -152,12 +164,14 @@
     <input type="hidden" name="owner_identity_tag_filter" value="{{ owner_identity_tag_filter }}">
     <input type="hidden" name="permission_identity_tag_filter" value="{{ permission_identity_tag_filter }}">
     <input type="hidden" name="include_deleted" value="{{ include_deleted }}">
+    <input type="hidden" name="duplicates" value="{{ duplicates }}">
+    <input type="hidden" name="duplicates_current" value="{{ duplicates_current }}">
     <input type="hidden" name="inventory_scope" value="{{ inventory_scope }}">
     <input type="hidden" id="my-drive-selected-item-ids" name="selected_item_ids" value="">
     <div class="d-flex align-items-center gap-2 mb-2 boreal-report-hide">
         <label class="small fw-semibold" for="my-drive-apply-tag">Apply {% if active_page == "my-drive" %}My Drive{% else if active_page == "shared-with-me" %}Shared with me{% else %}Shared Drive{% endif %} tag:</label>
         <select id="my-drive-apply-tag" class="form-select form-select-sm w-auto" name="tag" required>
-            {% for tag in tags %}<option value="{{ tag.slug }}" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)">{{ tag.name }}</option>{% endfor %}
+            {% for tag in tags %}<option value="{{ tag.slug }}" data-color="{{ tag.color }}" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)">{{ tag.name }}</option>{% endfor %}
         </select>
         <button id="my-drive-apply-tag-button" class="btn btn-sm btn-outline-primary" type="submit" disabled>
             <i class="bi bi-tag me-1"></i>Apply
@@ -233,7 +247,8 @@
                             {{ row.name }}
                         </a>
                         <a class="boreal-print-only small ms-1" href="{{ row.drive_url }}" title="Open {{ row.name }} in Google Drive">Open in Google Drive</a>
-                        <span class="boreal-item-tags">{% for tag in row.tags %}<span class="badge rounded-pill ms-1" style="background-color: {{ tag.color }}; color: {{ tag.text_color }};" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)">{{ tag.name }}</span>{% endfor %}</span>
+                        {% if row.duplicate_count > 1 %}<span class="badge text-bg-warning" title="Matching metadata, not verified identical content">{{ row.duplicate_count }} candidates</span><div class="small text-body-secondary text-break">{{ row.relative_path }}</div>{% endif %}
+                        <span class="boreal-item-tags" data-explorer-tags-cell>{% for tag in row.tags %}<span class="badge rounded-pill ms-1" style="background-color: {{ tag.color }}; color: {{ tag.text_color }};" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)">{{ tag.name }}</span>{% endfor %}</span>
                         {% if row.is_deleted %}<span class="badge rounded-pill text-bg-secondary ms-1">Deleted</span>{% endif %}
                     </th>
                     <td class="text-nowrap small">{{ row.size }}</td>
@@ -248,7 +263,7 @@
                     </td>
                     <td class="small">
                         {% if row.permissions.is_empty() %}&mdash;{% else %}
-                        <div class="d-flex flex-wrap gap-1">
+                        <div class="d-flex flex-wrap gap-1 boreal-permissions-scroll" tabindex="0" role="region" aria-label="Permissions">
                             {% for permission in row.permissions %}
                             {% if permission.directory_url.len() > 0 %}<a href="{{ permission.directory_url }}" class="badge rounded-pill boreal-unknown-identity text-decoration-none"
                                   title="{{ permission.label }} — {{ permission.tag_details }}. Click to add to Persons"><i class="bi bi-person-question me-1" aria-hidden="true"></i>{{ permission.label }}</a>{% else %}
@@ -329,7 +344,7 @@
             const folders = summaryRows.length - files;
             const size = summaryRows.reduce((total, row) => total + Number(row.dataset.sizeBytes || 0), 0);
             const permissions = summaryRows.reduce((total, row) => total + Number(row.dataset.permissionCount || 0), 0);
-            document.getElementById("explorer-summary-heading").textContent = selected > 0 ? "Selected items" : "Filtered results";
+            document.getElementById("explorer-summary-heading").textContent = selected > 0 ? "Selected items" : "Current page";
             document.getElementById("explorer-summary-items").textContent = summaryRows.length;
             document.getElementById("explorer-summary-files").textContent = files;
             document.getElementById("explorer-summary-folders").textContent = folders;
@@ -374,4 +389,5 @@
     })();
 </script>
 
+{% include "partials/explorer-interaction.html" %}
 {% endblock %}

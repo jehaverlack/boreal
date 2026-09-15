@@ -8,6 +8,7 @@ mod migrations;
 pub mod s3;
 pub mod settings;
 pub mod tag_filter;
+pub mod tag_operations;
 
 use std::{
     error::Error,
@@ -213,6 +214,236 @@ mod tests {
     }
 
     #[test]
+    fn explorer_pages_are_filtered_stable_and_bulk_retries_keep_their_selection() {
+        let root = temporary_directory();
+        let database = Database::initialize(&runtime(&root)).unwrap();
+        let scan = database.start_scan_run("my-drive").unwrap();
+        let items = (0..61)
+            .map(|index| DriveItem {
+                id: format!("item-{index:03}"),
+                name: "Same name.txt".into(),
+                path: format!("item-{index:03}.txt"),
+                is_dir: false,
+                size: index,
+                mime_type: "text/plain".into(),
+                mod_time: String::new(),
+                metadata: BTreeMap::new(),
+            })
+            .collect::<Vec<_>>();
+        inventory::synchronize_my_drive(&database, scan, &items, false).unwrap();
+        let page = |number, tag: &str| {
+            inventory::list_drive_directory_page(
+                &database,
+                inventory::MY_DRIVE_SCOPE,
+                None,
+                "",
+                tag,
+                "",
+                "",
+                "",
+                "",
+                false,
+                "",
+                "",
+                "",
+                false,
+                "name",
+                false,
+                Some((number, 25)),
+            )
+            .unwrap()
+        };
+        let (first, total) = page(1, "");
+        let (second, _) = page(2, "");
+        let (last, _) = page(usize::MAX, "");
+        assert_eq!(total, 61);
+        assert_eq!(first.len(), 25);
+        assert_eq!(second.len(), 25);
+        assert_eq!(last.len(), 11);
+        assert_eq!(first[0].item_id, "item-000");
+        assert_eq!(second[0].item_id, "item-025");
+        assert_eq!(last[0].item_id, "item-050");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let operation = format!("{now}:test");
+        let ids = items.iter().map(|item| item.id.clone()).collect::<Vec<_>>();
+        let frozen = tag_operations::selection(
+            &database,
+            &operation,
+            "apply-needs-review-to-untagged",
+            || Ok((ids.clone(), vec![])),
+        )
+        .unwrap();
+        inventory::apply_tag_recursively_for_scope(
+            &database,
+            inventory::MY_DRIVE_SCOPE,
+            &frozen.0,
+            "needs-review",
+        )
+        .unwrap();
+        assert_eq!(page(1, "__untagged__").1, 0);
+        let retry = tag_operations::selection(
+            &database,
+            &operation,
+            "apply-needs-review-to-untagged",
+            || panic!("retry must not resolve the now-empty filter"),
+        )
+        .unwrap();
+        assert_eq!(retry, frozen);
+        assert_eq!(page(2, "needs-review").1, 61);
+        assert!(
+            tag_operations::selection(&database, &operation, "different-operation", || Ok((
+                vec![],
+                vec![]
+            )))
+            .is_err()
+        );
+        assert!(
+            tag_operations::selection(&database, "1:expired", "expired", || Ok((vec![], vec![])))
+                .is_err()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn drive_duplicate_candidates_cross_folders_but_not_inventory_scopes() {
+        let root = temporary_directory();
+        let database = Database::initialize(&runtime(&root)).unwrap();
+        let scan = database.start_scan_run("duplicates-test").unwrap();
+        let c = database.connect().unwrap();
+        for (id, name, parent, directory, size, mime, deleted) in [
+            (
+                "a",
+                "Report.pdf",
+                "One",
+                false,
+                Some(42),
+                "application/pdf",
+                false,
+            ),
+            (
+                "b",
+                "Report.pdf",
+                "Two",
+                false,
+                Some(42),
+                "application/pdf",
+                false,
+            ),
+            (
+                "c",
+                "Report.pdf",
+                "Three",
+                false,
+                Some(43),
+                "application/pdf",
+                false,
+            ),
+            (
+                "d",
+                "Report.pdf",
+                "Four",
+                false,
+                Some(42),
+                "text/plain",
+                false,
+            ),
+            (
+                "e",
+                "Report.pdf",
+                "Five",
+                false,
+                Some(42),
+                "application/pdf",
+                true,
+            ),
+            ("f", "Unknown", "One", false, None, "", false),
+            ("g", "Unknown", "Two", false, None, "", false),
+            ("h", "Photos", "One", true, None, "inode/directory", false),
+            ("i", "Photos", "Two", true, None, "inode/directory", false),
+            (
+                "j",
+                "report.pdf",
+                "One",
+                false,
+                Some(42),
+                "application/pdf",
+                false,
+            ),
+        ] {
+            c.execute("INSERT INTO drive_items(remote_name,item_id,name,relative_path,parent_path,is_directory,size_bytes,mime_type,is_deleted,last_seen_scan_id) VALUES ('my-drive-ro',?1,?2,?3||'/'||?2,?3,?4,?5,?6,?7,?8)", params![id,name,parent,directory,size,mime,deleted,scan]).unwrap();
+        }
+        c.execute("INSERT INTO drive_items(remote_name,item_id,name,relative_path,is_directory,size_bytes,mime_type,last_seen_scan_id) VALUES ('shared-with-me', 'other', 'Report.pdf', 'Report.pdf', 0, 42, 'application/pdf', ?1)", [scan]).unwrap();
+        let list = |scope, page, search: &str, duplicates, current| {
+            inventory::list_drive_directory_filtered(
+                &database,
+                scope,
+                Some("One"),
+                search,
+                "",
+                "",
+                "",
+                "",
+                "",
+                false,
+                "",
+                "",
+                "",
+                true,
+                "name",
+                false,
+                Some((page, 2)),
+                duplicates,
+                current,
+            )
+            .unwrap()
+        };
+        let (folders, total) = list(inventory::MY_DRIVE_SCOPE, 1, "", true, false);
+        assert_eq!(total, 4);
+        assert!(
+            folders
+                .iter()
+                .all(|entry| entry.is_directory && entry.duplicate_count == 2)
+        );
+        let (files, _) = list(inventory::MY_DRIVE_SCOPE, 2, "", true, false);
+        assert_eq!(
+            files
+                .iter()
+                .map(|entry| entry.item_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
+        assert!(files.iter().all(|entry| entry.duplicate_count == 2));
+        assert_eq!(
+            list(inventory::SHARED_WITH_ME_SCOPE, 1, "", true, false).1,
+            0
+        );
+        assert_eq!(
+            list(inventory::MY_DRIVE_SCOPE, 1, "Report", true, false).1,
+            2
+        );
+        assert_eq!(list(inventory::MY_DRIVE_SCOPE, 1, "", false, false).1, 4);
+        assert_eq!(list(inventory::MY_DRIVE_SCOPE, 1, "", false, true).1, 0);
+        // A second same-name folder in this location forms a local group.
+        c.execute("INSERT INTO drive_items(remote_name,item_id,name,relative_path,parent_path,is_directory,last_seen_scan_id) VALUES ('my-drive-ro','local-copy','Photos','One/Photos','One',1,?1)", [scan]).unwrap();
+        let (local, total) = list(inventory::MY_DRIVE_SCOPE, 1, "", false, true);
+        assert_eq!(total, 2);
+        assert!(
+            local
+                .iter()
+                .all(|item| item.is_directory && item.duplicate_count == 2)
+        );
+        assert_eq!(list(inventory::MY_DRIVE_SCOPE, 1, "", true, true).1, 2);
+        assert_eq!(
+            list(inventory::MY_DRIVE_SCOPE, 1, "Report", false, true).1,
+            0
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn initializes_and_reopens_database() {
         let root = temporary_directory();
         let runtime = runtime(&root);
@@ -231,7 +462,7 @@ mod tests {
             })
             .expect("migration count should be readable");
 
-        assert_eq!(migration_count, 37,);
+        assert_eq!(migration_count, 38,);
 
         let safe_to_delete_scope_count: i64 = connection
             .query_row(
@@ -2000,6 +2231,46 @@ mod tests {
                 expected,
                 "Local: {filter}"
             );
+            let (local_page, total) = local_files::list_children_page(
+                &database,
+                "/test",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                filter,
+                false,
+                "name",
+                false,
+                Some((0, 1)),
+            )
+            .unwrap();
+            assert_eq!(total, expected);
+            assert_eq!(local_page.len(), expected.min(1));
+            let (github_page, total) = github::list_page(
+                &database,
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                filter,
+                false,
+                "name",
+                false,
+                Some((0, 1)),
+            )
+            .unwrap();
+            assert_eq!(total, expected);
+            assert_eq!(github_page.len(), expected.min(1));
+
             assert_eq!(
                 github::list(
                     &database, "", "", "", "", "", "", "", filter, false, "name", false

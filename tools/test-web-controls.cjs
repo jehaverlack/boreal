@@ -223,7 +223,7 @@ assert.equal(controls['keeper-filter-form'].elements.user_tag.value, 'keep,!need
 console.log('Keeper vault tags: mixed filters, three-click cycle and Any Folder passed');
 
 const guide = fs.readFileSync(path.join(__dirname, '../tmpl/html/partials/google-setup-guide.html'), 'utf8');
-const guideSteps = [{},{},{},{}], guideBack = element(), guideNext = element(), guideCount = {};
+const guideSteps = [{},{},{},{},{}], guideBack = element(), guideNext = element(), guideCount = {};
 vm.runInNewContext(guide.match(/<script>([\s\S]*?)<\/script>/)[1], {document: {
     querySelectorAll: () => guideSteps,
     getElementById: id => ({'google-setup-back':guideBack,'google-setup-next':guideNext,'google-setup-count':guideCount}[id]),
@@ -232,9 +232,14 @@ guideNext.listeners.click();
 assert.equal(guideSteps[1].hidden,false);
 assert.equal(guideSteps[0].hidden,true);
 guideNext.listeners.click(); guideNext.listeners.click();
+assert.equal(guideCount.textContent,'Step 4 of 5');
+assert.equal(guideNext.textContent,'Proceed to Step 5');
+guideNext.listeners.click();
 assert.equal(guideNext.disabled,true);
-assert.equal(guideCount.textContent,'Step 4 of 4');
+assert.equal(guideNext.hidden,true);
+assert.equal(guideCount.textContent,'Step 5 of 5');
 guideBack.listeners.click();
 assert.equal(guideNext.disabled,false);
-assert.equal(guideSteps[2].hidden,false);
+assert.equal(guideSteps[3].hidden,false);
+assert.equal(guideNext.hidden,false);
 console.log('Google setup guide: next, back and final step passed');
