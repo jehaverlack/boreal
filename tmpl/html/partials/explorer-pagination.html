@@ -1,0 +1,16 @@
+{% if pagination.size > 0 %}
+<div class="boreal-report-hide d-flex flex-wrap align-items-center gap-2 my-2" id="explorer-pagination" data-page="{{ pagination.page }}" data-size="{{ pagination.size }}" data-total="{{ pagination.total }}" data-pages="{{ pagination.pages }}">
+    <label class="small" for="explorer-page-size">Entries per page</label>
+    <select id="explorer-page-size" class="form-select form-select-sm w-auto"><option>25</option><option>50</option><option>100</option><option>200</option></select>
+    <button type="button" class="btn btn-sm btn-outline-secondary" data-page-step="-1">Previous</button>
+    <span class="small">Page {{ pagination.page }} of {{ pagination.pages }} · {{ pagination.total }} matching entries</span>
+    <button type="button" class="btn btn-sm btn-outline-secondary" data-page-step="1">Next</button>
+    <button type="button" class="btn btn-sm btn-link" id="explorer-select-page">Select this page</button>
+    <button type="button" class="btn btn-sm btn-link" id="explorer-select-matching" hidden>Select all {{ pagination.total }} matching entries</button>
+    <button type="button" class="btn btn-sm btn-link" id="explorer-clear-selection" hidden>Clear selection</button>
+</div>
+<div id="explorer-save-status" class="small my-2 boreal-report-hide" role="status" aria-live="polite"></div>
+<button type="button" id="explorer-retry" class="btn btn-sm btn-outline-primary boreal-report-hide" hidden>Retry saving</button>
+<button type="button" id="explorer-refresh" class="btn btn-sm btn-outline-secondary boreal-report-hide" hidden>Refresh results</button>
+<button type="button" id="explorer-discard" class="btn btn-sm btn-outline-secondary boreal-report-hide" hidden>Discard pending changes and refresh</button>
+{% endif %}

@@ -459,6 +459,7 @@ pub struct IdentityTagFilterPill {
 #[derive(Template)]
 #[template(path = "my-drive.html", config = "askama.toml")]
 struct MyDriveTemplate {
+    pagination: PageView,
     title: String,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -596,6 +597,7 @@ struct TagsTemplate {
 #[derive(Template)]
 #[template(path = "github.html", config = "askama.toml")]
 struct GitHubTemplate {
+    pagination: PageView,
     title: &'static str,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -661,6 +663,7 @@ fn keeper_entry_view(record: database::keeper::EntryRow) -> KeeperEntryView {
 #[derive(Template)]
 #[template(path = "keeper.html", config = "askama.toml")]
 struct KeeperTemplate {
+    pagination: PageView,
     title: &'static str,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -679,6 +682,7 @@ struct KeeperTemplate {
 #[derive(Template)]
 #[template(path = "local-files.html", config = "askama.toml")]
 struct LocalFilesTemplate {
+    pagination: PageView,
     title: &'static str,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -693,6 +697,7 @@ struct LocalFilesTemplate {
 }
 
 struct LocalRootView {
+    total: usize,
     index: usize,
     root_path: String,
     current_path: String,
@@ -899,8 +904,43 @@ struct DirectoryQuery {
     print: bool,
 }
 
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+struct PageQuery {
+    #[serde(default, deserialize_with = "form_usize")]
+    page: usize,
+    #[serde(default, deserialize_with = "form_usize")]
+    page_size: usize,
+}
+impl PageQuery {
+    fn size(&self) -> usize {
+        match self.page_size {
+            25 | 50 | 100 | 200 => self.page_size,
+            _ => 50,
+        }
+    }
+    fn view(&self, total: usize) -> PageView {
+        let size = self.size();
+        let pages = total.saturating_sub(1) / size + 1;
+        PageView {
+            page: self.page.max(1).min(pages),
+            size,
+            total,
+            pages,
+        }
+    }
+}
+#[derive(Default)]
+struct PageView {
+    page: usize,
+    size: usize,
+    total: usize,
+    pages: usize,
+}
+
 #[derive(serde::Deserialize, Default)]
 struct DrivePathQuery {
+    #[serde(flatten)]
+    pagination: PageQuery,
     #[serde(default)]
     drive: String,
     #[serde(default)]
@@ -947,8 +987,14 @@ struct DrivePathQuery {
     print: bool,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct ApplyTagForm {
+    #[serde(default)]
+    operation_id: String,
+    #[serde(default)]
+    background: bool,
+    #[serde(default)]
+    all_matching: bool,
     #[serde(default)]
     selected_item_ids: String,
     #[serde(default)]
@@ -1170,6 +1216,8 @@ struct DeleteGitHubConnectionForm {
 
 #[derive(Clone, Default, serde::Deserialize)]
 struct GitHubQuery {
+    #[serde(flatten)]
+    pagination: PageQuery,
     #[serde(default)]
     q: String,
     #[serde(default)]
@@ -1200,8 +1248,14 @@ struct GitHubQuery {
     print: bool,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct GitHubTagForm {
+    #[serde(default)]
+    background: bool,
+    #[serde(default)]
+    all_matching: bool,
+    #[serde(default)]
+    operation_id: String,
     selected_repository_ids: String,
     tag: String,
     #[serde(default)]
@@ -1230,6 +1284,8 @@ struct GitHubTagForm {
 
 #[derive(Clone, Default, serde::Deserialize)]
 struct KeeperQuery {
+    #[serde(flatten)]
+    pagination: PageQuery,
     #[serde(default)]
     user_tag: String,
     #[serde(default)]
@@ -1260,8 +1316,14 @@ struct KeeperQuery {
     untagged: usize,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct KeeperTagForm {
+    #[serde(default)]
+    operation_id: String,
+    #[serde(default)]
+    background: bool,
+    #[serde(default)]
+    all_matching: bool,
     #[serde(default)]
     user_tag: String,
     #[serde(default)]
@@ -1321,8 +1383,10 @@ struct MetadataUpdateForm {
     s3: Option<String>,
 }
 
-#[derive(Default, Clone, serde::Deserialize)]
+#[derive(Debug, Default, Clone, serde::Deserialize)]
 struct LocalFilesQuery {
+    #[serde(flatten)]
+    pagination: PageQuery,
     #[serde(default, deserialize_with = "form_usize")]
     root: usize,
     #[serde(default)]
@@ -1379,8 +1443,14 @@ where
     }
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct LocalFileTagForm {
+    #[serde(default)]
+    background: bool,
+    #[serde(default)]
+    all_matching: bool,
+    #[serde(default)]
+    operation_id: String,
     selected_item_ids: String,
     tag_to_apply: String,
     #[serde(flatten)]
@@ -4388,7 +4458,7 @@ fn render_drive_explorer(
         Some(owner) => (true, owner.trim()),
         None => (false, query.owner_filter.trim()),
     };
-    let (items, error) = match database::inventory::list_drive_directory(
+    let (items, total, error) = match database::inventory::list_drive_directory_page(
         &database,
         inventory_scope,
         parent_filter,
@@ -4405,13 +4475,15 @@ fn render_drive_explorer(
         include_deleted,
         sort,
         descending,
+        (!query.print).then(|| (query.pagination.page, query.pagination.size())),
     ) {
-        Ok(items) => (items, String::new()),
+        Ok((items, total)) => (items, total, String::new()),
         Err(error) => {
             eprintln!("Unable to list My Drive explorer directory: {error}");
-            (Vec::new(), error.to_string())
+            (Vec::new(), 0, error.to_string())
         }
     };
+    let pagination = query.pagination.view(total);
     let summary_size = items.iter().filter_map(|item| item.size_bytes).sum::<u64>();
     let summary = ExplorerSummary {
         items: items.len(),
@@ -4578,6 +4650,7 @@ fn render_drive_explorer(
         .collect();
 
     let template = MyDriveTemplate {
+        pagination,
         title: heading.to_string(),
         active_page,
         alerts: build_alerts(
@@ -4818,34 +4891,44 @@ fn sort_url(
 async fn apply_my_drive_tag(
     State(state): State<Arc<AppState>>,
     Form(form): Form<ApplyTagForm>,
-) -> Result<Redirect, StatusCode> {
-    change_drive_tag(
-        &state,
-        form,
-        database::inventory::MY_DRIVE_SCOPE,
-        "/my-drive",
-        false,
-    )
+) -> Result<Response<Body>, StatusCode> {
+    tokio::task::spawn_blocking(move || {
+        change_drive_tag(
+            &state,
+            form,
+            database::inventory::MY_DRIVE_SCOPE,
+            "/my-drive",
+            false,
+        )
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 
 async fn apply_shared_with_me_tag(
     State(state): State<Arc<AppState>>,
     Form(form): Form<ApplyTagForm>,
-) -> Result<Redirect, StatusCode> {
-    change_drive_tag(
-        &state,
-        form,
-        database::inventory::SHARED_WITH_ME_SCOPE,
-        "/shared-with-me",
-        false,
-    )
+) -> Result<Response<Body>, StatusCode> {
+    tokio::task::spawn_blocking(move || {
+        change_drive_tag(
+            &state,
+            form,
+            database::inventory::SHARED_WITH_ME_SCOPE,
+            "/shared-with-me",
+            false,
+        )
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 
 async fn apply_shared_drive_tag(
     State(state): State<Arc<AppState>>,
     Form(form): Form<ApplyTagForm>,
-) -> Result<Redirect, StatusCode> {
-    change_shared_drive_tag(&state, form, false)
+) -> Result<Response<Body>, StatusCode> {
+    tokio::task::spawn_blocking(move || change_shared_drive_tag(&state, form, false))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 
 async fn apply_shared_drive_list_tag(
@@ -4910,15 +4993,17 @@ fn change_shared_drive_list_tag(
 async fn remove_shared_drive_tag(
     State(state): State<Arc<AppState>>,
     Form(form): Form<ApplyTagForm>,
-) -> Result<Redirect, StatusCode> {
-    change_shared_drive_tag(&state, form, true)
+) -> Result<Response<Body>, StatusCode> {
+    tokio::task::spawn_blocking(move || change_shared_drive_tag(&state, form, true))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 
 fn change_shared_drive_tag(
     state: &AppState,
     form: ApplyTagForm,
     remove: bool,
-) -> Result<Redirect, StatusCode> {
+) -> Result<Response<Body>, StatusCode> {
     let database = state
         .database()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
@@ -4935,27 +5020,35 @@ fn change_shared_drive_tag(
 async fn remove_my_drive_tag(
     State(state): State<Arc<AppState>>,
     Form(form): Form<ApplyTagForm>,
-) -> Result<Redirect, StatusCode> {
-    change_drive_tag(
-        &state,
-        form,
-        database::inventory::MY_DRIVE_SCOPE,
-        "/my-drive",
-        true,
-    )
+) -> Result<Response<Body>, StatusCode> {
+    tokio::task::spawn_blocking(move || {
+        change_drive_tag(
+            &state,
+            form,
+            database::inventory::MY_DRIVE_SCOPE,
+            "/my-drive",
+            true,
+        )
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 
 async fn remove_shared_with_me_tag(
     State(state): State<Arc<AppState>>,
     Form(form): Form<ApplyTagForm>,
-) -> Result<Redirect, StatusCode> {
-    change_drive_tag(
-        &state,
-        form,
-        database::inventory::SHARED_WITH_ME_SCOPE,
-        "/shared-with-me",
-        true,
-    )
+) -> Result<Response<Body>, StatusCode> {
+    tokio::task::spawn_blocking(move || {
+        change_drive_tag(
+            &state,
+            form,
+            database::inventory::SHARED_WITH_ME_SCOPE,
+            "/shared-with-me",
+            true,
+        )
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 
 fn change_drive_tag(
@@ -4964,17 +5057,59 @@ fn change_drive_tag(
     inventory_scope: &str,
     explorer_path: &str,
     remove: bool,
-) -> Result<Redirect, StatusCode> {
+) -> Result<Response<Body>, StatusCode> {
     let database = state
         .database()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let selected_items: Vec<String> = form
-        .selected_item_ids
-        .split(',')
-        .map(str::trim)
-        .filter(|item_id| !item_id.is_empty())
-        .map(str::to_string)
-        .collect();
+    let fingerprint = format!("{inventory_scope}:{remove}:{form:?}");
+    let resolve = || -> Result<(Vec<String>, Vec<String>), database::DatabaseError> {
+        let mut selected_items: Vec<String> = form
+            .selected_item_ids
+            .split(',')
+            .map(str::trim)
+            .filter(|item_id| !item_id.is_empty())
+            .map(str::to_string)
+            .collect();
+        if form.all_matching {
+            let (exclude_owner, owner) = form
+                .owner_filter
+                .strip_prefix('!')
+                .map(|value| (true, value.trim()))
+                .unwrap_or((false, form.owner_filter.trim()));
+            selected_items = database::inventory::list_drive_directory(
+                &database,
+                inventory_scope,
+                (!form.path.is_empty()).then_some(form.path.as_str()),
+                &form.q,
+                &form.tag_filter,
+                &form.type_filter,
+                &form.size_filter,
+                &form.modified_filter,
+                owner,
+                exclude_owner,
+                &form.permission_filter,
+                &form.owner_identity_tag_filter,
+                &form.permission_identity_tag_filter,
+                form.include_deleted,
+                &form.sort,
+                form.direction == "desc",
+            )
+            .map_err(|error| -> database::DatabaseError { error })?
+            .into_iter()
+            .map(|item| item.item_id)
+            .collect();
+        }
+        Ok((selected_items, Vec::new()))
+    };
+    let (selected_items, _) = if form.background {
+        database::tag_operations::selection(&database, &form.operation_id, &fingerprint, resolve)
+    } else {
+        resolve()
+    }
+    .map_err(|error| {
+        log::warn!("Tag selection failed: {error}");
+        StatusCode::BAD_REQUEST
+    })?;
     let changed = if remove {
         database::inventory::remove_tag_recursively_for_scope(
             &database,
@@ -5020,7 +5155,11 @@ fn change_drive_tag(
         "&{}={changed}",
         if remove { "untagged" } else { "tagged" }
     ));
-    Ok(Redirect::to(&url))
+    if form.background {
+        Ok(StatusCode::NO_CONTENT.into_response())
+    } else {
+        Ok(Redirect::to(&url).into_response())
+    }
 }
 
 async fn ui_download_status(
@@ -5189,7 +5328,12 @@ async fn keeper_page(
     let database = state
         .database()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let entries = keeper_entries(&database, &query)?;
+    let (entries, total) = keeper_entries_page(
+        &database,
+        &query,
+        (!query.print).then(|| (query.pagination.page, query.pagination.size())),
+    )?;
+    let pagination = query.pagination.view(total);
     let locations = database::keeper::folder_locations(&database)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let current_path = locations
@@ -5248,6 +5392,7 @@ async fn keeper_page(
     let google_remotes_state = state.google_remotes_state();
     let metadata_state = state.metadata_state();
     render_template(&KeeperTemplate {
+        pagination,
         title: "Keeper Explorer - BOREAL",
         active_page: "keeper",
         alerts: build_alerts(
@@ -5281,7 +5426,15 @@ fn keeper_entries(
     database: &database::Database,
     query: &KeeperQuery,
 ) -> Result<Vec<database::keeper::EntryRow>, StatusCode> {
-    database::keeper::list(
+    keeper_entries_page(database, query, None).map(|(entries, _)| entries)
+}
+
+fn keeper_entries_page(
+    database: &database::Database,
+    query: &KeeperQuery,
+    window: Option<(usize, usize)>,
+) -> Result<(Vec<database::keeper::EntryRow>, usize), StatusCode> {
+    database::keeper::list_page(
         database,
         &database::keeper::ListOptions {
             folder: &query.folder,
@@ -5296,6 +5449,7 @@ fn keeper_entries(
             sort: &query.sort,
             descending: query.direction.eq_ignore_ascii_case("desc"),
         },
+        window,
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -5476,51 +5630,8 @@ async fn local_files_page(
     let database = state
         .database()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let settings =
-        database::settings::load(&database).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let configured_roots = crate::local_files::parse_roots(&settings.local_file_roots);
-    let safe_path = normalize_local_explorer_path(&query.path).ok_or(StatusCode::BAD_REQUEST)?;
-    let mut roots = Vec::new();
-    for (index, root) in configured_roots.iter().enumerate() {
-        let current_path = if index == query.root {
-            safe_path.clone()
-        } else {
-            String::new()
-        };
-        let parent_path = current_path
-            .rsplit_once('/')
-            .map(|(p, _)| p)
-            .unwrap_or("")
-            .to_string();
-        let items = database::local_files::list_children(
-            &database,
-            &root.to_string_lossy(),
-            &current_path,
-            &query.q,
-            &query.name,
-            &query.path_filter,
-            &query.item_type,
-            &query.size,
-            &query.modified,
-            &query.owner,
-            &query.group,
-            &query.tag,
-            query.duplicates,
-            &query.sort,
-            query.direction == "desc",
-        )
-        .map_err(|error| {
-            log::error!("Unable to list local files: {error}");
-            StatusCode::BAD_REQUEST
-        })?;
-        roots.push(LocalRootView {
-            index,
-            root_path: root.to_string_lossy().into_owned(),
-            current_path,
-            parent_path,
-            items,
-        });
-    }
+    let (roots, total) = local_explorer_roots(&database, &query, true)?;
+    let pagination = query.pagination.view(total);
     let summary =
         database::local_files::summary(&database).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let tags = database::inventory::list_tags_for_scope(
@@ -5548,6 +5659,7 @@ async fn local_files_page(
     let google_remotes_state = state.google_remotes_state();
     let metadata_state = state.metadata_state();
     render_template(&LocalFilesTemplate {
+        pagination,
         title: "Local Files - BOREAL",
         active_page: "local-files",
         alerts: build_alerts(
@@ -5575,6 +5687,82 @@ async fn local_files_page(
     })
 }
 
+fn local_explorer_roots(
+    database: &database::Database,
+    query: &LocalFilesQuery,
+    page: bool,
+) -> Result<(Vec<LocalRootView>, usize), StatusCode> {
+    let settings =
+        database::settings::load(&database).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let configured_roots = crate::local_files::parse_roots(&settings.local_file_roots);
+    let safe_path = normalize_local_explorer_path(&query.path).ok_or(StatusCode::BAD_REQUEST)?;
+    let list = |root: &str, current_path: &str, window| {
+        database::local_files::list_children_page(
+            &database,
+            root,
+            current_path,
+            &query.q,
+            &query.name,
+            &query.path_filter,
+            &query.item_type,
+            &query.size,
+            &query.modified,
+            &query.owner,
+            &query.group,
+            &query.tag,
+            query.duplicates,
+            &query.sort,
+            query.direction == "desc",
+            window,
+        )
+        .map_err(|error| {
+            log::error!("Unable to list local files: {error}");
+            StatusCode::BAD_REQUEST
+        })
+    };
+    let mut roots = Vec::new();
+    for (index, root) in configured_roots.iter().enumerate() {
+        let current_path = if index == query.root {
+            safe_path.clone()
+        } else {
+            String::new()
+        };
+        let parent_path = current_path
+            .rsplit_once('/')
+            .map(|(p, _)| p)
+            .unwrap_or("")
+            .to_string();
+        let (items, total) = list(
+            &root.to_string_lossy(),
+            &current_path,
+            page.then_some((0, 0)),
+        )?;
+        roots.push(LocalRootView {
+            index,
+            root_path: root.to_string_lossy().into_owned(),
+            current_path,
+            parent_path,
+            items,
+            total,
+        });
+    }
+    let total = roots.iter().map(|root| root.total).sum();
+    if page {
+        let pagination = query.pagination.view(total);
+        let mut skip = (pagination.page - 1) * pagination.size;
+        let mut remaining = pagination.size;
+        for root in &mut roots {
+            let take = remaining.min(root.total.saturating_sub(skip));
+            if take > 0 {
+                root.items = list(&root.root_path, &root.current_path, Some((skip, take)))?.0;
+            }
+            skip = skip.saturating_sub(root.total);
+            remaining -= take;
+        }
+    }
+    Ok((roots, total))
+}
+
 fn normalize_local_explorer_path(path: &str) -> Option<String> {
     let normalized = path.replace('\\', "/").trim_matches('/').to_string();
     if normalized
@@ -5590,20 +5778,24 @@ fn normalize_local_explorer_path(path: &str) -> Option<String> {
 async fn apply_local_file_tag(
     State(state): State<Arc<AppState>>,
     Form(form): Form<LocalFileTagForm>,
-) -> Result<Redirect, StatusCode> {
-    change_local_file_tag(&state, form, false)
+) -> Result<Response<Body>, StatusCode> {
+    tokio::task::spawn_blocking(move || change_local_file_tag(&state, form, false))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 async fn remove_local_file_tag(
     State(state): State<Arc<AppState>>,
     Form(form): Form<LocalFileTagForm>,
-) -> Result<Redirect, StatusCode> {
-    change_local_file_tag(&state, form, true)
+) -> Result<Response<Body>, StatusCode> {
+    tokio::task::spawn_blocking(move || change_local_file_tag(&state, form, true))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 fn change_local_file_tag(
     state: &AppState,
     form: LocalFileTagForm,
     remove: bool,
-) -> Result<Redirect, StatusCode> {
+) -> Result<Response<Body>, StatusCode> {
     let ids = form
         .selected_item_ids
         .split(',')
@@ -5612,13 +5804,42 @@ fn change_local_file_tag(
     let database = state
         .database()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let fingerprint = format!("{remove}:{form:?}");
+    let resolve = || -> Result<(Vec<String>, Vec<String>), database::DatabaseError> {
+        let selected = if form.all_matching {
+            local_explorer_roots(&database, &form.query, false)
+                .map_err(|error| error.to_string())?
+                .0
+                .into_iter()
+                .flat_map(|root| root.items)
+                .map(|item| item.id.to_string())
+                .collect()
+        } else {
+            ids.iter().map(ToString::to_string).collect()
+        };
+        Ok((selected, Vec::new()))
+    };
+    let (selected, _) = if form.background {
+        database::tag_operations::selection(&database, &form.operation_id, &fingerprint, resolve)
+    } else {
+        resolve()
+    }
+    .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let ids = selected
+        .iter()
+        .filter_map(|id| id.parse::<i64>().ok())
+        .collect::<Vec<_>>();
     database::local_files::change_tags(&database, &ids, &form.tag_to_apply, remove).map_err(
         |error| {
             log::error!("Unable to change Local Files tags: {error}");
             StatusCode::BAD_REQUEST
         },
     )?;
-    Ok(Redirect::to(&local_files_redirect(&form.query)))
+    if form.background {
+        Ok(StatusCode::NO_CONTENT.into_response())
+    } else {
+        Ok(Redirect::to(&local_files_redirect(&form.query)).into_response())
+    }
 }
 
 async fn associate_local_file_owner(
@@ -5698,49 +5919,89 @@ fn url_component(value: &str) -> String {
 async fn apply_keeper_tag(
     State(state): State<Arc<AppState>>,
     Form(form): Form<KeeperTagForm>,
-) -> Result<Redirect, StatusCode> {
-    change_keeper_tag(&state, form, false)
+) -> Result<Response<Body>, StatusCode> {
+    tokio::task::spawn_blocking(move || change_keeper_tag(&state, form, false))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 
 async fn remove_keeper_tag(
     State(state): State<Arc<AppState>>,
     Form(form): Form<KeeperTagForm>,
-) -> Result<Redirect, StatusCode> {
-    change_keeper_tag(&state, form, true)
+) -> Result<Response<Body>, StatusCode> {
+    tokio::task::spawn_blocking(move || change_keeper_tag(&state, form, true))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 
 fn change_keeper_tag(
     state: &AppState,
     form: KeeperTagForm,
     remove: bool,
-) -> Result<Redirect, StatusCode> {
-    let ids = form
-        .selected_folder_uids
-        .split(',')
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
+) -> Result<Response<Body>, StatusCode> {
     let database = state
         .database()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let changed = database::keeper::change_tags(
-        &database,
-        &ids,
-        &form
+    let fingerprint = format!("keeper:{remove}:{form:?}");
+    let resolve = || -> Result<(Vec<String>, Vec<String>), database::DatabaseError> {
+        let mut ids = form
+            .selected_folder_uids
+            .split(',')
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let mut record_ids = form
             .selected_record_uids
             .split(',')
             .map(str::trim)
-            .filter(|s| !s.is_empty())
+            .filter(|id| !id.is_empty())
             .map(str::to_string)
-            .collect::<Vec<_>>(),
-        &form.tag,
-        remove,
-    )
+            .collect::<Vec<_>>();
+        if form.all_matching {
+            let query = KeeperQuery {
+                user_tag: form.user_tag.clone(),
+                folder: form.folder.clone(),
+                all: form.all,
+                include_inaccessible: form.include_inaccessible,
+                name: form.name.clone(),
+                path: form.path.clone(),
+                shared_to: form.shared_to.clone(),
+                permission: form.permission.clone(),
+                tag: form.tag_filter.clone(),
+                sort: form.sort.clone(),
+                direction: form.direction.clone(),
+                ..Default::default()
+            };
+            let entries = keeper_entries(&database, &query)
+                .map_err(|error| -> database::DatabaseError { error.to_string().into() })?;
+            ids = entries
+                .iter()
+                .filter(|e| e.is_folder)
+                .map(|e| e.uid.clone())
+                .collect();
+            record_ids = entries
+                .iter()
+                .filter(|e| !e.is_folder)
+                .map(|e| e.uid.clone())
+                .collect();
+        }
+        Ok((ids, record_ids))
+    };
+    let (ids, record_ids) = if form.background {
+        database::tag_operations::selection(&database, &form.operation_id, &fingerprint, resolve)
+    } else {
+        resolve()
+    }
     .map_err(|error| {
-        log::error!("Unable to change Keeper tag: {error}");
+        log::warn!("Tag selection failed: {error}");
         StatusCode::BAD_REQUEST
     })?;
+    let changed = database::keeper::change_tags(&database, &ids, &record_ids, &form.tag, remove)
+        .map_err(|error| {
+            log::error!("Unable to change Keeper tag: {error}");
+            StatusCode::BAD_REQUEST
+        })?;
     let url = format!(
         "/keeper?user_tag={}&folder={}&all={}&include_inaccessible={}&name={}&path={}&shared_to={}&permission={}&tag={}&sort={}&direction={}&{}={changed}",
         encode_query_value(&form.user_tag),
@@ -5756,7 +6017,11 @@ fn change_keeper_tag(
         encode_query_value(&form.direction),
         if remove { "untagged" } else { "tagged" }
     );
-    Ok(Redirect::to(&url))
+    if form.background {
+        Ok(StatusCode::NO_CONTENT.into_response())
+    } else {
+        Ok(Redirect::to(&url).into_response())
+    }
 }
 
 async fn github_page(
@@ -5769,7 +6034,7 @@ async fn github_page(
     let database = state
         .database()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let repositories = database::github::list(
+    let (repositories, total) = database::github::list_page(
         &database,
         &query.q,
         &query.owner,
@@ -5782,11 +6047,23 @@ async fn github_page(
         query.include_inaccessible,
         &query.sort,
         query.direction.eq_ignore_ascii_case("desc"),
+        (!query.print).then(|| {
+            (
+                query
+                    .pagination
+                    .page
+                    .max(1)
+                    .saturating_sub(1)
+                    .saturating_mul(query.pagination.size()),
+                query.pagination.size(),
+            )
+        }),
     )
     .map_err(|error| {
         log::error!("Unable to list GitHub repositories: {error}");
         StatusCode::BAD_REQUEST
     })?;
+    let pagination = query.pagination.view(total);
     let tags = database::inventory::list_tags_for_scope(
         &database,
         database::inventory::TagScope::GitHubRepositories,
@@ -5810,6 +6087,7 @@ async fn github_page(
     let google_remotes_state = state.google_remotes_state();
     let metadata_state = state.metadata_state();
     render_template(&GitHubTemplate {
+        pagination,
         title: "GitHub Repositories - BOREAL",
         active_page: "github",
         alerts: build_alerts(
@@ -5940,22 +6218,26 @@ async fn export_github(
 async fn apply_github_tag(
     State(state): State<Arc<AppState>>,
     Form(form): Form<GitHubTagForm>,
-) -> Result<Redirect, StatusCode> {
-    change_github_tag(&state, form, false)
+) -> Result<Response<Body>, StatusCode> {
+    tokio::task::spawn_blocking(move || change_github_tag(&state, form, false))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 
 async fn remove_github_tag(
     State(state): State<Arc<AppState>>,
     Form(form): Form<GitHubTagForm>,
-) -> Result<Redirect, StatusCode> {
-    change_github_tag(&state, form, true)
+) -> Result<Response<Body>, StatusCode> {
+    tokio::task::spawn_blocking(move || change_github_tag(&state, form, true))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 
 fn change_github_tag(
     state: &AppState,
     form: GitHubTagForm,
     remove: bool,
-) -> Result<Redirect, StatusCode> {
+) -> Result<Response<Body>, StatusCode> {
     let ids = form
         .selected_repository_ids
         .split(',')
@@ -5964,12 +6246,51 @@ fn change_github_tag(
     let database = state
         .database()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let fingerprint = format!("{remove}:{form:?}");
+    let resolve = || -> Result<(Vec<String>, Vec<String>), database::DatabaseError> {
+        let selected = if form.all_matching {
+            database::github::list(
+                &database,
+                &form.q,
+                &form.owner,
+                &form.visibility,
+                &form.permission,
+                &form.language,
+                &form.size_filter,
+                &form.pushed_filter,
+                &form.tag_filter,
+                form.include_inaccessible,
+                &form.sort,
+                form.direction == "desc",
+            )?
+            .into_iter()
+            .map(|entry| entry.repository_id.to_string())
+            .collect()
+        } else {
+            ids.iter().map(ToString::to_string).collect()
+        };
+        Ok((selected, Vec::new()))
+    };
+    let (selected, _) = if form.background {
+        database::tag_operations::selection(&database, &form.operation_id, &fingerprint, resolve)
+    } else {
+        resolve()
+    }
+    .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let ids = selected
+        .iter()
+        .filter_map(|id| id.parse::<i64>().ok())
+        .collect::<Vec<_>>();
     let changed =
         database::github::change_tags(&database, &ids, &form.tag, remove).map_err(|error| {
             log::error!("Unable to change GitHub repository tag: {error}");
             StatusCode::BAD_REQUEST
         })?;
-    Ok(Redirect::to(&github_tag_return_url(&form, remove, changed)))
+    if form.background {
+        Ok(StatusCode::NO_CONTENT.into_response())
+    } else {
+        Ok(Redirect::to(&github_tag_return_url(&form, remove, changed)).into_response())
+    }
 }
 
 fn github_tag_return_url(form: &GitHubTagForm, remove: bool, changed: usize) -> String {
@@ -7843,6 +8164,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn explorer_pagination_parses_urls_and_bounds_page_sizes() {
+        let uri = "/my-drive?page=2&page_size=25&tag=needs-review"
+            .parse()
+            .unwrap();
+        let Query(query) = Query::<DrivePathQuery>::try_from_uri(&uri).unwrap();
+        assert_eq!(query.pagination.page, 2);
+        assert_eq!(query.pagination.size(), 25);
+        assert_eq!(query.tag, "needs-review");
+        let uri = "/keeper?page=0&page_size=999&all=true".parse().unwrap();
+        let Query(query) = Query::<KeeperQuery>::try_from_uri(&uri).unwrap();
+        let view = query.pagination.view(0);
+        assert_eq!((view.page, view.size, view.pages), (1, 50, 1));
+        assert!(query.all);
+        for uri in [
+            "/github?page=3&page_size=100",
+            "/local-files?page=3&page_size=100&root=1",
+        ] {
+            if uri.starts_with("/github") {
+                assert_eq!(
+                    Query::<GitHubQuery>::try_from_uri(&uri.parse().unwrap())
+                        .unwrap()
+                        .0
+                        .pagination
+                        .size(),
+                    100
+                );
+            } else {
+                let query = Query::<LocalFilesQuery>::try_from_uri(&uri.parse().unwrap())
+                    .unwrap()
+                    .0;
+                assert_eq!(query.root, 1);
+                assert_eq!(query.pagination.size(), 100);
+            }
+        }
+    }
+
+    #[test]
     fn google_navigation_preserves_color_icons_and_optional_sources() {
         let html = google_primary_navigation(true).0;
         assert!(html.contains("boreal-drive-nav"));
@@ -8083,6 +8441,7 @@ mod tests {
             local_files: false,
         };
         let mut template = KeeperTemplate {
+            pagination: PageQuery::default().view(1),
             title: "Keeper Explorer",
             active_page: "keeper",
             alerts: vec![],

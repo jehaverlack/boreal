@@ -106,6 +106,7 @@ fn synchronize_inner(
     tx.commit()?;
     Ok(())
 }
+#[cfg(test)]
 pub fn list_children(
     db: &Database,
     root: &str,
@@ -123,6 +124,45 @@ pub fn list_children(
     sort: &str,
     descending: bool,
 ) -> Result<Vec<Row>, DatabaseError> {
+    list_children_page(
+        db,
+        root,
+        parent,
+        search,
+        name,
+        path,
+        item_type,
+        size,
+        modified,
+        owner,
+        group,
+        tag,
+        duplicates_only,
+        sort,
+        descending,
+        None,
+    )
+    .map(|(rows, _)| rows)
+}
+
+pub fn list_children_page(
+    db: &Database,
+    root: &str,
+    parent: &str,
+    search: &str,
+    name: &str,
+    path: &str,
+    item_type: &str,
+    size: &str,
+    modified: &str,
+    owner: &str,
+    group: &str,
+    tag: &str,
+    duplicates_only: bool,
+    sort: &str,
+    descending: bool,
+    window: Option<(usize, usize)>,
+) -> Result<(Vec<Row>, usize), DatabaseError> {
     let c = db.connect()?;
     let (modified_comparison, modified_value) = parse_modified_filter(modified)?;
     let order = match sort {
@@ -139,63 +179,80 @@ pub fn list_children(
     let type_expression = "CASE WHEN i.is_symlink=1 THEN 'symlink' WHEN i.is_directory=1 THEN 'folder' WHEN i.extension<>'' THEN i.extension ELSE 'file' END";
     let size_expression = "CASE WHEN i.size_bytes>=1000000000000 THEN printf('%.1f TB',i.size_bytes/1000000000000.0) WHEN i.size_bytes>=1000000000 THEN printf('%.1f GB',i.size_bytes/1000000000.0) WHEN i.size_bytes>=1000000 THEN printf('%.1f MB',i.size_bytes/1000000.0) WHEN i.size_bytes>=1000 THEN printf('%.1f KB',i.size_bytes/1000.0) ELSE CAST(i.size_bytes AS TEXT)||' B' END";
     let sql = format!(
-        "SELECT i.id,i.root_path,i.relative_path,i.name,i.extension,i.is_directory,i.size_bytes,i.modified_unix,i.checksum_sha256,CASE WHEN i.checksum_sha256='' THEN 0 ELSE (SELECT COUNT(*) FROM local_file_items d WHERE d.is_accessible=1 AND d.checksum_sha256=i.checksum_sha256) END copies,(SELECT group_concat(t.slug||char(30)||t.name||char(30)||t.color||char(30)||t.description,char(31)) FROM local_file_tags lft JOIN tags t ON t.id=lft.tag_id WHERE lft.local_file_id=i.id),i.owner_username,i.owner_identifier,COALESCE(p.id,0),COALESCE(p.display_name,''),i.group_name,i.group_identifier,i.is_symlink,i.symlink_target FROM local_file_items i LEFT JOIN principals p ON lower(p.username)=lower(i.owner_username) WHERE i.is_accessible=1 AND i.root_path=?1 AND ((?10='' AND ((?2='' AND instr(i.relative_path,'/')=0) OR (?2<>'' AND i.relative_path LIKE ?2||'/%' AND instr(substr(i.relative_path,length(?2)+2),'/')=0))) OR (?10<>'' AND (instr(lower(i.name),lower(?10))>0 OR instr(lower(i.relative_path),lower(?10))>0 OR instr(lower({type_expression}),lower(?10))>0 OR instr(lower(CAST(i.size_bytes AS TEXT)),lower(?10))>0 OR instr(lower({size_expression}),lower(?10))>0 OR instr(lower(replace(datetime(i.modified_unix,'unixepoch','localtime'),' ','T')),lower(?10))>0 OR instr(lower(i.owner_username),lower(?10))>0 OR instr(lower(i.owner_identifier),lower(?10))>0 OR instr(lower(COALESCE(p.display_name,'')),lower(?10))>0 OR instr(lower(i.group_name),lower(?10))>0 OR instr(lower(i.group_identifier),lower(?10))>0))) AND (?3='' OR instr(lower(i.name),lower(?3))>0) AND (?4='' OR instr(lower(i.relative_path),lower(?4))>0) AND (?5='' OR instr(lower({type_expression}),lower(?5))>0) AND (?6='' OR instr(lower(CAST(i.size_bytes AS TEXT)),lower(?6))>0 OR instr(lower({size_expression}),lower(?6))>0) AND (?11=0 OR (?11=1 AND datetime(i.modified_unix,'unixepoch','localtime') > replace(?7,'T',' ')) OR (?11=2 AND datetime(i.modified_unix,'unixepoch','localtime') >= replace(?7,'T',' ')) OR (?11=3 AND datetime(i.modified_unix,'unixepoch','localtime') < replace(?7,'T',' ')) OR (?11=4 AND datetime(i.modified_unix,'unixepoch','localtime') <= replace(?7,'T',' ')) OR (?11=5 AND substr(datetime(i.modified_unix,'unixepoch','localtime'),1,length(?7))=replace(?7,'T',' '))) AND (?12='' OR instr(lower(i.owner_username),lower(?12))>0 OR instr(lower(i.owner_identifier),lower(?12))>0 OR instr(lower(COALESCE(p.display_name,'')),lower(?12))>0) AND (?13='' OR instr(lower(i.group_name),lower(?13))>0 OR instr(lower(i.group_identifier),lower(?13))>0) AND NOT EXISTS (SELECT 1 FROM json_each(?8) tag_term WHERE (CASE WHEN json_extract(tag_term.value,'$[1]')='__untagged__' THEN NOT EXISTS(SELECT 1 FROM local_file_tags x WHERE x.local_file_id=i.id) ELSE EXISTS(SELECT 1 FROM local_file_tags x JOIN tags xt ON xt.id=x.tag_id WHERE x.local_file_id=i.id AND xt.slug=json_extract(tag_term.value,'$[1]')) END) = json_extract(tag_term.value,'$[0]')) AND (?9=0 OR (i.checksum_sha256<>'' AND (SELECT COUNT(*) FROM local_file_items d WHERE d.is_accessible=1 AND d.checksum_sha256=i.checksum_sha256)>1)) ORDER BY i.is_directory DESC,{order} {direction}"
+        "SELECT i.id,i.root_path,i.relative_path,i.name,i.extension,i.is_directory,i.size_bytes,i.modified_unix,i.checksum_sha256,CASE WHEN i.checksum_sha256='' THEN 0 ELSE (SELECT COUNT(*) FROM local_file_items d WHERE d.is_accessible=1 AND d.checksum_sha256=i.checksum_sha256) END copies,(SELECT group_concat(t.slug||char(30)||t.name||char(30)||t.color||char(30)||t.description,char(31)) FROM local_file_tags lft JOIN tags t ON t.id=lft.tag_id WHERE lft.local_file_id=i.id),i.owner_username,i.owner_identifier,COALESCE(p.id,0),COALESCE(p.display_name,''),i.group_name,i.group_identifier,i.is_symlink,i.symlink_target FROM local_file_items i LEFT JOIN principals p ON lower(p.username)=lower(i.owner_username) WHERE i.is_accessible=1 AND i.root_path=?1 AND ((?10='' AND ((?2='' AND instr(i.relative_path,'/')=0) OR (?2<>'' AND i.relative_path LIKE ?2||'/%' AND instr(substr(i.relative_path,length(?2)+2),'/')=0))) OR (?10<>'' AND (instr(lower(i.name),lower(?10))>0 OR instr(lower(i.relative_path),lower(?10))>0 OR instr(lower({type_expression}),lower(?10))>0 OR instr(lower(CAST(i.size_bytes AS TEXT)),lower(?10))>0 OR instr(lower({size_expression}),lower(?10))>0 OR instr(lower(replace(datetime(i.modified_unix,'unixepoch','localtime'),' ','T')),lower(?10))>0 OR instr(lower(i.owner_username),lower(?10))>0 OR instr(lower(i.owner_identifier),lower(?10))>0 OR instr(lower(COALESCE(p.display_name,'')),lower(?10))>0 OR instr(lower(i.group_name),lower(?10))>0 OR instr(lower(i.group_identifier),lower(?10))>0))) AND (?3='' OR instr(lower(i.name),lower(?3))>0) AND (?4='' OR instr(lower(i.relative_path),lower(?4))>0) AND (?5='' OR instr(lower({type_expression}),lower(?5))>0) AND (?6='' OR instr(lower(CAST(i.size_bytes AS TEXT)),lower(?6))>0 OR instr(lower({size_expression}),lower(?6))>0) AND (?11=0 OR (?11=1 AND datetime(i.modified_unix,'unixepoch','localtime') > replace(?7,'T',' ')) OR (?11=2 AND datetime(i.modified_unix,'unixepoch','localtime') >= replace(?7,'T',' ')) OR (?11=3 AND datetime(i.modified_unix,'unixepoch','localtime') < replace(?7,'T',' ')) OR (?11=4 AND datetime(i.modified_unix,'unixepoch','localtime') <= replace(?7,'T',' ')) OR (?11=5 AND substr(datetime(i.modified_unix,'unixepoch','localtime'),1,length(?7))=replace(?7,'T',' '))) AND (?12='' OR instr(lower(i.owner_username),lower(?12))>0 OR instr(lower(i.owner_identifier),lower(?12))>0 OR instr(lower(COALESCE(p.display_name,'')),lower(?12))>0) AND (?13='' OR instr(lower(i.group_name),lower(?13))>0 OR instr(lower(i.group_identifier),lower(?13))>0) AND NOT EXISTS (SELECT 1 FROM json_each(?8) tag_term WHERE (CASE WHEN json_extract(tag_term.value,'$[1]')='__untagged__' THEN NOT EXISTS(SELECT 1 FROM local_file_tags x WHERE x.local_file_id=i.id) ELSE EXISTS(SELECT 1 FROM local_file_tags x JOIN tags xt ON xt.id=x.tag_id WHERE x.local_file_id=i.id AND xt.slug=json_extract(tag_term.value,'$[1]')) END) = json_extract(tag_term.value,'$[0]')) AND (?9=0 OR (i.checksum_sha256<>'' AND (SELECT COUNT(*) FROM local_file_items d WHERE d.is_accessible=1 AND d.checksum_sha256=i.checksum_sha256)>1)) ORDER BY i.is_directory DESC,{order} {direction},i.id"
     );
+    let parameters = params![
+        root,
+        parent,
+        name,
+        path,
+        item_type,
+        size,
+        modified_value,
+        super::tag_filter::json(tag),
+        duplicates_only,
+        search,
+        modified_comparison,
+        owner,
+        group
+    ];
+    let total = if window.is_some() {
+        c.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM ({})",
+                sql.rsplit_once("ORDER BY").unwrap().0
+            ),
+            parameters,
+            |row| row.get::<_, i64>(0),
+        )? as usize
+    } else {
+        0
+    };
+    let sql = if let Some((offset, limit)) = window {
+        format!("{sql} LIMIT {} OFFSET {offset}", limit.min(200))
+    } else {
+        sql
+    };
     let mut s = c.prepare(&sql)?;
-    let rows = s.query_map(
-        params![
-            root,
-            parent,
-            name,
-            path,
-            item_type,
-            size,
-            modified_value,
-            super::tag_filter::json(tag),
-            duplicates_only,
-            search,
-            modified_comparison,
-            owner,
-            group
-        ],
-        |r| {
-            let bytes = r.get::<_, i64>(6)? as u64;
-            let root_path: String = r.get(1)?;
-            let relative_path: String = r.get(2)?;
-            let extension: String = r.get(4)?;
-            let is_directory: bool = r.get(5)?;
-            Ok(Row {
-                id: r.get(0)?,
-                full_path: Path::new(&root_path)
-                    .join(&relative_path)
-                    .to_string_lossy()
-                    .into_owned(),
-                root_path,
-                relative_path,
-                name: r.get(3)?,
-                icon_class: file_icon_class(&extension),
-                type_label: item_type_label(is_directory, r.get(17)?, &extension),
-                extension,
-                is_directory,
-                size_bytes: bytes,
-                size_label: format_bytes(bytes),
-                modified_unix: r.get(7)?,
-                modified_label: r.get::<_, i64>(7).map(|v| format_unix(v))?,
-                checksum_sha256: r.get(8)?,
-                duplicate_copies: r.get::<_, i64>(9)? as u64,
-                tags: parse_tags(r.get::<_, Option<String>>(10)?),
-                owner_username: r.get(11)?,
-                owner_identifier: r.get(12)?,
-                owner_principal_id: r.get(13)?,
-                owner_display_name: r.get(14)?,
-                group_name: r.get(15)?,
-                group_identifier: r.get(16)?,
-                is_symlink: r.get(17)?,
-                symlink_target: r.get(18)?,
-            })
-        },
-    )?;
-    Ok(rows.collect::<Result<_, _>>()?)
+    let rows = s.query_map(parameters, |r| {
+        let bytes = r.get::<_, i64>(6)? as u64;
+        let root_path: String = r.get(1)?;
+        let relative_path: String = r.get(2)?;
+        let extension: String = r.get(4)?;
+        let is_directory: bool = r.get(5)?;
+        Ok(Row {
+            id: r.get(0)?,
+            full_path: Path::new(&root_path)
+                .join(&relative_path)
+                .to_string_lossy()
+                .into_owned(),
+            root_path,
+            relative_path,
+            name: r.get(3)?,
+            icon_class: file_icon_class(&extension),
+            type_label: item_type_label(is_directory, r.get(17)?, &extension),
+            extension,
+            is_directory,
+            size_bytes: bytes,
+            size_label: format_bytes(bytes),
+            modified_unix: r.get(7)?,
+            modified_label: r.get::<_, i64>(7).map(|v| format_unix(v))?,
+            checksum_sha256: r.get(8)?,
+            duplicate_copies: r.get::<_, i64>(9)? as u64,
+            tags: parse_tags(r.get::<_, Option<String>>(10)?),
+            owner_username: r.get(11)?,
+            owner_identifier: r.get(12)?,
+            owner_principal_id: r.get(13)?,
+            owner_display_name: r.get(14)?,
+            group_name: r.get(15)?,
+            group_identifier: r.get(16)?,
+            is_symlink: r.get(17)?,
+            symlink_target: r.get(18)?,
+        })
+    })?;
+    let items = rows.collect::<Result<Vec<_>, _>>()?;
+    let total = if window.is_none() { items.len() } else { total };
+    Ok((items, total))
 }
 
 fn item_type_label(is_directory: bool, is_symlink: bool, extension: &str) -> String {

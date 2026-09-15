@@ -194,6 +194,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "google_groups",
         sql: include_str!("migrations/0037_google_groups.sql"),
     },
+    Migration {
+        version: 38,
+        name: "tag_operation_selections",
+        sql: include_str!("migrations/0038_tag_operation_selections.sql"),
+    },
 ];
 
 pub fn apply(connection: &mut Connection) -> Result<(), DatabaseError> {

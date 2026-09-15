@@ -686,6 +686,47 @@ pub fn list_drive_directory(
     sort: &str,
     descending: bool,
 ) -> Result<Vec<DriveExplorerItem>, DatabaseError> {
+    list_drive_directory_page(
+        database,
+        inventory_scope,
+        parent_path,
+        search,
+        tag_filter,
+        type_filter,
+        size_filter,
+        modified_filter,
+        owner_filter,
+        exclude_owner,
+        permission_filter,
+        owner_identity_tag_filter,
+        permission_identity_tag_filter,
+        include_deleted,
+        sort,
+        descending,
+        None,
+    )
+    .map(|(items, _)| items)
+}
+
+pub fn list_drive_directory_page(
+    database: &Database,
+    inventory_scope: &str,
+    parent_path: Option<&str>,
+    search: &str,
+    tag_filter: &str,
+    type_filter: &str,
+    size_filter: &str,
+    modified_filter: &str,
+    owner_filter: &str,
+    exclude_owner: bool,
+    permission_filter: &str,
+    owner_identity_tag_filter: &str,
+    permission_identity_tag_filter: &str,
+    include_deleted: bool,
+    sort: &str,
+    descending: bool,
+    window: Option<(usize, usize)>,
+) -> Result<(Vec<DriveExplorerItem>, usize), DatabaseError> {
     let connection = database.connect()?;
     let (size_comparison, size_bytes) = parse_size_filter(size_filter)?;
     let (modified_comparison, modified_value) = parse_modified_filter(modified_filter)?;
@@ -800,78 +841,97 @@ pub fn list_drive_directory(
            )) = json_extract(tag_term.value, '$[0]'))
          ORDER BY {directory_grouping} {sort_expression} {direction}, name COLLATE NOCASE, item_id"
     );
+    let parameters = params![
+        remote,
+        parent_path,
+        search.trim(),
+        tag_predicates,
+        type_filter.trim(),
+        size_comparison,
+        size_bytes,
+        modified_comparison,
+        modified_value,
+        owner_filter.trim(),
+        exclude_owner,
+        permission_filter.trim(),
+        include_deleted || super::tag_filter::selected(tag_filter, DELETED_TAG_FILTER, false),
+        super::tag_filter::json(owner_identity_tag_filter),
+        super::tag_filter::json(permission_identity_tag_filter),
+    ];
+    // Count before hydration; LIMIT applies before per-item tag and permission rendering.
+    let total: i64 = if window.is_some() {
+        connection.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM ({})",
+                sql.rsplit_once("ORDER BY").unwrap().0
+            ),
+            parameters,
+            |row| row.get(0),
+        )?
+    } else {
+        0
+    };
+    let total = total as usize;
+    let sql = if let Some((page, size)) = window {
+        let size = size.clamp(1, 200);
+        let page = page.max(1).min(total.saturating_sub(1) / size + 1);
+        format!("{sql} LIMIT {size} OFFSET {}", (page - 1) * size)
+    } else {
+        sql
+    };
     let mut statement = connection.prepare(&sql)?;
-    let rows = statement.query_map(
-        params![
-            remote,
-            parent_path,
-            search.trim(),
-            tag_predicates,
-            type_filter.trim(),
-            size_comparison,
-            size_bytes,
-            modified_comparison,
-            modified_value,
-            owner_filter.trim(),
-            exclude_owner,
-            permission_filter.trim(),
-            include_deleted || super::tag_filter::selected(tag_filter, DELETED_TAG_FILTER, false),
-            super::tag_filter::json(owner_identity_tag_filter),
-            super::tag_filter::json(permission_identity_tag_filter),
-        ],
-        |row| {
-            let size: Option<i64> = row.get(5)?;
-            Ok(DriveExplorerItem {
-                item_id: row.get(0)?,
-                name: row.get(1)?,
-                relative_path: row.get(2)?,
-                is_directory: row.get(3)?,
-                mime_type: row.get(4)?,
-                size_bytes: size.map(|value| value as u64),
-                modified_at: row.get(6)?,
-                owner_email: row.get(7)?,
-                owner_known: false,
-                owner_tags: Vec::new(),
-                tags: row
-                    .get::<_, Option<String>>(8)?
-                    .map(|tags| {
-                        tags.split('\u{1f}')
-                            .filter_map(|tag| {
-                                let mut fields = tag.split('\u{1e}');
-                                Some(Tag {
-                                    slug: String::new(),
-                                    name: fields.next()?.to_string(),
-                                    color: fields.next()?.to_string(),
-                                    description: fields.next()?.to_string(),
-                                    directory: false,
-                                    my_drive: false,
-                                    shared_drives: false,
-                                    shared_with_me: false,
-                                    github_repositories: false,
-                                    keeper_shared_folders: false,
-                                    local_files: false,
-                                })
+    let rows = statement.query_map(parameters, |row| {
+        let size: Option<i64> = row.get(5)?;
+        Ok(DriveExplorerItem {
+            item_id: row.get(0)?,
+            name: row.get(1)?,
+            relative_path: row.get(2)?,
+            is_directory: row.get(3)?,
+            mime_type: row.get(4)?,
+            size_bytes: size.map(|value| value as u64),
+            modified_at: row.get(6)?,
+            owner_email: row.get(7)?,
+            owner_known: false,
+            owner_tags: Vec::new(),
+            tags: row
+                .get::<_, Option<String>>(8)?
+                .map(|tags| {
+                    tags.split('\u{1f}')
+                        .filter_map(|tag| {
+                            let mut fields = tag.split('\u{1e}');
+                            Some(Tag {
+                                slug: String::new(),
+                                name: fields.next()?.to_string(),
+                                color: fields.next()?.to_string(),
+                                description: fields.next()?.to_string(),
+                                directory: false,
+                                my_drive: false,
+                                shared_drives: false,
+                                shared_with_me: false,
+                                github_repositories: false,
+                                keeper_shared_folders: false,
+                                local_files: false,
                             })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                permissions: row
-                    .get::<_, Option<String>>(9)?
-                    .map(|permissions| {
-                        permissions
-                            .split('\u{1f}')
-                            .map(|label| PermissionIdentity {
-                                label: label.to_string(),
-                                known: false,
-                                tags: Vec::new(),
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                is_deleted: row.get(10)?,
-            })
-        },
-    )?;
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            permissions: row
+                .get::<_, Option<String>>(9)?
+                .map(|permissions| {
+                    permissions
+                        .split('\u{1f}')
+                        .map(|label| PermissionIdentity {
+                            label: label.to_string(),
+                            known: false,
+                            tags: Vec::new(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            is_deleted: row.get(10)?,
+        })
+    })?;
 
     let mut items = rows.collect::<Result<Vec<_>, _>>()?;
     drop(statement);
@@ -923,7 +983,8 @@ pub fn list_drive_directory(
             permission.tags = identity_tags.get(&label).cloned().unwrap_or_default();
         }
     }
-    Ok(items)
+    let total = if window.is_none() { items.len() } else { total };
+    Ok((items, total))
 }
 
 fn comparison_prefix(value: &str) -> (i64, &str) {

@@ -175,6 +175,39 @@ pub fn list(
     sort: &str,
     descending: bool,
 ) -> Result<Vec<RepositoryRow>, DatabaseError> {
+    list_page(
+        database,
+        search,
+        owner,
+        visibility,
+        permission,
+        language,
+        size_filter,
+        pushed_filter,
+        tag,
+        include_inaccessible,
+        sort,
+        descending,
+        None,
+    )
+    .map(|(rows, _)| rows)
+}
+
+pub fn list_page(
+    database: &Database,
+    search: &str,
+    owner: &str,
+    visibility: &str,
+    permission: &str,
+    language: &str,
+    size_filter: &str,
+    pushed_filter: &str,
+    tag: &str,
+    include_inaccessible: bool,
+    sort: &str,
+    descending: bool,
+    window: Option<(usize, usize)>,
+) -> Result<(Vec<RepositoryRow>, usize), DatabaseError> {
     let (size_comparison, size_kb) = parse_count_filter(size_filter, "size", ">5000")?;
     let (pushed_comparison, pushed_value) = parse_date_filter(pushed_filter)?;
     let tag_predicates = super::tag_filter::json(tag);
@@ -215,41 +248,62 @@ pub fn list(
          ORDER BY {order} {direction}, repository_id {direction}"
     );
     let connection = database.connect()?;
+    let parameters = params![
+        include_inaccessible,
+        search.trim(),
+        owner.trim(),
+        visibility,
+        permission,
+        language.trim(),
+        size_comparison,
+        size_kb,
+        pushed_comparison,
+        pushed_value,
+        tag_predicates
+    ];
+    let total = if window.is_some() {
+        connection.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM ({})",
+                sql.rsplit_once("ORDER BY").unwrap().0
+            ),
+            parameters,
+            |row| row.get::<_, i64>(0),
+        )? as usize
+    } else {
+        0
+    };
+    let sql = if let Some((offset, limit)) = window {
+        let limit = limit.min(200);
+        let offset = if limit > 0 {
+            offset.min(total.saturating_sub(1) / limit * limit)
+        } else {
+            offset
+        };
+        format!("{sql} LIMIT {limit} OFFSET {offset}")
+    } else {
+        sql
+    };
     let mut statement = connection.prepare(&sql)?;
     let mut rows = statement
-        .query_map(
-            params![
-                include_inaccessible,
-                search.trim(),
-                owner.trim(),
-                visibility,
-                permission,
-                language.trim(),
-                size_comparison,
-                size_kb,
-                pushed_comparison,
-                pushed_value,
-                tag_predicates
-            ],
-            |row| {
-                Ok(RepositoryRow {
-                    repository_id: row.get(0)?,
-                    name: row.get(1)?,
-                    html_url: row.get(3)?,
-                    description: row.get(4)?,
-                    owner_login: row.get(5)?,
-                    owner_kind: row.get(6)?,
-                    visibility: row.get(7)?,
-                    archived: row.get(8)?,
-                    fork: row.get(9)?,
-                    language: row.get(10)?,
-                    size_kb: row.get::<_, i64>(11)? as u64,
-                    effective_permission: row.get(12)?,
-                    pushed_at: row.get(13)?,
-                    tags: Vec::new(),
-                })
-            },
-        )?
+        .query_map(parameters, |row| {
+            Ok(RepositoryRow {
+                repository_id: row.get(0)?,
+                name: row.get(1)?,
+                html_url: row.get(3)?,
+                description: row.get(4)?,
+                owner_login: row.get(5)?,
+                owner_kind: row.get(6)?,
+                visibility: row.get(7)?,
+                archived: row.get(8)?,
+                fork: row.get(9)?,
+                language: row.get(10)?,
+                size_kb: row.get::<_, i64>(11)? as u64,
+                effective_permission: row.get(12)?,
+                pushed_at: row.get(13)?,
+                tags: Vec::new(),
+            })
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut tag_statement = connection.prepare(
         "SELECT t.slug,t.name,t.description,t.color,
@@ -275,7 +329,8 @@ pub fn list(
             })?
             .collect::<Result<Vec<_>, _>>()?;
     }
-    Ok(rows)
+    let total = if window.is_none() { rows.len() } else { total };
+    Ok((rows, total))
 }
 
 fn comparison_prefix(value: &str) -> (i64, &str) {

@@ -136,10 +136,19 @@ pub struct ListOptions<'a> {
     pub descending: bool,
 }
 
+#[cfg(test)]
 pub fn list(
     database: &Database,
     options: &ListOptions<'_>,
 ) -> Result<Vec<EntryRow>, DatabaseError> {
+    list_page(database, options, None).map(|(rows, _)| rows)
+}
+
+pub fn list_page(
+    database: &Database,
+    options: &ListOptions<'_>,
+    window: Option<(usize, usize)>,
+) -> Result<(Vec<EntryRow>, usize), DatabaseError> {
     let connection = database.connect()?;
     let mut stmt = connection.prepare("SELECT folder_uid,parent_uid,name,folder_type,folder_path,is_accessible FROM keeper_shared_folders")?;
     let folders = stmt
@@ -299,12 +308,27 @@ pub fn list(
         })?
         .collect::<Result<Vec<_>, _>>()?,
     );
+    let contains =
+        |value: &str, filter: &str| value.to_lowercase().contains(&filter.trim().to_lowercase());
+    entries.retain(|e| {
+        (options.include_inaccessible || e.is_accessible)
+            && (options.all || e.parent_uid == options.folder)
+            && contains(&e.name, options.name)
+            && contains(&e.folder_path, options.path)
+    });
+    let needs_access = window.is_none()
+        || !options.user_tag.trim().is_empty()
+        || !options.shared_to.trim().is_empty()
+        || !options.permission.trim().is_empty()
+        || matches!(options.sort, "shared" | "permission");
     for entry in &mut entries {
-        entry.access = inherited_access(if entry.is_folder {
-            &entry.uid
-        } else {
-            &entry.parent_uid
-        });
+        if needs_access {
+            entry.access = inherited_access(if entry.is_folder {
+                &entry.uid
+            } else {
+                &entry.parent_uid
+            });
+        }
         entry.tags = entry_tags
             .get(&(entry.is_folder, entry.uid.clone()))
             .cloned()
@@ -379,7 +403,26 @@ pub fn list(
             order
         }
     });
-    Ok(entries)
+    let total = entries.len();
+    if let Some((page, size)) = window {
+        let size = size.clamp(1, 200);
+        let page = page.max(1).min(total.saturating_sub(1) / size + 1);
+        entries = entries
+            .into_iter()
+            .skip((page - 1) * size)
+            .take(size)
+            .collect();
+    }
+    if !needs_access {
+        for entry in &mut entries {
+            entry.access = inherited_access(if entry.is_folder {
+                &entry.uid
+            } else {
+                &entry.parent_uid
+            });
+        }
+    }
+    Ok((entries, total))
 }
 
 pub fn change_tags(
@@ -810,6 +853,25 @@ mod tests {
         )
         .unwrap();
         assert_eq!(all.first().unwrap().name, "Alpha");
+        for sort in ["name", "permission"] {
+            let options = ListOptions {
+                all: true,
+                sort,
+                ..Default::default()
+            };
+            let complete = list(&db.database, &options).unwrap();
+            for (index, expected) in complete.iter().enumerate() {
+                let (page, total) =
+                    list_page(&db.database, &options, Some((index + 1, 1))).unwrap();
+                assert_eq!(total, complete.len());
+                assert_eq!(page.len(), 1);
+                assert_eq!(page[0].uid, expected.uid);
+                assert_eq!(page[0].parent_uid, expected.parent_uid);
+                assert_eq!(page[0].access.len(), expected.access.len());
+                assert_eq!(page[0].tags.len(), expected.tags.len());
+            }
+        }
+
         let desc = list(
             &db.database,
             &ListOptions {

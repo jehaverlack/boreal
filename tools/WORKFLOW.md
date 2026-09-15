@@ -91,6 +91,25 @@ Create a GitHub release from the new version tag. Upload:
 
 Verify that every README download link works after the assets finish uploading.
 
+### Verify update discovery
+
+BOREAL checks `https://raw.githubusercontent.com/jehaverlack/boreal/main/changelog.json`
+at startup, every six hours, and when **Upgrade → Check for updates** is clicked.
+It compares the highest valid numeric release version with the running binary's
+compiled Cargo version. Editing `metadata.json` alone does not publish an update.
+
+Before announcing a release, verify that the public `main` changelog includes
+the new version, its `vX.Y.Z` tag exists, and the tagged `dist/` binaries are
+accessible. The in-app download button uses the binary in the tag's `dist/`
+directory; the **View release** button opens the GitHub release page. Test the
+check from an older build that uses the current feed, and confirm both links work.
+Keep future development changelog entries on the version branch until release.
+
+Older builds, including v1.1.1, use the legacy `jehaverlack/uaf-boreal` feed.
+They need a manual upgrade unless that repository's `main/changelog.json` is
+also maintained with the published release entry. A fix in a new binary cannot
+change the feed URL compiled into an already installed binary.
+
 ## 7. Start the next version
 
 From the clean, current `main` branch:

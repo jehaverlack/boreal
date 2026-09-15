@@ -8,6 +8,7 @@ mod migrations;
 pub mod s3;
 pub mod settings;
 pub mod tag_filter;
+pub mod tag_operations;
 
 use std::{
     error::Error,
@@ -213,6 +214,100 @@ mod tests {
     }
 
     #[test]
+    fn explorer_pages_are_filtered_stable_and_bulk_retries_keep_their_selection() {
+        let root = temporary_directory();
+        let database = Database::initialize(&runtime(&root)).unwrap();
+        let scan = database.start_scan_run("my-drive").unwrap();
+        let items = (0..61)
+            .map(|index| DriveItem {
+                id: format!("item-{index:03}"),
+                name: "Same name.txt".into(),
+                path: format!("item-{index:03}.txt"),
+                is_dir: false,
+                size: index,
+                mime_type: "text/plain".into(),
+                mod_time: String::new(),
+                metadata: BTreeMap::new(),
+            })
+            .collect::<Vec<_>>();
+        inventory::synchronize_my_drive(&database, scan, &items, false).unwrap();
+        let page = |number, tag: &str| {
+            inventory::list_drive_directory_page(
+                &database,
+                inventory::MY_DRIVE_SCOPE,
+                None,
+                "",
+                tag,
+                "",
+                "",
+                "",
+                "",
+                false,
+                "",
+                "",
+                "",
+                false,
+                "name",
+                false,
+                Some((number, 25)),
+            )
+            .unwrap()
+        };
+        let (first, total) = page(1, "");
+        let (second, _) = page(2, "");
+        let (last, _) = page(usize::MAX, "");
+        assert_eq!(total, 61);
+        assert_eq!(first.len(), 25);
+        assert_eq!(second.len(), 25);
+        assert_eq!(last.len(), 11);
+        assert_eq!(first[0].item_id, "item-000");
+        assert_eq!(second[0].item_id, "item-025");
+        assert_eq!(last[0].item_id, "item-050");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let operation = format!("{now}:test");
+        let ids = items.iter().map(|item| item.id.clone()).collect::<Vec<_>>();
+        let frozen = tag_operations::selection(
+            &database,
+            &operation,
+            "apply-needs-review-to-untagged",
+            || Ok((ids.clone(), vec![])),
+        )
+        .unwrap();
+        inventory::apply_tag_recursively_for_scope(
+            &database,
+            inventory::MY_DRIVE_SCOPE,
+            &frozen.0,
+            "needs-review",
+        )
+        .unwrap();
+        assert_eq!(page(1, "__untagged__").1, 0);
+        let retry = tag_operations::selection(
+            &database,
+            &operation,
+            "apply-needs-review-to-untagged",
+            || panic!("retry must not resolve the now-empty filter"),
+        )
+        .unwrap();
+        assert_eq!(retry, frozen);
+        assert_eq!(page(2, "needs-review").1, 61);
+        assert!(
+            tag_operations::selection(&database, &operation, "different-operation", || Ok((
+                vec![],
+                vec![]
+            )))
+            .is_err()
+        );
+        assert!(
+            tag_operations::selection(&database, "1:expired", "expired", || Ok((vec![], vec![])))
+                .is_err()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn initializes_and_reopens_database() {
         let root = temporary_directory();
         let runtime = runtime(&root);
@@ -231,7 +326,7 @@ mod tests {
             })
             .expect("migration count should be readable");
 
-        assert_eq!(migration_count, 37,);
+        assert_eq!(migration_count, 38,);
 
         let safe_to_delete_scope_count: i64 = connection
             .query_row(
@@ -2000,6 +2095,46 @@ mod tests {
                 expected,
                 "Local: {filter}"
             );
+            let (local_page, total) = local_files::list_children_page(
+                &database,
+                "/test",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                filter,
+                false,
+                "name",
+                false,
+                Some((0, 1)),
+            )
+            .unwrap();
+            assert_eq!(total, expected);
+            assert_eq!(local_page.len(), expected.min(1));
+            let (github_page, total) = github::list_page(
+                &database,
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                filter,
+                false,
+                "name",
+                false,
+                Some((0, 1)),
+            )
+            .unwrap();
+            assert_eq!(total, expected);
+            assert_eq!(github_page.len(), expected.min(1));
+
             assert_eq!(
                 github::list(
                     &database, "", "", "", "", "", "", "", filter, false, "name", false

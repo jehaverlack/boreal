@@ -1,0 +1,198 @@
+<style>
+.boreal-permissions-scroll { max-height: 200px; overflow-y: auto; overflow-wrap: anywhere; }
+.boreal-loading { cursor: progress; }
+.boreal-loading main { pointer-events: none; opacity: .65; }
+.boreal-pending-tag { outline: 1px dashed currentColor; }
+@media print { .boreal-permissions-scroll { max-height: none; overflow: visible; } }
+.boreal-print-report .boreal-permissions-scroll { max-height: none; overflow: visible; }
+</style>
+<script>
+(() => {
+    const pager = document.getElementById('explorer-pagination');
+    const form = document.querySelector('[data-explorer-tags]');
+    if (!pager || document.body.classList.contains('boreal-print-report')) return;
+    const status = document.getElementById('explorer-save-status');
+    const discard = document.getElementById('explorer-discard');
+    const retry = document.getElementById('explorer-retry');
+    const refresh = document.getElementById('explorer-refresh');
+    const selectMatching = document.getElementById('explorer-select-matching');
+    const clear = document.getElementById('explorer-clear-selection');
+    const boxes = () => [...document.querySelectorAll('.my-drive-item-select:not(:disabled), .keeper-select, .github-select, .local-select')];
+    const key = box => `${box.dataset.kind || 'drive'}:${box.value}`;
+    const page = Number(pager.dataset.page), size = Number(pager.dataset.size);
+    const sizeSelect = document.getElementById('explorer-page-size');
+    const preferenceKey = 'boreal.explorer.pageSize';
+    let allMatching = false, working = false, failed = false, resultsStale = false;
+    const queue = [];
+    const busy = () => working || queue.length > 0;
+    function loading() {
+        status.textContent = 'Loading results…';
+        document.body.classList.add('boreal-loading');
+        document.querySelector('main')?.setAttribute('aria-busy', 'true');
+        if (document.querySelector('main')) document.querySelector('main').inert = true;
+    }
+    function navigate(target) {
+        if (busy()) { status.textContent = 'Finish saving or retry the failed change before changing results.'; return; }
+        loading(); window.location.assign(target);
+    }
+    sizeSelect.value = String(size);
+    const current = new URL(window.location.href);
+    try {
+        const saved = Number(localStorage.getItem(preferenceKey));
+        if (!current.searchParams.has('page_size') && [25,50,100,200].includes(saved) && saved !== size) {
+            current.searchParams.set('page_size', String(saved)); current.searchParams.delete('page');
+            window.location.replace(current); return;
+        }
+    } catch (_) { /* Preferences are optional in browsers that block storage. */ }
+    sizeSelect.addEventListener('change', () => {
+        if (busy()) { sizeSelect.value = String(size); status.textContent = 'Wait for tags to finish saving.'; return; }
+        try { localStorage.setItem(preferenceKey, sizeSelect.value); } catch (_) {}
+        const url = new URL(window.location.href);
+        url.searchParams.set('page_size', sizeSelect.value); url.searchParams.delete('page'); navigate(url);
+    });
+    document.querySelectorAll('[data-page-step]').forEach(button => {
+        const next = page + Number(button.dataset.pageStep);
+        button.disabled = next < 1 || next > Number(pager.dataset.pages);
+        button.addEventListener('click', () => {
+            const url = new URL(window.location.href); url.searchParams.set('page', String(next));
+            url.searchParams.set('page_size', String(size)); navigate(url);
+        });
+    });
+    function selectionChanged() {
+        const selected = boxes().filter(box => box.checked);
+        selectMatching.hidden = !form || resultsStale || busy() || allMatching || selected.length !== boxes().length || !selected.length || Number(pager.dataset.total) <= boxes().length;
+        clear.hidden = !allMatching && !selected.length;
+    }
+    document.addEventListener('change', event => {
+        if (event.target.matches('.my-drive-item-select, .keeper-select, .github-select, .local-select, #my-drive-select-all, #keeper-select-all, #github-select-all, .local-select-all')) {
+            allMatching = false; selectionChanged();
+        }
+    });
+    document.getElementById('explorer-select-page').addEventListener('click', () => {
+        allMatching = false; boxes().forEach(box => box.checked = true);
+        boxes()[0]?.dispatchEvent(new Event('change', {bubbles:true})); selectionChanged();
+    });
+    selectMatching.addEventListener('click', () => {
+        if (resultsStale || busy()) { status.textContent = 'Refresh saved results before selecting all matching entries.'; return; }
+        allMatching = true; selectionChanged();
+        status.textContent = `All ${pager.dataset.total} matching entries selected for the next tag action. Drive folder tags also apply to descendants.`;
+    });
+    clear.addEventListener('click', () => {
+        allMatching = false;
+        boxes().forEach(box => box.checked = false);
+        boxes()[0]?.dispatchEvent(new Event('change', {bubbles:true})); selectionChanged();
+        if (!busy()) status.textContent = 'Selection cleared.';
+    });
+    function showPending(operation) {
+        boxes().forEach(box => {
+            if (!operation.all && !operation.keys.has(key(box))) return;
+            const cell = box.closest('tr')?.querySelector('[data-explorer-tags-cell]');
+            if (!cell) return;
+            [...cell.children].filter(badge => badge.textContent.trim() === operation.label).forEach(badge => badge.remove());
+            if (!operation.remove) {
+                const badge = document.createElement('span'); badge.className = 'badge rounded-pill ms-1 boreal-pending-tag';
+                badge.textContent = operation.label; badge.style.backgroundColor = operation.color;
+                const hex = operation.color.replace('#','');
+                const rgb = /^[0-9a-f]{6}$/i.test(hex) ? [0,2,4].map(i => parseInt(hex.slice(i,i+2),16)) : [0,0,0];
+                badge.style.color = rgb[0]*.299 + rgb[1]*.587 + rgb[2]*.114 > 160 ? '#212529' : '#fff'; badge.title = 'Saving…'; cell.append(badge);
+            }
+            cell.dataset.pending = 'true';
+        });
+    }
+    async function reconcile() {
+        const response = await fetch(window.location.href, {cache:'no-store'});
+        if (!response.ok) throw new Error('Unable to refresh saved tags');
+        const documentCopy = new DOMParser().parseFromString(await response.text(), 'text/html');
+        if (queue.length) return;
+        const cells = new Map();
+        documentCopy.querySelectorAll('.my-drive-item-select, .keeper-select, .github-select, .local-select').forEach(box => {
+            cells.set(key(box), box.closest('tr')?.querySelector('[data-explorer-tags-cell]'));
+        });
+        boxes().forEach(box => {
+            const cell = box.closest('tr')?.querySelector('[data-explorer-tags-cell]');
+            const saved = cells.get(key(box));
+            if (cell && saved) cell.replaceChildren(...[...saved.childNodes].map(node => node.cloneNode(true)));
+            if (cell) {
+                delete cell.dataset.pending;
+                cell.querySelectorAll('.boreal-pending-tag').forEach(badge => { badge.classList.remove('boreal-pending-tag'); badge.title = 'Saved; refresh results to update filters'; });
+            }
+        });
+    }
+    async function drain() {
+        if (working || failed) return;
+        working = true;
+        while (queue.length) {
+            status.textContent = `Saving tags… ${queue.length} change(s) pending. You can keep selecting and tagging.`;
+            try {
+                const operation = queue[0];
+                const response = await fetch(operation.url, {method:'POST', body:operation.body});
+                if (!response.ok || response.status !== 204) throw new Error('Save failed');
+                queue.shift();
+            } catch (_) {
+                failed = true; working = false; retry.hidden = false; discard.hidden = false;
+                status.textContent = 'Not saved. Your changes remain queued in this tab. Retry saving before leaving.';
+                return;
+            }
+        }
+        try {
+            await reconcile();
+            if (!queue.length) status.textContent = 'Tags saved. Refresh results to update filtering, sorting, and totals.';
+        } catch (_) { status.textContent = 'Tags saved, but display refresh failed. Refresh results to verify.'; }
+        working = false; refresh.hidden = false;
+        if (queue.length) drain();
+    }
+    form?.addEventListener('submit', event => {
+        if (event.defaultPrevented) return;
+        const url = event.submitter?.getAttribute('formaction') || form.action;
+        // Metadata refresh and migration retain their existing form behavior.
+        if (event.submitter?.id?.includes('metadata') || event.submitter?.id?.includes('migrate')) {
+            if (busy() || allMatching) { event.preventDefault(); status.textContent = 'These actions require a saved, current-page selection.'; }
+            else loading();
+            return;
+        }
+        event.preventDefault();
+        const selected = boxes().filter(box => box.checked);
+        if (!selected.length) return;
+        const body = new URLSearchParams(new FormData(form));
+        body.set('operation_id', `${Math.floor(Date.now()/1000)}:${crypto.randomUUID()}`);
+        body.set('background','true'); body.set('all_matching',String(allMatching));
+        const option = (form.elements.tag_to_apply || form.elements.tag).selectedOptions[0];
+        const operation = {url, body, all:allMatching, keys:new Set(selected.map(key)),
+            label:option.textContent.trim(), color:option.dataset.color || '#6c757d', remove:url.includes('remove')};
+        // The server materializes all matching IDs before applying this operation.
+        // All-page selection is consumed so later writes cannot silently use a changed tag filter.
+        allMatching = false; selectionChanged();
+        queue.push(operation); resultsStale = true; selectionChanged(); showPending(operation); refresh.hidden = true; drain();
+    });
+    retry.addEventListener('click', () => { failed = false; retry.hidden = true; discard.hidden = true; drain(); });
+    discard.addEventListener('click', () => {
+        if (!confirm('Some changes may already have been saved. Discard pending changes and reload the saved state?')) return;
+        queue.length = 0; failed = false; navigate(window.location.href);
+    });
+    refresh.addEventListener('click', () => navigate(window.location.href));
+    // Normal filter submissions still work without JavaScript. Mark their navigation busy.
+    document.addEventListener('submit', event => {
+        if (event.defaultPrevented || event.target === form) return;
+        if (busy()) { event.preventDefault(); status.textContent = 'Wait for tags to finish saving before changing results.'; return; }
+        const destination = event.submitter?.getAttribute('formaction') || event.target.action;
+        if (event.submitter?.getAttribute('formtarget') === '_blank' || event.target.target === '_blank' || /export|download/.test(new URL(destination, location.href).pathname)) return;
+        if (event.target.method.toLowerCase() === 'get') {
+            let input = event.target.querySelector('[name="page_size"]');
+            if (!input) { input = document.createElement('input'); input.type = 'hidden'; input.name = 'page_size'; event.target.append(input); }
+            input.value = String(size);
+        }
+        loading();
+    });
+    document.addEventListener('click', event => {
+        const anchor = event.target.closest('a[href]');
+        if (!anchor || anchor.target || anchor.hasAttribute('download') || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        const url = new URL(anchor.href, window.location.href);
+        if (url.origin !== location.origin || url.hash || /export|download/.test(url.pathname)) return;
+        if (busy()) { event.preventDefault(); status.textContent = 'Finish saving tags before leaving this page.'; return; }
+        loading();
+    });
+    window.addEventListener('beforeunload', event => { if (busy()) { event.preventDefault(); event.returnValue = ''; } });
+    window.addEventListener('pageshow', () => { document.body.classList.remove('boreal-loading'); document.querySelector('main')?.removeAttribute('aria-busy'); if (document.querySelector('main')) document.querySelector('main').inert = false; });
+    selectionChanged();
+})();
+</script>
