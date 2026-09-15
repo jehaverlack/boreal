@@ -308,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn drive_duplicate_candidates_cross_folders_but_not_inventory_scopes() {
+    fn drive_duplicates_respect_filtered_view_and_recursive_scope() {
         let root = temporary_directory();
         let database = Database::initialize(&runtime(&root)).unwrap();
         let scan = database.start_scan_run("duplicates-test").unwrap();
@@ -376,8 +376,11 @@ mod tests {
             c.execute("INSERT INTO drive_items(remote_name,item_id,name,relative_path,parent_path,is_directory,size_bytes,mime_type,is_deleted,last_seen_scan_id) VALUES ('my-drive-ro',?1,?2,?3||'/'||?2,?3,?4,?5,?6,?7,?8)", params![id,name,parent,directory,size,mime,deleted,scan]).unwrap();
         }
         c.execute("INSERT INTO drive_items(remote_name,item_id,name,relative_path,is_directory,size_bytes,mime_type,last_seen_scan_id) VALUES ('shared-with-me', 'other', 'Report.pdf', 'Report.pdf', 0, 42, 'application/pdf', ?1)", [scan]).unwrap();
-        let list = |scope, page, search: &str, duplicates, current| {
-            inventory::list_drive_directory_filtered(
+        c.execute("UPDATE drive_items SET parent_path = 'One/Two', relative_path = 'One/Two/' || name WHERE item_id IN ('b', 'i')", []).unwrap();
+        // An identical item in a sibling folder must not increase the copy count.
+        c.execute("INSERT INTO drive_items(remote_name,item_id,name,relative_path,parent_path,is_directory,size_bytes,mime_type,last_seen_scan_id) VALUES ('my-drive-ro','outside','Report.pdf','OneOther/Report.pdf','OneOther',0,42,'application/pdf',?1)", [scan]).unwrap();
+        let filtered_list = |scope, page, search: &str, duplicates, current, owner: &str| {
+            inventory::list_drive_directory_filtered_with_summary(
                 &database,
                 scope,
                 Some("One"),
@@ -386,7 +389,7 @@ mod tests {
                 "",
                 "",
                 "",
-                "",
+                owner,
                 false,
                 "",
                 "",
@@ -400,14 +403,34 @@ mod tests {
             )
             .unwrap()
         };
-        let (folders, total) = list(inventory::MY_DRIVE_SCOPE, 1, "", true, false);
+        let list = |scope, page, search: &str, duplicates, current| {
+            filtered_list(scope, page, search, duplicates, current, "")
+        };
+        let (folders, total, summary) = list(inventory::MY_DRIVE_SCOPE, 1, "", true, false);
         assert_eq!(total, 4);
+        assert_eq!(
+            (
+                summary.files,
+                summary.folders,
+                summary.size_bytes,
+                summary.permissions
+            ),
+            (2, 2, 84, 0)
+        );
+        assert_eq!(folders.len(), 2);
+        assert_eq!(
+            folders
+                .iter()
+                .filter_map(|item| item.size_bytes)
+                .sum::<u64>(),
+            0
+        );
         assert!(
             folders
                 .iter()
                 .all(|entry| entry.is_directory && entry.duplicate_count == 2)
         );
-        let (files, _) = list(inventory::MY_DRIVE_SCOPE, 2, "", true, false);
+        let (files, _, _) = list(inventory::MY_DRIVE_SCOPE, 2, "", true, false);
         assert_eq!(
             files
                 .iter()
@@ -426,9 +449,54 @@ mod tests {
         );
         assert_eq!(list(inventory::MY_DRIVE_SCOPE, 1, "", false, false).1, 4);
         assert_eq!(list(inventory::MY_DRIVE_SCOPE, 1, "", false, true).1, 0);
+        // Page sizes include cumulative folder sizes; filtered sizes span every page.
+        c.execute("UPDATE drive_items SET cumulative_size_bytes = 1000 WHERE remote_name = 'my-drive-ro' AND is_directory = 1", []).unwrap();
+        let (page, _, filtered) = list(inventory::MY_DRIVE_SCOPE, 1, "", true, false);
+        assert_eq!(
+            page.iter().filter_map(|item| item.size_bytes).sum::<u64>(),
+            2000
+        );
+        assert_eq!(filtered.size_bytes, 2084);
+        let (page, _, filtered) = list(inventory::MY_DRIVE_SCOPE, 2, "", true, false);
+        assert_eq!(
+            page.iter().filter_map(|item| item.size_bytes).sum::<u64>(),
+            84
+        );
+        assert_eq!(filtered.size_bytes, 2084);
+        assert_eq!(
+            list(inventory::MY_DRIVE_SCOPE, 1, "Report", true, false)
+                .2
+                .size_bytes,
+            84
+        );
+        assert_eq!(
+            list(inventory::MY_DRIVE_SCOPE, 1, "no match", true, false)
+                .2
+                .size_bytes,
+            0
+        );
+        c.execute(
+            "UPDATE drive_items SET owner_email = 'alice@example.com' WHERE item_id = 'a'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            filtered_list(inventory::MY_DRIVE_SCOPE, 1, "", true, false, "alice").1,
+            0
+        );
+        c.execute(
+            "UPDATE drive_items SET owner_email = 'alice@example.com' WHERE item_id = 'b'",
+            [],
+        )
+        .unwrap();
+        let (matches, total, summary) =
+            filtered_list(inventory::MY_DRIVE_SCOPE, 1, "", true, false, "alice");
+        assert_eq!(total, 2);
+        assert_eq!(summary.size_bytes, 84);
+        assert!(matches.iter().all(|item| item.duplicate_count == 2));
         // A second same-name folder in this location forms a local group.
         c.execute("INSERT INTO drive_items(remote_name,item_id,name,relative_path,parent_path,is_directory,last_seen_scan_id) VALUES ('my-drive-ro','local-copy','Photos','One/Photos','One',1,?1)", [scan]).unwrap();
-        let (local, total) = list(inventory::MY_DRIVE_SCOPE, 1, "", false, true);
+        let (local, total, _) = list(inventory::MY_DRIVE_SCOPE, 1, "", false, true);
         assert_eq!(total, 2);
         assert!(
             local

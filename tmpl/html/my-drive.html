@@ -48,8 +48,8 @@
 <div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-triangle me-2"></i>{{ error }}</div>
 {% endif %}
 
-{% if duplicates && !duplicates_current %}<p class="small text-body-secondary">Showing live duplicate candidates across all indexed folders in this Drive inventory. Other filters can hide members of a matching group.</p>{% endif %}
-{% if has_parent && (!duplicates || duplicates_current) %}<div class="d-flex align-items-center gap-2 mb-3"><span class="small text-body-secondary">Location:</span><span class="fw-semibold">{{ current_path }}</span></div>{% endif %}
+{% if duplicates && !duplicates_current %}<p class="small text-body-secondary">Showing duplicate candidates among filtered items in this folder and its subfolders.</p>{% endif %}
+{% if has_parent %}<div class="d-flex align-items-center gap-2 mb-3"><span class="small text-body-secondary">Location:</span><span class="fw-semibold">{{ current_path }}</span></div>{% endif %}
 
 <form id="my-drive-filter-form" method="get" action="{{ explorer_path }}" class="row g-2 mb-3 boreal-report-hide" role="search">
     <input type="hidden" name="drive" value="{{ drive_id }}">
@@ -106,13 +106,13 @@
     </div>
     <div class="col-12 form-check ms-2">
         <input class="form-check-input" type="checkbox" name="duplicates" value="true" id="drive-duplicates" {% if duplicates %}checked{% endif %}>
-        <label class="form-check-label" for="drive-duplicates">Duplicate candidates (all folders in this Drive inventory)</label>
-        <div class="small text-body-secondary">Files: same exact name, type, and known size. Folders: same exact name. Matching metadata does not prove identical contents.</div>
+        <label class="form-check-label" for="drive-duplicates">Duplicate items (recursive)</label>
+        <div class="small text-body-secondary">Compare filtered items in this folder and its subfolders. Files match by exact name, type, and known size; folders by exact name. Matching metadata does not prove identical contents.</div>
     </div>
     <div class="col-12 form-check ms-2">
         <input class="form-check-input" type="checkbox" name="duplicates_current" value="true" id="drive-duplicates-current" {% if duplicates_current %}checked{% endif %}>
-        <label class="form-check-label" for="drive-duplicates-current">Duplicate candidates (current folder only)</label>
-        <div class="small text-body-secondary">Compare immediate children of the current folder, including the top level. Takes priority when both options are checked. Other filters can hide matching group members.</div>
+        <label class="form-check-label" for="drive-duplicates-current">Duplicate items (top level)</label>
+        <div class="small text-body-secondary">Compare filtered items directly in the current folder. Takes priority when both options are checked.</div>
     </div>
     <div class="col-auto"><button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel me-1"></i>Apply filters</button></div>
     <div class="col-auto"><a class="btn btn-sm btn-outline-secondary" href="{{ clear_search_url }}">Clear filters</a></div>
@@ -124,6 +124,21 @@
     </div>
 </form>
 
+{% if !print_view %}
+<section class="card mb-3" aria-labelledby="explorer-filtered-summary-heading">
+    <div class="card-body py-2">
+        <div class="d-flex flex-wrap align-items-center gap-3 gap-lg-4">
+            <span id="explorer-filtered-summary-heading" class="small fw-semibold text-body-secondary">Filtered Items</span>
+            <span class="small"><strong id="explorer-filtered-summary-items">{{ filtered_summary.items }}</strong> items</span>
+            <span class="small"><strong id="explorer-filtered-summary-files">{{ filtered_summary.files }}</strong> files</span>
+            <span class="small"><strong id="explorer-filtered-summary-folders">{{ filtered_summary.folders }}</strong> folders</span>
+            <span class="small"><strong id="explorer-filtered-summary-size" data-size-bytes="{{ filtered_summary.size_bytes }}" title="{{ filtered_summary.size_bytes }} bytes">{{ filtered_summary.size_label }}</strong> size</span>
+            <span class="small"><strong id="explorer-filtered-summary-permissions">{{ filtered_summary.permissions }}</strong> permission references</span>
+        </div>
+    </div>
+</section>
+{% endif %}
+
 <section class="card mb-3" aria-labelledby="explorer-summary-heading">
     <div class="card-body py-2">
         <div class="d-flex flex-wrap align-items-center gap-3 gap-lg-4">
@@ -131,7 +146,7 @@
             <span class="small"><strong id="explorer-summary-items">{{ summary.items }}</strong> items</span>
             <span class="small"><strong id="explorer-summary-files">{{ summary.files }}</strong> files</span>
             <span class="small"><strong id="explorer-summary-folders">{{ summary.folders }}</strong> folders</span>
-            <span class="small"><strong id="explorer-summary-size" data-size-bytes="{{ summary.size_bytes }}">{{ summary.size_label }}</strong> total size</span>
+            <span class="small"><strong id="explorer-summary-size" data-size-bytes="{{ summary.size_bytes }}" title="{{ summary.size_bytes }} bytes">{{ summary.size_label }}</strong> size</span>
             <span class="small"><strong id="explorer-summary-permissions">{{ summary.permissions }}</strong> permission references</span>
         </div>
     </div>
@@ -349,6 +364,8 @@
             document.getElementById("explorer-summary-files").textContent = files;
             document.getElementById("explorer-summary-folders").textContent = folders;
             document.getElementById("explorer-summary-size").textContent = formatExplorerBytes(size);
+            document.getElementById("explorer-summary-size").dataset.sizeBytes = String(size);
+            document.getElementById("explorer-summary-size").title = `${size.toLocaleString()} bytes`;
             document.getElementById("explorer-summary-permissions").textContent = permissions;
         }
 

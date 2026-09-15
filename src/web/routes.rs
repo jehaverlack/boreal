@@ -505,6 +505,7 @@ struct MyDriveTemplate {
     inventory_scope: String,
     tag_action: &'static str,
     tag_remove_action: &'static str,
+    filtered_summary: ExplorerSummary,
     summary: ExplorerSummary,
     print_view: bool,
 }
@@ -3956,20 +3957,18 @@ fn drive_export_context(
         ("View".into(), view_name.into()),
         (
             "Location".into(),
-            if query.duplicates && !query.duplicates_current {
-                "All folders in this Drive inventory".into()
-            } else if query.path.is_empty() {
+            if query.path.is_empty() {
                 view_name.into()
             } else {
                 query.path.clone()
             },
         ),
         (
-            "Duplicate candidates (all folders)".into(),
+            "Duplicate items (recursive)".into(),
             (query.duplicates && !query.duplicates_current).to_string(),
         ),
         (
-            "Duplicate candidates (current folder only)".into(),
+            "Duplicate items (top level)".into(),
             query.duplicates_current.to_string(),
         ),
         ("Results".into(), result_count.to_string()),
@@ -4483,32 +4482,41 @@ fn render_drive_explorer(
         Some(owner) => (true, owner.trim()),
         None => (false, query.owner_filter.trim()),
     };
-    let (items, total, error) = match database::inventory::list_drive_directory_filtered(
-        &database,
-        inventory_scope,
-        parent_filter,
-        &query.q,
-        &query.tag,
-        &query.type_filter,
-        &query.size_filter,
-        &query.modified_filter,
-        owner_filter,
-        exclude_owner,
-        &query.permission_filter,
-        &query.owner_identity_tag,
-        &query.permission_identity_tag,
-        include_deleted,
-        sort,
-        descending,
-        (!query.print).then(|| (query.pagination.page, query.pagination.size())),
-        query.duplicates,
-        query.duplicates_current,
-    ) {
-        Ok((items, total)) => (items, total, String::new()),
-        Err(error) => {
-            eprintln!("Unable to list My Drive explorer directory: {error}");
-            (Vec::new(), 0, error.to_string())
-        }
+    let (items, total, filtered, error) =
+        match database::inventory::list_drive_directory_filtered_with_summary(
+            &database,
+            inventory_scope,
+            parent_filter,
+            &query.q,
+            &query.tag,
+            &query.type_filter,
+            &query.size_filter,
+            &query.modified_filter,
+            owner_filter,
+            exclude_owner,
+            &query.permission_filter,
+            &query.owner_identity_tag,
+            &query.permission_identity_tag,
+            include_deleted,
+            sort,
+            descending,
+            (!query.print).then(|| (query.pagination.page, query.pagination.size())),
+            query.duplicates,
+            query.duplicates_current,
+        ) {
+            Ok((items, total, filtered)) => (items, total, filtered, String::new()),
+            Err(error) => {
+                eprintln!("Unable to list My Drive explorer directory: {error}");
+                (Vec::new(), 0, Default::default(), error.to_string())
+            }
+        };
+    let filtered_summary = ExplorerSummary {
+        items: total,
+        files: filtered.files,
+        folders: filtered.folders,
+        size_bytes: filtered.size_bytes,
+        size_label: format_bytes(filtered.size_bytes),
+        permissions: filtered.permissions,
     };
     let pagination = query.pagination.view(total);
     let summary_size = items.iter().filter_map(|item| item.size_bytes).sum::<u64>();
@@ -4767,6 +4775,7 @@ fn render_drive_explorer(
         inventory_scope: inventory_scope.to_string(),
         tag_action,
         tag_remove_action,
+        filtered_summary,
         summary,
         print_view: query.print,
     };

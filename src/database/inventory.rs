@@ -775,6 +775,59 @@ pub fn list_drive_directory_filtered(
     duplicates_only: bool,
     duplicates_current: bool,
 ) -> Result<(Vec<DriveExplorerItem>, usize), DatabaseError> {
+    list_drive_directory_filtered_with_summary(
+        database,
+        inventory_scope,
+        parent_path,
+        search,
+        tag_filter,
+        type_filter,
+        size_filter,
+        modified_filter,
+        owner_filter,
+        exclude_owner,
+        permission_filter,
+        owner_identity_tag_filter,
+        permission_identity_tag_filter,
+        include_deleted,
+        sort,
+        descending,
+        window,
+        duplicates_only,
+        duplicates_current,
+    )
+    .map(|(items, total, _)| (items, total))
+}
+
+#[derive(Default)]
+pub struct DriveFilteredSummary {
+    pub files: usize,
+    pub folders: usize,
+    pub size_bytes: u64,
+    pub permissions: usize,
+}
+
+pub fn list_drive_directory_filtered_with_summary(
+    database: &Database,
+    inventory_scope: &str,
+    parent_path: Option<&str>,
+    search: &str,
+    tag_filter: &str,
+    type_filter: &str,
+    size_filter: &str,
+    modified_filter: &str,
+    owner_filter: &str,
+    exclude_owner: bool,
+    permission_filter: &str,
+    owner_identity_tag_filter: &str,
+    permission_identity_tag_filter: &str,
+    include_deleted: bool,
+    sort: &str,
+    descending: bool,
+    window: Option<(usize, usize)>,
+    duplicates_only: bool,
+    duplicates_current: bool,
+) -> Result<(Vec<DriveExplorerItem>, usize, DriveFilteredSummary), DatabaseError> {
     let connection = database.connect()?;
     let (size_comparison, size_bytes) = parse_size_filter(size_filter)?;
     let (modified_comparison, modified_value) = parse_modified_filter(modified_filter)?;
@@ -797,51 +850,12 @@ pub fn list_drive_directory_filtered(
     } else {
         ""
     };
-    let (duplicate_cte, duplicate_join, duplicate_count) = if duplicates_only || duplicates_current
-    {
-        (
-            "WITH duplicate_groups AS (
-                SELECT name AS dup_name, is_directory AS dup_kind,
-                    CASE WHEN is_directory THEN '' ELSE COALESCE(mime_type, '') END AS dup_mime,
-                    CASE WHEN is_directory THEN 0 ELSE size_bytes END AS dup_size,
-                    COUNT(*) AS copies
-                FROM drive_items WHERE remote_name = ?1 AND is_deleted = 0
-                    AND (is_directory = 1 OR size_bytes >= 0)
-                    AND (?17 = 0 OR (?2 IS NULL AND parent_path IS NULL) OR parent_path = ?2)
-                GROUP BY dup_name, dup_kind, dup_mime, dup_size HAVING COUNT(*) > 1
-            )",
-            "JOIN duplicate_groups g ON g.dup_name = drive_items.name
-                AND g.dup_kind = drive_items.is_directory
-                AND g.dup_mime = CASE WHEN drive_items.is_directory THEN '' ELSE COALESCE(drive_items.mime_type, '') END
-                AND g.dup_size = CASE WHEN drive_items.is_directory THEN 0 ELSE drive_items.size_bytes END",
-            "g.copies"
-        )
-    } else {
-        ("", "", "0")
-    };
-    let sql = format!(
-        "{duplicate_cte} SELECT item_id, name, relative_path, is_directory, mime_type,
-                CASE WHEN is_directory THEN cumulative_size_bytes ELSE size_bytes END,
-                modified_at, owner_email,
-                (SELECT group_concat(t.name || char(30) || t.color || char(30) || t.description, char(31))
-                 FROM drive_item_tags dit JOIN tags t ON t.id = dit.tag_id
-                 WHERE dit.remote_name = drive_items.remote_name
-                   AND dit.item_id = drive_items.item_id),
-                (SELECT group_concat(label, char(31)) FROM (
-                    SELECT DISTINCT COALESCE(
-                        NULLIF(p.email_address, ''), NULLIF(p.domain, ''),
-                        NULLIF(p.display_name, ''), NULLIF(p.permission_type, ''), 'Unknown'
-                    ) AS label
-                    FROM drive_permissions p
-                    WHERE p.remote_name = drive_items.remote_name
-                      AND p.item_id = drive_items.item_id
-                      AND COALESCE(p.email_address, '') <> COALESCE(drive_items.owner_email, '')
-                    ORDER BY label COLLATE NOCASE
-                )), is_deleted, {duplicate_count}
-         FROM drive_items {duplicate_join}
+    let filtered_sql = "SELECT * FROM drive_items
          WHERE remote_name = ?1
            AND (?13 = 1 OR is_deleted = 0)
-           AND ((?16 = 1 AND ?17 = 0) OR (?2 IS NULL AND parent_path IS NULL) OR parent_path = ?2)
+           AND ((?2 IS NULL AND parent_path IS NULL) OR parent_path = ?2
+                OR (?16 = 1 AND ?17 = 0 AND (?2 IS NULL
+                    OR substr(parent_path, 1, length(?2) + 1) = ?2 || '/')))
            AND ((?16 = 0 AND ?17 = 0) OR is_deleted = 0)
            AND (?3 = '' OR instr(lower(name), lower(?3)) > 0)
            AND NOT EXISTS (
@@ -910,6 +924,47 @@ pub fn list_drive_directory_filtered(
                   AND identity_permission.item_id = drive_items.item_id
                   AND permission_tag.slug = json_extract(tag_term.value, '$[1]')
            )) = json_extract(tag_term.value, '$[0]'))
+";
+    let (duplicate_cte, duplicate_join, duplicate_count) = if duplicates_only || duplicates_current
+    {
+        (
+            ", duplicate_groups AS (
+                SELECT name AS dup_name, is_directory AS dup_kind,
+                    CASE WHEN is_directory THEN '' ELSE COALESCE(mime_type, '') END AS dup_mime,
+                    CASE WHEN is_directory THEN 0 ELSE size_bytes END AS dup_size,
+                    COUNT(*) AS copies
+                FROM filtered_items WHERE is_directory = 1 OR size_bytes >= 0
+                GROUP BY dup_name, dup_kind, dup_mime, dup_size HAVING COUNT(*) > 1
+            )",
+            "JOIN duplicate_groups g ON g.dup_name = drive_items.name
+                AND g.dup_kind = drive_items.is_directory
+                AND g.dup_mime = CASE WHEN drive_items.is_directory THEN '' ELSE COALESCE(drive_items.mime_type, '') END
+                AND g.dup_size = CASE WHEN drive_items.is_directory THEN 0 ELSE drive_items.size_bytes END",
+            "g.copies"
+        )
+    } else {
+        ("", "", "0")
+    };
+    let sql = format!(
+        "WITH filtered_items AS ({filtered_sql}) {duplicate_cte} SELECT item_id, name, relative_path, is_directory, mime_type,
+                CASE WHEN is_directory THEN cumulative_size_bytes ELSE size_bytes END AS summary_size_bytes,
+                modified_at, owner_email,
+                (SELECT group_concat(t.name || char(30) || t.color || char(30) || t.description, char(31))
+                 FROM drive_item_tags dit JOIN tags t ON t.id = dit.tag_id
+                 WHERE dit.remote_name = drive_items.remote_name
+                   AND dit.item_id = drive_items.item_id),
+                (SELECT group_concat(label, char(31)) FROM (
+                    SELECT DISTINCT COALESCE(
+                        NULLIF(p.email_address, ''), NULLIF(p.domain, ''),
+                        NULLIF(p.display_name, ''), NULLIF(p.permission_type, ''), 'Unknown'
+                    ) AS label
+                    FROM drive_permissions p
+                    WHERE p.remote_name = drive_items.remote_name
+                      AND p.item_id = drive_items.item_id
+                      AND COALESCE(p.email_address, '') <> COALESCE(drive_items.owner_email, '')
+                    ORDER BY label COLLATE NOCASE
+                )) AS summary_permissions, is_deleted, {duplicate_count}
+         FROM filtered_items AS drive_items {duplicate_join}
          ORDER BY {directory_grouping} {sort_expression} {direction}, name COLLATE NOCASE, item_id"
     );
     let parameters = params![
@@ -931,20 +986,21 @@ pub fn list_drive_directory_filtered(
         duplicates_only,
         duplicates_current,
     ];
-    // Count before hydration; LIMIT applies before per-item tag and permission rendering.
-    let total: i64 = if window.is_some() {
-        connection.query_row(
-            &format!(
-                "SELECT COUNT(*) FROM ({})",
-                sql.rsplit_once("ORDER BY").unwrap().0
-            ),
-            parameters,
-            |row| row.get(0),
-        )?
-    } else {
-        0
-    };
-    let total = total as usize;
+    // Aggregate the same filtered query before applying the page window.
+    let (total, filtered_summary) = connection.query_row(
+        &format!(
+            "SELECT COUNT(*), COALESCE(SUM(NOT is_directory), 0),
+             COALESCE(SUM(is_directory), 0), COALESCE(SUM(summary_size_bytes), 0),
+             COALESCE(SUM(CASE WHEN summary_permissions IS NULL THEN 0 ELSE
+                1 + length(summary_permissions) - length(replace(summary_permissions, char(31), '')) END), 0)
+             FROM ({})", sql.rsplit_once("ORDER BY").unwrap().0
+        ), parameters, |row| Ok((row.get::<_, i64>(0)? as usize, DriveFilteredSummary {
+            files: row.get::<_, i64>(1)? as usize,
+            folders: row.get::<_, i64>(2)? as usize,
+            size_bytes: row.get::<_, i64>(3)? as u64,
+            permissions: row.get::<_, i64>(4)? as usize,
+        }))
+    )?;
     let sql = if let Some((page, size)) = window {
         let size = size.clamp(1, 200);
         let page = page.max(1).min(total.saturating_sub(1) / size + 1);
@@ -1058,7 +1114,7 @@ pub fn list_drive_directory_filtered(
         }
     }
     let total = if window.is_none() { items.len() } else { total };
-    Ok((items, total))
+    Ok((items, total, filtered_summary))
 }
 
 fn comparison_prefix(value: &str) -> (i64, &str) {
