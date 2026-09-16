@@ -5,12 +5,18 @@
 | **Name** | boreal |
 | **Author** | John Haverlack |
 | **License** | MIT |
-| **Version** | 1.2.3 |
+| **Version** | 1.2.4 |
 | **Maturity** | STABLE |
 | **Date** | 2026-09-15 |
 
+## v1.2.4 - 2026-09-15 (STABLE)
+
+- Start v1.2.4
+
 ## v1.2.3 - 2026-09-15 (STABLE)
 
+- v1.2.3
+- v1.2.3
 - v1.2.3
 - Start v1.2.3
 
@@ -364,6 +370,5 @@ Added Migration Assitant and Polished Interfaces
 **Summary**
 Project Initialization
 
-- v1.2.3
-- Start v1.2.3
+- Start v1.2.4
 

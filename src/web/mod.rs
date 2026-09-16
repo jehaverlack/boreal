@@ -46,7 +46,7 @@ pub async fn run(
     let url = format!("http://{}:{}", browser_host, webapp.port,);
 
     std::println!("WebUI: {url}");
-    std::println!("Startup status: WebUI ready; background initialization is continuing.");
+    std::println!("BOREAL WebUI is available. Check App > Settings for source connection status.");
     log::info!("BOREAL WebUI listening at {url}");
 
     if webapp.open_browser {

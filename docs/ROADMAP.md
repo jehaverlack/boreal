@@ -31,8 +31,8 @@ Reviewed against the v1.2.3 source on 2026-09-15. Checked items indicate impleme
 - [x] Identify duplicate file/folder candidates within the filtered Google Drive view, with top-level and recursive scopes; preserve checksum-based duplicate filtering in Local Files.
 - [ ] Verify matching folder contents and provide a deduplication workflow.
 - [ ] Linux SystemD service
-- [ ] Update documentation to match current explorer controls and duplicate-filter behavior.
-- [ ] Document the sensitivity of stored metadata, logs, and exported reports, including handling and backup guidance.
+- [x] Update documentation to match current explorer controls and duplicate-filter behavior.
+- [x] Document the sensitivity of stored metadata, logs, and exported reports, including handling and backup guidance.
 - [x] Simplified Readme
 - [x] Add a Gear to SEttings Page
 - [x] Add icons to Menu Items
@@ -45,23 +45,24 @@ Reviewed against the v1.2.3 source on 2026-09-15. Checked items indicate impleme
 - [x] Show loading feedback during explorer navigation and prevent leaving while tag saves are pending.
 - [x] Limit Drive and Keeper permissions lists to 200px with vertical scrolling; expand them for printing.
 - [x] Paginate Drive folder, Keeper, GitHub, and Local Files results with 25/50/100/200 entries per page, a remembered page-size preference, and explicit current-page/all-matching selection.
-- [ ] Clarify startup messages: distinguish WebUI availability, completed initialization checks, and failures. The original background-initialization message remains in `src/web/mod.rs`; `src/app.rs` now prints a completion message, but the overall wording still needs review.
+- [x] Clarify startup messages: report WebUI availability separately from Rclone readiness, optional WebGUI failure, and setup failure; direct users to Settings for source connection status.
 - [x] Render enabled navigation items in the initial HTML on every page, without separate menu-loading requests or runtime availability checks.
 - [x] Show separate Filtered Items and Current page statistics in Google Drive explorers, including sizes for each scope.
 - [x] Collapse explorer filter sections and remember their open/closed state.
 - [x] Select the current page with the table-header checkbox and expose All Matches for selection across filtered pages; remove the redundant pagination selection links.
 - [x] Create Google Drive migration plans from all filtered matches across pages, with progress feedback and visible error alerts.
 - [x] Limit migration table rows to 200px with scrolling within columns; also scroll long source lists in the migration assistant.
-- [x] Link Keeper records to Web Vault and align Keeper table-header styling with Google Drive explorers. Folder links continue to navigate within BOREAL.
+- [x] Link Keeper records and folders to Web Vault from a dedicated Keeper icon column; keep folder-name navigation within BOREAL and align table headers with Google Drive explorers.
 
-### Proposed small follow-ups — awaiting discussion
+### Follow-up review
 
-These are review findings, not an approved implementation plan.
+Completed after approval:
 
-1. **Refresh explorer documentation.** `tmpl/html/docs.html` still describes inventory-wide duplicate groups and says other filters can hide group members. Update it to the implemented filtered-view, top-level/recursive behavior, and cover collapsible filters, scoped statistics, migration waiting/error feedback, and Keeper record links.
-2. **Refresh security guidance.** `SECURITY.md` lists 1.1.x while the current release is 1.2.3. Confirm the intended support policy, then update the table and explain that names, paths, identities, sharing information, local inventory, logs, and exports can be sensitive even when file contents and Keeper secrets are excluded.
-3. **Clarify startup feedback.** Keep the early WebUI URL, but make the sequence of startup messages understandable and distinguish checks finishing from every optional service being available.
-4. **Consider a per-item tag dialog after those smaller changes.** Existing tag operations can provide a starting point, but selection behavior and interaction with queued saves need agreement first. Item comments and retention dates require additional data-model and workflow decisions.
+1. Updated explorer documentation for scoped duplicate detection, collapsible filters, scoped statistics, all-matches migration feedback, and Keeper record links.
+2. Updated security guidance for the latest 1.2.x patch and the sensitivity of local metadata, logs, exports, and backups.
+3. Clarified terminal startup feedback without implying that every optional source is connected.
+
+**Still awaiting discussion:** a per-item tag dialog. Existing tag operations can provide a starting point, but selection behavior and interaction with queued saves need agreement first. Item comments and retention dates require additional data-model and workflow decisions.
 
 The per-user installer, stable launcher, startup registration, and staged-update phases below remain open. Existing portable launches and duplicate-instance protection provide a baseline; they do not complete the installation workflow.
 

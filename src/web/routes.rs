@@ -706,11 +706,19 @@ fn keeper_entry_view(record: database::keeper::EntryRow) -> KeeperEntryView {
         }
     }
     KeeperEntryView {
-        vault_url: if record.is_folder || record.uid.is_empty() {
-            String::new()
+        vault_url: if record.uid.is_empty() {
+            "https://keepersecurity.com/vault/".into()
         } else {
+            // Formats used by Keeper Web Vault's record and folder link controls.
+            let route = if !record.is_folder {
+                "detail"
+            } else if record.item_type == "shared_folder" {
+                "shared_folder"
+            } else {
+                "folder"
+            };
             format!(
-                "https://keepersecurity.com/vault/#detail/{}",
+                "https://keepersecurity.com/vault/#{route}/{}",
                 url_encode_component(&record.uid)
             )
         },
@@ -8863,6 +8871,10 @@ mod tests {
                 "Missing Keeper UI element: {expected}"
             );
         }
+        let icon = html
+            .find("data-keeper-external-link")
+            .expect("record launch icon");
+        assert!(html[icon..].contains("src=\"/assets/keeper-logo.svg\""));
         assert!(html.contains("href=\"https://keepersecurity.com/vault/#detail/record-one\""));
         assert!(html.contains("target=\"_blank\" rel=\"noopener noreferrer\""));
         assert_eq!(template.entries[0].permissions.len(), 2);
@@ -8878,6 +8890,25 @@ mod tests {
         assert!(html.contains("/keeper/export.xlsx"));
         assert!(html.contains("Print to PDF"));
         assert!(html.contains("/assets/keeper-logo.svg"));
+        for (kind, route) in [
+            ("user_folder", "folder"),
+            ("shared_folder_folder", "folder"),
+            ("shared_folder", "shared_folder"),
+        ] {
+            let mut folder = template.entries[0].record.clone();
+            folder.is_folder = true;
+            folder.item_type = kind.into();
+            folder.uid = "folder-one".into();
+            let folder = keeper_entry_view(folder);
+            assert_eq!(
+                folder.vault_url,
+                format!("https://keepersecurity.com/vault/#{route}/folder-one")
+            );
+            template.entries.push(folder);
+        }
+        let folders_html = template.render().unwrap();
+        assert_eq!(folders_html.matches("data-keeper-external-link").count(), 4);
+        assert!(folders_html.contains("href=\"/keeper?folder=folder-one\""));
         template.query.print = true;
         let print = template.render().unwrap();
         assert!(print.contains("Print / Save PDF"));

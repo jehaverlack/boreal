@@ -9,8 +9,8 @@ already have been corrected.
 
 | Version | Supported |
 | --- | --- |
-| 1.1.x | :white_check_mark: |
-| < 1.1 | :x: |
+| 1.2.x (latest patch) | :white_check_mark: |
+| < 1.2 | :x: |
 
 The current release is listed on the
 [BOREAL Update page](https://github.com/jehaverlack/boreal/releases/latest)
@@ -88,3 +88,37 @@ SQLite inventory are stored under the current user's BOREAL directory. This
 model assumes that the local operating-system account and browser session are
 trusted; it does not make vulnerabilities that cross those boundaries out of
 scope.
+
+## Metadata, local storage, and exports
+
+Metadata is sensitive even when file contents are not collected. File and folder
+names, paths, Keeper record titles, repository details, email addresses, sharing
+permissions, tags, and migration destinations can reveal personal information,
+confidential projects, or organizational access patterns.
+
+BOREAL's SQLite inventory is not encrypted by the application. The BOREAL home
+also contains configuration, authentication material, and logs; protecting the
+database alone does not protect the whole installation. Keeper record secrets
+and attachment contents are excluded from the metadata inventory, but the
+collected titles, folder structure, and sharing information still need protection.
+Migrations and downloads can copy actual source content to their destination.
+
+- Restrict access to the BOREAL home, migration destinations, and reports to
+  authorized operating-system accounts. Use device encryption and encrypted
+  backup storage appropriate to your organization.
+- Treat Excel/PDF exports, screenshots, and copied reports as separate sensitive
+  copies. They are not protected by the source service's access controls once
+  exported. Review recipients, storage locations, and retention before sharing.
+- Logs and error messages may contain identifying metadata or local paths.
+  Inspect and redact them before attaching them to an issue. Never share an
+  unredacted database, credentials, configuration files, or authentication tokens.
+- Stop BOREAL before making a filesystem backup of its home so the inventory and
+  related files are captured consistently. Protect backups like the live data,
+  and restore only from a trusted backup into an account authorized to use it.
+- Review obsolete reports, backups, and local downloads under your organization's
+  retention rules. BOREAL does not currently provide a retention-date workflow
+  or automatically remove migration sources.
+
+Removing access in a source service does not remove copies already saved in
+BOREAL, exports, or backups. Historical inventory entries may remain locally
+when items are deleted or become inaccessible at the source.

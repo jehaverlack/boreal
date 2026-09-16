@@ -330,7 +330,24 @@ impl AppState {
                 Ok(mut rclone) => {
                     *rclone = new_state;
 
-                    println!("BOREAL initialization checks completed.");
+                    match &*rclone {
+                        RcloneState::Ready(status) if status.gui_url.is_some() => {
+                            println!(
+                                "Rclone setup complete. Check the WebUI for each source's connection status."
+                            );
+                        }
+                        RcloneState::Ready(_) => {
+                            println!(
+                                "Rclone is ready, but its optional WebGUI is unavailable. Core Rclone features remain available; see the log for details."
+                            );
+                        }
+                        RcloneState::Error(_) => {
+                            eprintln!(
+                                "Rclone setup failed. BOREAL remains open; check App > Settings and the log before using Rclone features."
+                            );
+                        }
+                        _ => {}
+                    }
                 }
 
                 Err(error) => {
