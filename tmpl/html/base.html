@@ -82,7 +82,7 @@
             table-layout: fixed;
         }
 
-        .boreal-col-select { width: 2.75rem; }
+        .boreal-col-select { width: 136px; }
         .boreal-col-gdrive { width: 4.5rem; }
         .boreal-col-type { width: 5rem; }
         .boreal-col-name { width: 30%; }
@@ -90,7 +90,7 @@
         .boreal-col-modified { width: 12rem; }
         .boreal-col-owner { width: 11rem; }
         .boreal-col-permissions { width: 14rem; }
-        .boreal-local-select-col { width: 2.5rem; }
+        .boreal-local-select-col { width: 136px; }
         .boreal-local-name-col { width: 34%; }
         .boreal-local-type-col { width: 8rem; }
         .boreal-shared-name { width: 30%; }
@@ -110,7 +110,9 @@
 
         .boreal-explorer-table thead th,
         .boreal-explorer-table thead a,
-        .boreal-explorer-table thead .btn {
+        .boreal-explorer-table thead .btn,
+        .boreal-keeper-table thead th,
+        .boreal-keeper-table thead .btn {
             font-size: 0.875rem;
             font-weight: 600;
         }
@@ -129,13 +131,17 @@
             vertical-align: middle;
         }
 
-        .boreal-explorer-table thead th {
+        .boreal-explorer-table thead th,
+        .boreal-keeper-table thead th {
             position: sticky;
             top: 0;
             z-index: 2;
             background: var(--bs-table-bg);
             vertical-align: top;
         }
+
+        .boreal-keeper-table thead th { padding: .5rem; }
+        .boreal-keeper-table thead .form-control { min-width: 0; }
 
         .boreal-google-drive-icon {
             width: 1.15rem;
@@ -309,7 +315,8 @@
 
         body.boreal-print-report .boreal-keeper-table { width: 100%; table-layout: fixed; font-size: 9pt; }
         body.boreal-print-report .boreal-keeper-table td { overflow-wrap: anywhere; white-space: normal !important; }
-        body.boreal-print-report .boreal-keeper-table thead { position: static !important; }
+        body.boreal-print-report .boreal-keeper-table thead,
+        body.boreal-print-report .boreal-keeper-table thead th { position: static !important; }
         body.boreal-print-report .boreal-keeper-table tr { break-inside: avoid; }
         body.boreal-print-report .boreal-keeper-table th:last-child { width: 30%; }
         body.boreal-print-report .boreal-keeper-table .badge { white-space: normal; max-width: 100%; }
@@ -337,6 +344,21 @@
             a[href] {
                 color: inherit;
                 text-decoration: underline;
+            }
+        }
+        .boreal-migration-items-scroll {
+            max-height: 200px;
+            overflow-y: auto;
+            overflow-wrap: anywhere;
+        }
+        td > .boreal-migration-items-scroll {
+            max-height: calc(200px - 1rem - 1px);
+        }
+        .boreal-explorer-filters > summary { cursor: pointer; }
+        @media print {
+            .boreal-migration-items-scroll, td > .boreal-migration-items-scroll {
+                max-height: none;
+                overflow: visible;
             }
         }
     </style>
@@ -410,7 +432,7 @@
 
                     </li>
 
-                    <li id="local-files-primary-navigation" hx-get="/ui/local-files-primary-nav" hx-trigger="load" hx-swap="outerHTML"></li>
+                    {{ navigation.local_files_primary_nav|safe }}
 
                     <li class="nav-item">
                         <a
@@ -424,10 +446,10 @@
                         </a>
                     </li>
 
-                    <li id="google-drive-primary-navigation" hx-get="/ui/google-drive-primary-nav" hx-trigger="load" hx-swap="outerHTML"></li>
+                    {{ navigation.google_drive_primary_nav|safe }}
 
-                    <li id="github-primary-navigation" hx-get="/ui/github-primary-nav" hx-trigger="load" hx-swap="outerHTML"></li>
-                    <li id="keeper-primary-navigation" hx-get="/ui/keeper-primary-nav" hx-trigger="load" hx-swap="outerHTML"></li>
+                    {{ navigation.github_primary_nav|safe }}
+                    {{ navigation.keeper_primary_nav|safe }}
 
                     <li class="nav-item">
                         <a class="nav-link boreal-purple-nav{% if active_page == "migrations" %} active{% endif %}"
@@ -452,8 +474,8 @@
 
                 <ul class="navbar-nav ms-auto">
 
-                    <li id="github-launcher" hx-get="/ui/github-launcher" hx-trigger="load" hx-swap="outerHTML"></li>
-                    <li id="keeper-launcher" hx-get="/ui/keeper-launcher" hx-trigger="load" hx-swap="outerHTML"></li>
+                    {{ navigation.github_launcher|safe }}
+                    {{ navigation.keeper_launcher|safe }}
 
                     <li class="nav-item">
                         <a
@@ -468,7 +490,7 @@
                         </a>
                     </li>
 
-                    <li id="google-drive-launcher" hx-get="/ui/google-drive-launcher" hx-trigger="load" hx-swap="outerHTML"></li>
+                    {{ navigation.google_drive_launcher|safe }}
 
                     <li class="nav-item dropdown">
 
@@ -631,6 +653,8 @@
         {% endblock %}
 
     </main>
+
+    {% include "partials/explorer-filters.html" %}
 
     {% include "partials/status.html" %}
 

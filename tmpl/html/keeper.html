@@ -17,6 +17,8 @@
     <form action="/keeper" method="get" class="d-flex gap-2"><label for="keeper-folder" class="visually-hidden">Go to folder</label><select id="keeper-folder" name="folder" class="form-select form-select-sm"><option value="">My Vault /</option>{% for location in locations %}{% if !location.uid.is_empty() %}<option value="{{ location.uid }}"{% if location.uid == query.folder %} selected{% endif %}>{{ location.path }}</option>{% endif %}{% endfor %}</select><button class="btn btn-sm btn-outline-primary">Go</button></form>
     <span class="small text-body-secondary">{% if query.all %}All folders and records{% else %}{{ current_path }}{% endif %}</span>
 </nav>
+<details class="boreal-explorer-filters boreal-report-hide flex-shrink-0 mb-2" data-filter-section="keeper-filter-form" open>
+<summary class="small fw-semibold mb-2">Filters</summary>
 <form method="get" action="/keeper" id="keeper-filter-form" class="boreal-report-hide">
     <input type="hidden" name="folder" value="{{ query.folder }}"><input type="hidden" name="tag" value="{{ query.tag }}">
     <p class="small text-body-secondary mb-2">Click a tag to include it, click again to exclude it, and a third time to clear it. All selected conditions must match (AND).</p>
@@ -33,6 +35,7 @@
     <div class="d-flex gap-3 mb-2 small"><label><input type="checkbox" name="all" value="true"{% if query.all %} checked{% endif %}> Search all folders and records</label><label><input type="checkbox" name="include_inaccessible" value="true"{% if query.include_inaccessible %} checked{% endif %}> Include previously indexed items</label></div>
     <div class="d-flex gap-2 mb-2"><button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel me-1"></i>Apply filters</button><button class="btn btn-sm btn-outline-success" type="submit" formaction="/keeper/export.xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Export Excel</button><button class="btn btn-sm btn-outline-danger" type="submit" name="print" value="true" formtarget="_blank"><i class="bi bi-file-earmark-pdf me-1"></i>Print to PDF</button><a class="btn btn-sm btn-outline-secondary" href="/keeper?folder={{ query.folder }}">Clear filters</a></div>
 </form>
+</details>
 {% include "partials/explorer-pagination.html" %}
 {% if !tags.is_empty() %}
 <form data-explorer-tags method="post" action="/keeper/tags" id="keeper-tag-form" class="boreal-report-hide d-flex flex-wrap gap-2 align-items-center mb-2">
@@ -47,20 +50,21 @@
 {% endif %}
     <div class="table-responsive border rounded" style="max-height: calc(100vh - 20rem); overflow-y:auto;">
         <table data-column-widths="keeper" class="boreal-keeper-table table table-sm table-hover align-middle mb-0">
-            <thead class="sticky-top bg-body"><tr>
-                <th class="boreal-report-hide"><input type="checkbox" class="form-check-input" id="keeper-select-all" aria-label="Select all visible items"></th>
-                <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="name">Name</button><input class="form-control form-control-sm mt-1 boreal-report-hide" form="keeper-filter-form" name="name" value="{{ query.name }}" placeholder="Search name" aria-label="Search name"></th>
-                <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="type">Type</button></th>
-                <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="path">Path</button><input class="form-control form-control-sm mt-1 boreal-report-hide" form="keeper-filter-form" name="path" value="{{ query.path }}" placeholder="Search path" aria-label="Search path"></th>
-                <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="modified">Modified (UTC)</button></th>
-                <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="attachments">Attachments</button></th>
-                <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="size">File / attachment bytes</button></th>
-                <th><button type="button" class="btn btn-link btn-sm p-0" data-keeper-sort="permission">Permissions</button><div class="d-flex gap-1 mt-1 boreal-report-hide"><input class="form-control form-control-sm" form="keeper-filter-form" name="shared_to" value="{{ query.shared_to }}" placeholder="Person or team" aria-label="Filter users"><input class="form-control form-control-sm" form="keeper-filter-form" name="permission" value="{{ query.permission }}" placeholder="Permission" aria-label="Filter permissions"></div></th>
+            <thead class="table-light"><tr>
+                <th scope="col" class="boreal-report-hide"><input type="checkbox" class="form-check-input" id="keeper-select-all" aria-label="Select all visible items">
+{% include "partials/explorer-selection.html" %}</th>
+                <th scope="col"><button type="button" class="btn btn-link p-0 text-body text-decoration-none d-block text-start" data-keeper-sort="name">Name</button><input class="form-control form-control-sm mt-1 boreal-report-hide" form="keeper-filter-form" name="name" value="{{ query.name }}" placeholder="Search name" aria-label="Search name"></th>
+                <th scope="col"><button type="button" class="btn btn-link p-0 text-body text-decoration-none d-block text-start" data-keeper-sort="type">Type</button></th>
+                <th scope="col"><button type="button" class="btn btn-link p-0 text-body text-decoration-none d-block text-start" data-keeper-sort="path">Path</button><input class="form-control form-control-sm mt-1 boreal-report-hide" form="keeper-filter-form" name="path" value="{{ query.path }}" placeholder="Search path" aria-label="Search path"></th>
+                <th scope="col"><button type="button" class="btn btn-link p-0 text-body text-decoration-none d-block text-start" data-keeper-sort="modified">Modified (UTC)</button></th>
+                <th scope="col"><button type="button" class="btn btn-link p-0 text-body text-decoration-none d-block text-start" data-keeper-sort="attachments">Attachments</button></th>
+                <th scope="col"><button type="button" class="btn btn-link p-0 text-body text-decoration-none d-block text-start" data-keeper-sort="size">File / attachment bytes</button></th>
+                <th scope="col"><button type="button" class="btn btn-link p-0 text-body text-decoration-none d-block text-start" data-keeper-sort="permission">Permissions</button><div class="d-flex gap-1 mt-1 boreal-report-hide"><input class="form-control form-control-sm" form="keeper-filter-form" name="shared_to" value="{{ query.shared_to }}" placeholder="Person or team" aria-label="Filter users"><input class="form-control form-control-sm" form="keeper-filter-form" name="permission" value="{{ query.permission }}" placeholder="Permission" aria-label="Filter permissions"></div></th>
             </tr></thead>
             <tbody>
             {% for entry in entries %}<tr{% if !entry.record.is_accessible %} class="opacity-50"{% endif %}>
                 <td class="boreal-report-hide"><input class="form-check-input keeper-select" type="checkbox" value="{{ entry.record.uid }}" data-kind="{% if entry.record.is_folder %}folder{% else %}record{% endif %}" aria-label="Select {{ entry.record.name }}"></td>
-                <td><div class="fw-semibold">{% if entry.record.is_folder %}<a href="/keeper?folder={{ entry.record.uid }}"><i class="bi bi-folder me-1"></i>{{ entry.record.name }}</a>{% else %}<i class="bi bi-file-earmark-lock me-1"></i>{{ entry.record.name }}{% endif %}</div><span class="boreal-print-only small">UID: {{ entry.record.uid }}</span><details class="small text-body-secondary boreal-report-hide"><summary>UID</summary>{{ entry.record.uid }}</details><span data-explorer-tags-cell>{% for tag in entry.record.tags %}<span class="badge rounded-pill me-1" title="{{ tag.description }}" style="background:{{ tag.color }}">{{ tag.name }}</span>{% endfor %}</span></td>
+                <td><div class="fw-semibold">{% if entry.record.is_folder %}<a href="/keeper?folder={{ entry.record.uid }}"><i class="bi bi-folder me-1"></i>{{ entry.record.name }}</a>{% else %}<i class="bi bi-file-earmark-lock me-1"></i>{% if !entry.vault_url.is_empty() %}<a href="{{ entry.vault_url }}" target="_blank" rel="noopener noreferrer" title="Open {{ entry.record.name }} in Keeper Web Vault" aria-label="Open {{ entry.record.name }} in Keeper Web Vault (new tab)">{{ entry.record.name }}<i class="bi bi-box-arrow-up-right ms-1 small" aria-hidden="true"></i></a>{% else %}{{ entry.record.name }}{% endif %}{% endif %}</div><span class="boreal-print-only small">UID: {{ entry.record.uid }}</span><details class="small text-body-secondary boreal-report-hide"><summary>UID</summary>{{ entry.record.uid }}</details><span data-explorer-tags-cell>{% for tag in entry.record.tags %}<span class="badge rounded-pill me-1" title="{{ tag.description }}" style="background:{{ tag.color }}">{{ tag.name }}</span>{% endfor %}</span></td>
                 <td class="small">{{ entry.record.item_type }}</td><td class="small">{{ entry.record.folder_path }}</td>
                 <td class="small text-nowrap">{% if entry.record.modified.is_empty() %}—{% else %}{{ entry.record.modified }}{% endif %}</td>
                 <td class="small">{% if entry.record.is_folder %}—{% else %}{{ entry.record.attachment_count }}{% endif %}</td>
@@ -80,7 +84,10 @@
     document.querySelectorAll('[data-keeper-sort]').forEach(button => {
         const column = button.dataset.keeperSort;
         if (column === (form.elements.sort.value || 'name')) {
-            button.append(form.elements.direction.value === 'desc' ? ' ▼' : ' ▲');
+            const icon = document.createElement('i');
+            icon.className = 'bi ms-1 ' + (form.elements.direction.value === 'desc' ? 'bi-sort-down-alt' : 'bi-sort-down');
+            icon.setAttribute('aria-hidden', 'true');
+            button.append(icon);
             button.closest('th').setAttribute('aria-sort', form.elements.direction.value === 'desc' ? 'descending' : 'ascending');
         }
         button.addEventListener('click', () => {

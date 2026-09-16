@@ -1,0 +1,14 @@
+<script>
+(() => {
+    document.querySelectorAll('[data-filter-section]').forEach(section => {
+        const key = `boreal.explorer.filters.${section.dataset.filterSection}`;
+        try {
+            const saved = localStorage.getItem(key);
+            if (saved !== null) section.open = saved !== 'closed';
+        } catch (_) { /* The disclosure still works when storage is unavailable. */ }
+        section.addEventListener('toggle', () => {
+            try { localStorage.setItem(key, section.open ? 'open' : 'closed'); } catch (_) {}
+        });
+    });
+})();
+</script>

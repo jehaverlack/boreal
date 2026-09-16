@@ -133,10 +133,45 @@ pub struct MetadataView {
     pub shared_completed_at: String,
 }
 
-#[allow(dead_code)]
+#[derive(Default)]
+struct Navigation {
+    google_drive_primary_nav: String,
+    google_drive_launcher: String,
+    github_primary_nav: String,
+    github_launcher: String,
+    keeper_primary_nav: String,
+    keeper_launcher: String,
+    local_files_primary_nav: String,
+}
+
+impl Navigation {
+    fn from_settings(settings: &InventorySettings) -> Self {
+        Self {
+            google_drive_primary_nav: google_primary_navigation(settings.google_drive_enabled).0,
+            google_drive_launcher: google_launcher_navigation(settings.google_drive_enabled).0,
+            github_primary_nav: github_primary_navigation(settings.github_enabled).0,
+            github_launcher: github_launcher_navigation(settings.github_enabled).0,
+            keeper_primary_nav: keeper_primary_navigation(settings.keeper_enabled).0,
+            keeper_launcher: keeper_launcher_navigation(settings.keeper_enabled).0,
+            local_files_primary_nav: local_files_primary_navigation(settings.local_files_enabled).0,
+        }
+    }
+}
+
+fn navigation(state: &AppState) -> Navigation {
+    let settings = state
+        .database()
+        .ok()
+        .and_then(|database| database::settings::load(&database).ok())
+        .unwrap_or_default();
+    Navigation::from_settings(&settings)
+}
+
 #[derive(Template)]
 #[template(path = "dashboard.html", config = "askama.toml")]
+#[allow(dead_code)]
 struct DashboardTemplate {
+    navigation: Navigation,
     title: &'static str,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -178,6 +213,7 @@ struct ServiceSettingsView {
 #[derive(Template)]
 #[template(path = "settings.html", config = "askama.toml")]
 struct SettingsTemplate {
+    navigation: Navigation,
     title: &'static str,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -203,6 +239,7 @@ struct SettingsTemplate {
 #[derive(Template)]
 #[template(path = "about.html", config = "askama.toml")]
 struct AboutTemplate {
+    navigation: Navigation,
     title: &'static str,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -214,6 +251,7 @@ struct AboutTemplate {
 #[derive(Template)]
 #[template(path = "update.html", config = "askama.toml")]
 struct UpdateTemplate {
+    navigation: Navigation,
     title: &'static str,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -238,6 +276,7 @@ struct UpdateTemplate {
 #[derive(Template)]
 #[template(path = "docs.html", config = "askama.toml")]
 struct DocsTemplate {
+    navigation: Navigation,
     title: &'static str,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -249,6 +288,7 @@ struct DocsTemplate {
 #[derive(Template)]
 #[template(path = "help.html", config = "askama.toml")]
 struct HelpTemplate {
+    navigation: Navigation,
     title: &'static str,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -260,6 +300,7 @@ struct HelpTemplate {
 #[derive(Template)]
 #[template(path = "google-client.html", config = "askama.toml")]
 struct GoogleClientTemplate {
+    navigation: Navigation,
     title: &'static str,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -328,6 +369,7 @@ pub struct MigrationSortHeader {
 #[derive(Template)]
 #[template(path = "migrations.html", config = "askama.toml")]
 struct MigrationsTemplate {
+    navigation: Navigation,
     title: &'static str,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -343,6 +385,7 @@ struct MigrationsTemplate {
 #[derive(Template)]
 #[template(path = "migration-wizard.html", config = "askama.toml")]
 struct MigrationWizardTemplate {
+    navigation: Navigation,
     title: &'static str,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -368,6 +411,7 @@ pub struct RemoteView {
 #[derive(Template)]
 #[template(path = "remotes.html", config = "askama.toml")]
 struct RemotesTemplate {
+    navigation: Navigation,
     title: &'static str,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -461,6 +505,7 @@ pub struct IdentityTagFilterPill {
 #[derive(Template)]
 #[template(path = "my-drive.html", config = "askama.toml")]
 struct MyDriveTemplate {
+    navigation: Navigation,
     duplicates: bool,
     duplicates_current: bool,
     pagination: PageView,
@@ -559,6 +604,7 @@ pub struct SharedDriveIdentityView {
 #[derive(Template)]
 #[template(path = "shared-drives.html", config = "askama.toml")]
 struct SharedDrivesTemplate {
+    navigation: Navigation,
     title: &'static str,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -590,6 +636,7 @@ struct SharedDrivesTemplate {
 #[derive(Template)]
 #[template(path = "tags.html", config = "askama.toml")]
 struct TagsTemplate {
+    navigation: Navigation,
     title: &'static str,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -602,6 +649,7 @@ struct TagsTemplate {
 #[derive(Template)]
 #[template(path = "github.html", config = "askama.toml")]
 struct GitHubTemplate {
+    navigation: Navigation,
     pagination: PageView,
     title: &'static str,
     active_page: &'static str,
@@ -617,6 +665,7 @@ struct GitHubTemplate {
 }
 
 struct KeeperEntryView {
+    vault_url: String,
     record: database::keeper::EntryRow,
     permissions: Vec<KeeperPermissionGroup>,
 }
@@ -657,6 +706,14 @@ fn keeper_entry_view(record: database::keeper::EntryRow) -> KeeperEntryView {
         }
     }
     KeeperEntryView {
+        vault_url: if record.is_folder || record.uid.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "https://keepersecurity.com/vault/#detail/{}",
+                url_encode_component(&record.uid)
+            )
+        },
         record,
         permissions: groups
             .into_iter()
@@ -668,6 +725,7 @@ fn keeper_entry_view(record: database::keeper::EntryRow) -> KeeperEntryView {
 #[derive(Template)]
 #[template(path = "keeper.html", config = "askama.toml")]
 struct KeeperTemplate {
+    navigation: Navigation,
     pagination: PageView,
     title: &'static str,
     active_page: &'static str,
@@ -687,6 +745,7 @@ struct KeeperTemplate {
 #[derive(Template)]
 #[template(path = "local-files.html", config = "askama.toml")]
 struct LocalFilesTemplate {
+    navigation: Navigation,
     pagination: PageView,
     title: &'static str,
     active_page: &'static str,
@@ -714,6 +773,7 @@ struct LocalRootView {
 #[derive(Template)]
 #[template(path = "directory.html", config = "askama.toml")]
 struct DirectoryTemplate {
+    navigation: Navigation,
     title: &'static str,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -743,6 +803,7 @@ struct DirectoryTemplate {
 #[derive(Template)]
 #[template(path = "principal.html", config = "askama.toml")]
 struct PrincipalTemplate {
+    navigation: Navigation,
     title: String,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -757,6 +818,7 @@ struct PrincipalTemplate {
 #[derive(Template)]
 #[template(path = "directory-edit.html", config = "askama.toml")]
 struct DirectoryEditTemplate {
+    navigation: Navigation,
     title: String,
     active_page: &'static str,
     alerts: Vec<AlertItem>,
@@ -1509,6 +1571,40 @@ struct NewMigrationForm {
     inventory_scope: String,
     #[serde(default)]
     intent: String,
+    #[serde(default)]
+    all_matching: bool,
+    #[serde(default)]
+    background: bool,
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    sort: String,
+    #[serde(default)]
+    direction: String,
+    #[serde(default)]
+    tag: String,
+    #[serde(default)]
+    type_filter: String,
+    #[serde(default)]
+    size_filter: String,
+    #[serde(default)]
+    modified_filter: String,
+    #[serde(default)]
+    owner_filter: String,
+    #[serde(default)]
+    permission_filter: String,
+    #[serde(default)]
+    owner_identity_tag: String,
+    #[serde(default)]
+    permission_identity_tag: String,
+    #[serde(default)]
+    include_deleted: bool,
+    #[serde(default)]
+    duplicates: bool,
+    #[serde(default)]
+    duplicates_current: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -1951,6 +2047,7 @@ async fn index(State(state): State<Arc<AppState>>) -> Result<Html<String>, Statu
 
     let shared_summary = latest_shared_summary(&state);
     let template = DashboardTemplate {
+        navigation: navigation(&state),
         title: "BOREAL",
         active_page: "dashboard",
         alerts,
@@ -2789,6 +2886,7 @@ fn render_settings(
         }
     }
     let template = SettingsTemplate {
+        navigation: navigation(&state),
         title: "Settings - BOREAL",
         active_page: "settings",
         alerts: build_alerts(
@@ -2865,6 +2963,7 @@ async fn about(State(state): State<Arc<AppState>>) -> Result<Html<String>, Statu
     let poll_rclone = should_poll_ui(&rclone_state, &google_remotes_state, &metadata_state);
 
     let template = AboutTemplate {
+        navigation: navigation(&state),
         title: "About BOREAL",
         active_page: "about",
         alerts,
@@ -2895,6 +2994,7 @@ async fn update_page(State(state): State<Arc<AppState>>) -> Result<Html<String>,
         .map(|release| release.version.clone())
         .unwrap_or_default();
     render_template(&UpdateTemplate {
+        navigation: navigation(&state),
         title: "Update BOREAL",
         active_page: "update",
         alerts: build_alerts(
@@ -2954,6 +3054,7 @@ async fn docs_page(State(state): State<Arc<AppState>>) -> Result<Html<String>, S
     let google_remotes_state = state.google_remotes_state();
     let metadata_state = state.metadata_state();
     render_template(&DocsTemplate {
+        navigation: navigation(&state),
         title: "BOREAL Docs",
         active_page: "docs",
         alerts: build_alerts(
@@ -2981,6 +3082,7 @@ async fn help_page(State(state): State<Arc<AppState>>) -> Result<Html<String>, S
     let google_remotes_state = state.google_remotes_state();
     let metadata_state = state.metadata_state();
     render_template(&HelpTemplate {
+        navigation: navigation(&state),
         title: "BOREAL Help",
         active_page: "help",
         alerts: build_alerts(
@@ -3010,6 +3112,7 @@ async fn google_client_page(
     let google_remotes_state = state.google_remotes_state();
     let metadata_state = state.metadata_state();
     render_template(&GoogleClientTemplate {
+        navigation: navigation(&state),
         title: "Create Google Client ID - BOREAL",
         active_page: "google-client",
         alerts: build_alerts(
@@ -3082,6 +3185,7 @@ async fn migrations_page(
     let google_remotes_state = state.google_remotes_state();
     let metadata_state = state.metadata_state();
     render_template(&MigrationsTemplate {
+        navigation: navigation(&state),
         title: "Migrations - BOREAL",
         active_page: "migrations",
         alerts: build_alerts(
@@ -3166,46 +3270,98 @@ fn url_encode_component(value: &str) -> String {
 async fn create_migration(
     State(state): State<Arc<AppState>>,
     Form(form): Form<NewMigrationForm>,
-) -> Result<Redirect, StatusCode> {
+) -> Result<Response<Body>, (StatusCode, String)> {
+    let background = form.background;
+    let id = tokio::task::spawn_blocking(move || {
+        let database = state.database().map_err(|error| error.to_string())?;
+        create_migration_plan(&database, &form)
+    })
+    .await
+    .map_err(|error| {
+        log::error!("Migration planning task failed: {error}");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Unable to prepare the migration plan. Please try again.".to_string(),
+        )
+    })?
+    .map_err(|error| {
+        log::warn!("Unable to create migration plan: {error}");
+        (StatusCode::BAD_REQUEST, error)
+    })?;
+    let url = format!("/migrations/{id}");
+    if background {
+        Ok(axum::Json(serde_json::json!({"url": url})).into_response())
+    } else {
+        Ok(Redirect::to(&url).into_response())
+    }
+}
+
+fn create_migration_plan(
+    database: &database::Database,
+    form: &NewMigrationForm,
+) -> Result<i64, String> {
     let source_kind = match form.inventory_scope.as_str() {
         database::inventory::MY_DRIVE_SCOPE => "my-drive",
         database::inventory::SHARED_WITH_ME_SCOPE => "shared-with-me",
         scope if scope.starts_with(database::inventory::SHARED_DRIVE_SCOPE_PREFIX) => {
             "shared-drive"
         }
-        _ => return Err(StatusCode::BAD_REQUEST),
+        _ => return Err("Select a valid Google Drive inventory.".into()),
     };
-    let item_ids = form
-        .selected_item_ids
-        .split(',')
-        .map(str::trim)
-        .filter(|item_id| !item_id.is_empty())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    let database = state
-        .database()
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let item_ids = if form.all_matching {
+        let query = form;
+        let (exclude_owner, owner) = query
+            .owner_filter
+            .strip_prefix('!')
+            .map(|owner| (true, owner.trim()))
+            .unwrap_or((false, query.owner_filter.trim()));
+        database::inventory::list_drive_directory_filtered(
+            database,
+            &form.inventory_scope,
+            (!query.path.is_empty()).then_some(query.path.as_str()),
+            &query.q,
+            &query.tag,
+            &query.type_filter,
+            &query.size_filter,
+            &query.modified_filter,
+            owner,
+            exclude_owner,
+            &query.permission_filter,
+            &query.owner_identity_tag,
+            &query.permission_identity_tag,
+            query.include_deleted,
+            &query.sort,
+            query.direction == "desc",
+            None,
+            query.duplicates,
+            query.duplicates_current,
+        )
+        .map_err(|error| error.to_string())?
+        .0
+        .into_iter()
+        .map(|item| item.item_id)
+        .collect()
+    } else {
+        comma_separated_values(&form.selected_item_ids)
+    };
     let operation_kind = if form.intent == "local-download" {
         "local-download"
     } else {
         "drive-copy"
     };
     let id = database::migration::create(
-        &database,
+        database,
         &form.inventory_scope,
         source_kind,
         &item_ids,
         operation_kind,
     )
-    .map_err(|error| {
-        eprintln!("Unable to create migration plan: {error}");
-        StatusCode::BAD_REQUEST
-    })?;
+    .map_err(|error| error.to_string())?;
     log::info!(
         "Migration plan created: migration_id={id}, source_kind={source_kind}, sources={}",
-        item_ids.len(),
+        item_ids.len()
     );
-    Ok(Redirect::to(&format!("/migrations/{id}")))
+    Ok(id)
 }
 
 async fn create_download_migration(
@@ -3504,6 +3660,7 @@ fn render_migration_wizard(
     let google_remotes_state = state.google_remotes_state();
     let metadata_state = state.metadata_state();
     render_template(&MigrationWizardTemplate {
+        navigation: navigation(&state),
         title: "Migration Assistant - BOREAL",
         active_page: "migrations",
         alerts: build_alerts(
@@ -3726,6 +3883,7 @@ async fn remotes_page(
         || matches!(google_remotes_state.rw, RemoteState::Configuring);
 
     let template = RemotesTemplate {
+        navigation: navigation(&state),
         title: "Storage remotes - BOREAL",
         active_page: "remotes",
         alerts: build_alerts(
@@ -4337,6 +4495,7 @@ async fn shared_drives_page(
         let google_remotes_state = state.google_remotes_state();
         let metadata_state = state.metadata_state();
         return render_template(&SharedDrivesTemplate {
+            navigation: navigation(&state),
             title: "Shared Drives - BOREAL",
             active_page: "shared-drives",
             alerts: build_alerts(
@@ -4689,6 +4848,7 @@ fn render_drive_explorer(
         .collect();
 
     let template = MyDriveTemplate {
+        navigation: navigation(&state),
         duplicates: query.duplicates,
         duplicates_current: query.duplicates_current,
         pagination,
@@ -5322,7 +5482,11 @@ fn google_primary_navigation(drive: bool) -> Html<String> {
 }
 
 async fn ui_google_drive_launcher(State(state): State<Arc<AppState>>) -> Html<String> {
-    if google_drive_enabled(&state) {
+    google_launcher_navigation(google_drive_enabled(&state))
+}
+
+fn google_launcher_navigation(enabled: bool) -> Html<String> {
+    if enabled {
         Html(r#"<li id="google-drive-launcher" class="nav-item"><a class="nav-link boreal-drive-nav" href="https://drive.google.com/drive/quota" target="_blank" rel="noopener noreferrer" title="Open Google Drive in a new tab" aria-label="Open Google Drive in a new tab"><img class="boreal-service-icon" src="/assets/google-drive-logo.svg" alt="" aria-hidden="true"></a></li>"#.to_string())
     } else {
         Html("<li id=\"google-drive-launcher\" class=\"d-none\"></li>".to_string())
@@ -5330,7 +5494,11 @@ async fn ui_google_drive_launcher(State(state): State<Arc<AppState>>) -> Html<St
 }
 
 async fn ui_github_primary_nav(State(state): State<Arc<AppState>>) -> Html<String> {
-    if github_enabled(&state) {
+    github_primary_navigation(github_enabled(&state))
+}
+
+fn github_primary_navigation(enabled: bool) -> Html<String> {
+    if enabled {
         Html("<li id=\"github-primary-navigation\" class=\"nav-item\"><a class=\"nav-link boreal-github-nav\" href=\"/github\" title=\"Explore GitHub repositories\"><i class=\"bi bi-github me-1\"></i>GitHub</a></li>".to_string())
     } else {
         Html("<li id=\"github-primary-navigation\" class=\"d-none\"></li>".to_string())
@@ -5338,7 +5506,11 @@ async fn ui_github_primary_nav(State(state): State<Arc<AppState>>) -> Html<Strin
 }
 
 async fn ui_github_launcher(State(state): State<Arc<AppState>>) -> Html<String> {
-    if github_enabled(&state) {
+    github_launcher_navigation(github_enabled(&state))
+}
+
+fn github_launcher_navigation(enabled: bool) -> Html<String> {
+    if enabled {
         Html("<li id=\"github-launcher\" class=\"nav-item\"><a class=\"nav-link boreal-github-nav\" href=\"https://github.com/\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"Open GitHub in a new tab\" aria-label=\"Open GitHub in a new tab\"><i class=\"bi bi-github\" aria-hidden=\"true\"></i></a></li>".to_string())
     } else {
         Html("<li id=\"github-launcher\" class=\"d-none\"></li>".to_string())
@@ -5357,7 +5529,11 @@ fn keeper_enabled(state: &AppState) -> bool {
 }
 
 async fn ui_keeper_primary_nav(State(state): State<Arc<AppState>>) -> Html<String> {
-    if keeper_enabled(&state) {
+    keeper_primary_navigation(keeper_enabled(&state))
+}
+
+fn keeper_primary_navigation(enabled: bool) -> Html<String> {
+    if enabled {
         Html("<li id=\"keeper-primary-navigation\" class=\"nav-item\"><a class=\"nav-link boreal-keeper-nav\" href=\"/keeper\" title=\"Explore Keeper vault metadata\"><img class=\"boreal-service-icon me-1\" src=\"/assets/keeper-logo.svg\" alt=\"\">Keeper</a></li>".to_string())
     } else {
         Html("<li id=\"keeper-primary-navigation\" class=\"d-none\"></li>".to_string())
@@ -5365,7 +5541,11 @@ async fn ui_keeper_primary_nav(State(state): State<Arc<AppState>>) -> Html<Strin
 }
 
 async fn ui_keeper_launcher(State(state): State<Arc<AppState>>) -> Html<String> {
-    if keeper_enabled(&state) {
+    keeper_launcher_navigation(keeper_enabled(&state))
+}
+
+fn keeper_launcher_navigation(enabled: bool) -> Html<String> {
+    if enabled {
         Html("<li id=\"keeper-launcher\" class=\"nav-item\"><a class=\"nav-link boreal-keeper-nav\" href=\"https://keepersecurity.com/vault/\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"Open Keeper Web Vault\" aria-label=\"Open Keeper Web Vault\"><img class=\"boreal-service-icon\" src=\"/assets/keeper-logo.svg\" alt=\"\" aria-hidden=\"true\"></a></li>".to_string())
     } else {
         Html("<li id=\"keeper-launcher\" class=\"d-none\"></li>".to_string())
@@ -5446,6 +5626,7 @@ async fn keeper_page(
     let google_remotes_state = state.google_remotes_state();
     let metadata_state = state.metadata_state();
     render_template(&KeeperTemplate {
+        navigation: navigation(&state),
         pagination,
         title: "Keeper Explorer - BOREAL",
         active_page: "keeper",
@@ -5667,7 +5848,11 @@ fn local_files_enabled(state: &AppState) -> bool {
 }
 
 async fn ui_local_files_primary_nav(State(state): State<Arc<AppState>>) -> Html<String> {
-    if local_files_enabled(&state) {
+    local_files_primary_navigation(local_files_enabled(&state))
+}
+
+fn local_files_primary_navigation(enabled: bool) -> Html<String> {
+    if enabled {
         Html("<li id=\"local-files-primary-navigation\" class=\"nav-item\"><a class=\"nav-link boreal-local-files-nav\" href=\"/local-files\" title=\"Explore local file metadata\"><i class=\"bi bi-folder2-open me-1\"></i>Local Files</a></li>".to_string())
     } else {
         Html("<li id=\"local-files-primary-navigation\" class=\"d-none\"></li>".to_string())
@@ -5713,6 +5898,7 @@ async fn local_files_page(
     let google_remotes_state = state.google_remotes_state();
     let metadata_state = state.metadata_state();
     render_template(&LocalFilesTemplate {
+        navigation: navigation(&state),
         pagination,
         title: "Local Files - BOREAL",
         active_page: "local-files",
@@ -6141,6 +6327,7 @@ async fn github_page(
     let google_remotes_state = state.google_remotes_state();
     let metadata_state = state.metadata_state();
     render_template(&GitHubTemplate {
+        navigation: navigation(&state),
         pagination,
         title: "GitHub Repositories - BOREAL",
         active_page: "github",
@@ -6379,6 +6566,7 @@ async fn tags_page(
     let google_remotes_state = state.google_remotes_state();
     let metadata_state = state.metadata_state();
     render_template(&TagsTemplate {
+        navigation: navigation(&state),
         title: "Tags - BOREAL",
         active_page: "tags",
         alerts: build_alerts(
@@ -6459,6 +6647,7 @@ async fn directory_page(
     let google_remotes_state = state.google_remotes_state();
     let metadata_state = state.metadata_state();
     render_template(&DirectoryTemplate {
+        navigation: navigation(&state),
         title: "Persons - BOREAL",
         active_page: "directory",
         alerts: build_alerts(
@@ -6770,6 +6959,7 @@ fn render_principal_editor(
         Vec::new()
     };
     render_template(&DirectoryEditTemplate {
+        navigation: navigation(&state),
         title: if is_new {
             "New Person - BOREAL".to_string()
         } else {
@@ -6890,6 +7080,7 @@ async fn principal_page(
     let google_remotes_state = state.google_remotes_state();
     let metadata_state = state.metadata_state();
     render_template(&PrincipalTemplate {
+        navigation: navigation(&state),
         title: format!("{} - Persons - BOREAL", principal.display_name),
         active_page: "directory",
         alerts: build_alerts(
@@ -8218,6 +8409,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn migrations_resolve_all_filtered_pages_in_each_google_inventory() {
+        let root = std::env::temp_dir().join(format!(
+            "boreal-migration-selection-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let runtime = crate::bootstrap::Runtime {
+            boreal_home: root.clone(),
+            boreal: serde_json::json!({}),
+            directories: [("SQLITE".to_string(), root.join("sqlite"))]
+                .into_iter()
+                .collect(),
+        };
+        let db = database::Database::initialize(&runtime).unwrap();
+        let scan = db.start_scan_run("migration-selection-test").unwrap();
+        let c = db.connect().unwrap();
+        c.execute("INSERT INTO shared_drives(drive_id,name,inventory_scope) VALUES('source','Research','shared-drive:source')", []).unwrap();
+        for scope in [
+            database::inventory::MY_DRIVE_SCOPE,
+            database::inventory::SHARED_WITH_ME_SCOPE,
+            "shared-drive:source",
+        ] {
+            for index in 0..61 {
+                c.execute("INSERT INTO drive_items(remote_name,item_id,name,relative_path,is_directory,size_bytes,owner_email,last_seen_scan_id) VALUES(?1,?2,?2,?2,0,10,?3,?4)", rusqlite::params![scope, format!("file-{index}"), if index < 60 { "alice@example.com" } else { "bob@example.com" }, scan]).unwrap();
+            }
+            let uri = format!("/migrations/new?inventory_scope={scope}&all_matching=true&selected_item_ids=file-0&page_size=25&owner_filter=alice&background=true&include_deleted=false&duplicates=false&duplicates_current=false").parse().unwrap();
+            let Query(mut form) = Query::<NewMigrationForm>::try_from_uri(&uri).unwrap();
+            let id = create_migration_plan(&db, &form).unwrap();
+            let plan = database::migration::get(&db, id).unwrap().unwrap();
+            assert_eq!(plan.sources.len(), 60);
+            assert_eq!(plan.bytes_total, 600);
+            assert!(
+                plan.sources
+                    .iter()
+                    .all(|source| source.item_id != "file-60")
+            );
+            form.all_matching = false;
+            let id = create_migration_plan(&db, &form).unwrap();
+            assert_eq!(
+                database::migration::get(&db, id)
+                    .unwrap()
+                    .unwrap()
+                    .sources
+                    .len(),
+                1
+            );
+            form.all_matching = true;
+            form.owner_filter = "no matches".into();
+            assert!(create_migration_plan(&db, &form).is_err());
+        }
+        drop(c);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn explorer_pagination_parses_urls_and_bounds_page_sizes() {
         let uri = "/my-drive?page=2&page_size=25&tag=needs-review&duplicates=true&duplicates_current=true"
             .parse()
@@ -8408,6 +8657,13 @@ mod tests {
         )
         .collect();
         let template = SettingsTemplate {
+            navigation: Navigation::from_settings(&InventorySettings {
+                google_drive_enabled: true,
+                github_enabled: true,
+                keeper_enabled: true,
+                local_files_enabled: true,
+                ..Default::default()
+            }),
             title: "Settings - BOREAL",
             active_page: "settings",
             alerts: vec![],
@@ -8432,6 +8688,31 @@ mod tests {
             s3_connections: vec!["archive-storage".into()],
         };
         let html = template.render().unwrap();
+        let nav = html
+            .split("<nav")
+            .nth(1)
+            .unwrap()
+            .split("</nav>")
+            .next()
+            .unwrap();
+        assert!(
+            !nav.contains("hx-get"),
+            "navigation must arrive with the initial HTML"
+        );
+        for link in [
+            "/local-files",
+            "/my-drive",
+            "/github",
+            "/keeper",
+            "https://github.com/",
+            "https://keepersecurity.com/vault/",
+            "https://drive.google.com/drive/quota",
+        ] {
+            assert!(
+                nav.contains(link),
+                "missing initial navigation link: {link}"
+            );
+        }
         assert_eq!(html.matches("data-service-form=").count(), 6);
         assert!(!html.contains("google-groups"));
         assert!(!html.contains("/google/connect"));
@@ -8447,6 +8728,13 @@ mod tests {
             assert!(html.contains(&format!("id=\"service-{service}\"")));
         }
         let remotes = RemotesTemplate {
+            navigation: Navigation::from_settings(&InventorySettings {
+                google_drive_enabled: true,
+                github_enabled: true,
+                keeper_enabled: true,
+                local_files_enabled: true,
+                ..Default::default()
+            }),
             title: "Storage remotes - BOREAL",
             active_page: "remotes",
             alerts: vec![],
@@ -8476,7 +8764,6 @@ mod tests {
         assert!(remotes.contains("Add another remote"));
         if let Ok(directory) = std::env::var("BOREAL_UI_FIXTURE_DIR") {
             std::fs::create_dir_all(&directory).unwrap();
-            let html = html.replace("<li id=\"google-drive-primary-navigation\" hx-get=\"/ui/google-drive-primary-nav\" hx-trigger=\"load\" hx-swap=\"outerHTML\"></li>", &google_primary_navigation(true).0);
             std::fs::write(std::path::Path::new(&directory).join("settings.html"), html).unwrap();
             std::fs::write(
                 std::path::Path::new(&directory).join("remotes.html"),
@@ -8502,6 +8789,13 @@ mod tests {
             local_files: false,
         };
         let mut template = KeeperTemplate {
+            navigation: Navigation::from_settings(&InventorySettings {
+                google_drive_enabled: true,
+                github_enabled: true,
+                keeper_enabled: true,
+                local_files_enabled: true,
+                ..Default::default()
+            }),
             pagination: PageQuery::default().view(1),
             title: "Keeper Explorer",
             active_page: "keeper",
@@ -8569,6 +8863,8 @@ mod tests {
                 "Missing Keeper UI element: {expected}"
             );
         }
+        assert!(html.contains("href=\"https://keepersecurity.com/vault/#detail/record-one\""));
+        assert!(html.contains("target=\"_blank\" rel=\"noopener noreferrer\""));
         assert_eq!(template.entries[0].permissions.len(), 2);
         assert_eq!(template.entries[0].permissions[0].label, "Can Manage Users");
         assert_eq!(
