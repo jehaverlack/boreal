@@ -2,10 +2,11 @@
 // chromium --headless --no-sandbox --user-data-dir=/tmp/boreal-column-browser --dump-dom file:///tmp/boreal-column-widths-test.html
 const fs = require('node:fs');
 const path = require('node:path');
+const templateSection = require('./test-template-section.cjs');
 const partial = fs.readFileSync(path.join(__dirname, '../tmpl/html/partials/column-widths.html'), 'utf8');
 const base = fs.readFileSync(path.join(__dirname, '../tmpl/html/base.html'), 'utf8');
-const script = partial.match(/<script>([\s\S]*?)<\/script>/)[1];
-const styles = base.match(/<style>([\s\S]*?)<\/style>/)[1] + partial.match(/<style>([\s\S]*?)<\/style>/)[1];
+const script = templateSection(partial, 'script');
+const styles = templateSection(base, 'style') + templateSection(partial, 'style');
 const markup = `<input id="filter" value="keep,!review"><input id="sort" value="modified">
 ${['drive', 'keeper'].map(key => `<div class="table-responsive boreal-explorer-table" style="height:200px;width:1100px"><table data-column-widths="${key}" style="width:100%">
 ${key === 'drive' ? '<colgroup><col style="width:45px"><col style="width:40%"><col></colgroup>' : ''}
