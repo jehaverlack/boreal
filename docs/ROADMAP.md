@@ -4,6 +4,8 @@
 
 ## Feature Requests
 
+Reviewed against the v1.2.3 source on 2026-09-15. Checked items indicate implementation in the repository; they do not imply validation on every supported operating system.
+
 - [x] On quit, if jobs are running prompt the users before stopping.
 - [ ] Add an Data Retention Date to flag data for removal.
 - [x] Add Use cases to About
@@ -26,11 +28,11 @@
    -  Improved People Statuses
 - [x] Cleanup Dashboard for modules and colorize modules.
 - [x] Cleanup Menu order
-- [x] Identify and filter duplicate file/folder candidates in Drive explorers; preserve checksum-based duplicate filtering in Local Files.
+- [x] Identify duplicate file/folder candidates within the filtered Google Drive view, with top-level and recursive scopes; preserve checksum-based duplicate filtering in Local Files.
 - [ ] Verify matching folder contents and provide a deduplication workflow.
 - [ ] Linux SystemD service
-- [ ] Update Documenation
-- [ ] Security Docs Sensitivity of Meta Data
+- [ ] Update documentation to match current explorer controls and duplicate-filter behavior.
+- [ ] Document the sensitivity of stored metadata, logs, and exported reports, including handling and backup guidance.
 - [x] Simplified Readme
 - [x] Add a Gear to SEttings Page
 - [x] Add icons to Menu Items
@@ -43,8 +45,25 @@
 - [x] Show loading feedback during explorer navigation and prevent leaving while tag saves are pending.
 - [x] Limit Drive and Keeper permissions lists to 200px with vertical scrolling; expand them for printing.
 - [x] Paginate Drive folder, Keeper, GitHub, and Local Files results with 25/50/100/200 entries per page, a remembered page-size preference, and explicit current-page/all-matching selection.
-- [ ]  On startup the terminal message shows:  Startup status: WebUI ready; background initialization is continuing.  This is confusing and should be more clear once Boreal is finsishe initalizing.
-- [ ] When pages load the Nav Bar menus loads items slowly.  The navbar should load quickly and be consistend regardless of page load status.
+- [ ] Clarify startup messages: distinguish WebUI availability, completed initialization checks, and failures. The original background-initialization message remains in `src/web/mod.rs`; `src/app.rs` now prints a completion message, but the overall wording still needs review.
+- [x] Render enabled navigation items in the initial HTML on every page, without separate menu-loading requests or runtime availability checks.
+- [x] Show separate Filtered Items and Current page statistics in Google Drive explorers, including sizes for each scope.
+- [x] Collapse explorer filter sections and remember their open/closed state.
+- [x] Select the current page with the table-header checkbox and expose All Matches for selection across filtered pages; remove the redundant pagination selection links.
+- [x] Create Google Drive migration plans from all filtered matches across pages, with progress feedback and visible error alerts.
+- [x] Limit migration table rows to 200px with scrolling within columns; also scroll long source lists in the migration assistant.
+- [x] Link Keeper records to Web Vault and align Keeper table-header styling with Google Drive explorers. Folder links continue to navigate within BOREAL.
+
+### Proposed small follow-ups — awaiting discussion
+
+These are review findings, not an approved implementation plan.
+
+1. **Refresh explorer documentation.** `tmpl/html/docs.html` still describes inventory-wide duplicate groups and says other filters can hide group members. Update it to the implemented filtered-view, top-level/recursive behavior, and cover collapsible filters, scoped statistics, migration waiting/error feedback, and Keeper record links.
+2. **Refresh security guidance.** `SECURITY.md` lists 1.1.x while the current release is 1.2.3. Confirm the intended support policy, then update the table and explain that names, paths, identities, sharing information, local inventory, logs, and exports can be sensitive even when file contents and Keeper secrets are excluded.
+3. **Clarify startup feedback.** Keep the early WebUI URL, but make the sequence of startup messages understandable and distinguish checks finishing from every optional service being available.
+4. **Consider a per-item tag dialog after those smaller changes.** Existing tag operations can provide a starting point, but selection behavior and interaction with queued saves need agreement first. Item comments and retention dates require additional data-model and workflow decisions.
+
+The per-user installer, stable launcher, startup registration, and staged-update phases below remain open. Existing portable launches and duplicate-instance protection provide a baseline; they do not complete the installation workflow.
 
 
 
@@ -107,7 +126,7 @@ The stable launcher will select the current version, start BOREAL, apply a stage
 - [ ] Portable BOREAL should continue to work without installation.
 - [ ] Installation, startup registration, updates, repair, and uninstall should not require administrator access.
 - [ ] Starting BOREAL from the OS application menu should open the running WebUI or start it when necessary.
-- [ ] Prevent duplicate backend instances by retaining the existing-instance check.
+- [x] Prevent duplicate backend instances with the existing-instance check and port reservation (`src/main.rs`). Retain this behavior when adding the installer and stable launcher.
 - [ ] Quote and validate every generated executable and configuration path.
 - [ ] Preserve `BOREAL_HOME`, credentials, inventory data, and logs across binary upgrades.
 - [ ] Sign/notarize platform releases where supported and never activate an unverified download.
