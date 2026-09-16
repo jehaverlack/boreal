@@ -1,4 +1,8 @@
 <style>
+th:has([data-explorer-all-matches]) { width: 136px; min-width: 136px; text-align: center; }
+.boreal-all-matches:not([hidden]) { display: flex; align-items: center; justify-content: center; gap: .375rem; margin-top: .5rem; white-space: nowrap; }
+.boreal-all-matches input { margin: 0 !important; flex-shrink: 0; }
+
 .boreal-permissions-scroll { max-height: 200px; overflow-y: auto; overflow-wrap: anywhere; }
 .boreal-loading { cursor: progress; }
 .boreal-loading main { pointer-events: none; opacity: .65; }
@@ -6,16 +10,63 @@
 @media print { .boreal-permissions-scroll { max-height: none; overflow: visible; } }
 .boreal-print-report .boreal-permissions-scroll { max-height: none; overflow: visible; }
 </style>
+<dialog id="explorer-migration-progress" aria-labelledby="explorer-migration-progress-title" class="border-0 rounded shadow p-4">
+    <h2 id="explorer-migration-progress-title" class="h5">Preparing your migration</h2>
+    <p class="mb-0" role="status"><span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Please wait while we prepare the selected items. Large selections may take a while.</p>
+</dialog>
+<style>#explorer-migration-progress::backdrop { background: rgb(0 0 0 / 45%); }</style>
 <script>
 (() => {
     const pager = document.getElementById('explorer-pagination');
     const form = document.querySelector('[data-explorer-tags]');
     if (!pager || document.body.classList.contains('boreal-print-report')) return;
     const status = document.getElementById('explorer-save-status');
+    function showError(message) {
+        status.classList.add('alert', 'alert-danger');
+        status.setAttribute('role', 'alert');
+        status.textContent = message;
+        status.scrollIntoView({block:'nearest'});
+    }
+    function clearError() {
+        status.classList.remove('alert', 'alert-danger');
+        status.setAttribute('role', 'status');
+    }
+    const migrationProgress = document.getElementById('explorer-migration-progress');
+    let migrating = false;
+    migrationProgress.addEventListener('cancel', event => event.preventDefault());
+    async function migrate(url) {
+        if (migrating) return;
+        if (busy() || (allMatching && resultsStale)) {
+            showError('Finish saving tags and refresh results before migrating all matching items.'); return;
+        }
+        if (boxes().some(box => box.checked && box.dataset.isDeleted === 'true')) {
+            showError('Deleted items cannot be migrated. Exclude deleted items from the filters or deselect them.'); return;
+        }
+        const body = new URLSearchParams(new FormData(form));
+        body.set('selected_item_ids', boxes().filter(box => box.checked).map(box => box.value).join(','));
+        body.set('all_matching', String(allMatching));
+        body.set('background', 'true');
+        body.set('tag', body.get('tag_filter') || '');
+        body.set('owner_identity_tag', body.get('owner_identity_tag_filter') || '');
+        body.set('permission_identity_tag', body.get('permission_identity_tag_filter') || '');
+        clearError(); migrating = true;
+        status.textContent = 'Preparing your migration… Please wait.';
+        try {
+            migrationProgress.showModal();
+            const response = await fetch(url, {method:'POST', body});
+            if (!response.ok) throw new Error((await response.text()) || 'Unable to prepare the migration.');
+            const result = await response.json();
+            if (!/^\/migrations\/\d+$/.test(result.url)) throw new Error('The migration response was invalid. Check Migrations before trying again.');
+            window.location.assign(result.url);
+        } catch (error) {
+            migrating = false; migrationProgress.close();
+            showError(`Migration could not be opened. ${error.message} Check Migrations before retrying if the connection was interrupted.`);
+        }
+    }
     const discard = document.getElementById('explorer-discard');
     const retry = document.getElementById('explorer-retry');
     const refresh = document.getElementById('explorer-refresh');
-    const selectMatching = document.getElementById('explorer-select-matching');
+    const matchCheckboxes = [...document.querySelectorAll('[data-explorer-all-matches]')];
     const clear = document.getElementById('explorer-clear-selection');
     const boxes = () => [...document.querySelectorAll('.my-drive-item-select:not(:disabled), .keeper-select, .github-select, .local-select')];
     const key = box => `${box.dataset.kind || 'drive'}:${box.value}`;
@@ -26,13 +77,13 @@
     const queue = [];
     const busy = () => working || queue.length > 0;
     function loading() {
-        status.textContent = 'Loading results…';
+        clearError(); status.textContent = 'Loading results…';
         document.body.classList.add('boreal-loading');
         document.querySelector('main')?.setAttribute('aria-busy', 'true');
         if (document.querySelector('main')) document.querySelector('main').inert = true;
     }
     function navigate(target) {
-        if (busy()) { status.textContent = 'Finish saving or retry the failed change before changing results.'; return; }
+        if (busy()) { showError('Finish saving or retry the failed change before changing results.'); return; }
         loading(); window.location.assign(target);
     }
     sizeSelect.value = String(size);
@@ -45,7 +96,7 @@
         }
     } catch (_) { /* Preferences are optional in browsers that block storage. */ }
     sizeSelect.addEventListener('change', () => {
-        if (busy()) { sizeSelect.value = String(size); status.textContent = 'Wait for tags to finish saving.'; return; }
+        if (busy()) { sizeSelect.value = String(size); showError('Wait for tags to finish saving.'); return; }
         try { localStorage.setItem(preferenceKey, sizeSelect.value); } catch (_) {}
         const url = new URL(window.location.href);
         url.searchParams.set('page_size', sizeSelect.value); url.searchParams.delete('page'); navigate(url);
@@ -60,25 +111,35 @@
     });
     function selectionChanged() {
         const selected = boxes().filter(box => box.checked);
-        selectMatching.hidden = !form || resultsStale || busy() || allMatching || Number(pager.dataset.total) === 0;
+        const pageSelected = selected.length > 0 && selected.length === boxes().length;
+        matchCheckboxes.forEach(checkbox => {
+            checkbox.closest('label').hidden = !form || !pageSelected || Number(pager.dataset.total) <= boxes().length;
+            checkbox.disabled = resultsStale || busy();
+            checkbox.checked = allMatching;
+            checkbox.title = resultsStale ? 'Refresh results before selecting all matches' : `Select all ${pager.dataset.total} filtered entries across all pages`;
+        });
+        document.querySelectorAll('#my-drive-select-all, #keeper-select-all, #github-select-all, .local-select-all').forEach(header => {
+            const entries = boxes().filter(box => !header.classList.contains('local-select-all') || box.dataset.root === header.dataset.root);
+            const count = entries.filter(box => box.checked).length;
+            header.checked = entries.length > 0 && count === entries.length;
+            header.indeterminate = count > 0 && count < entries.length;
+        });
+        const count = document.querySelector('#my-drive-selection-count, #keeper-selected-count, #github-selected-count, #local-selected-count');
+        if (count) count.textContent = allMatching ? `${pager.dataset.total} selected (all matches)` : `${selected.length} selected`;
         clear.hidden = !allMatching && !selected.length;
     }
     document.addEventListener('change', event => {
         if (event.target.matches('.my-drive-item-select, .keeper-select, .github-select, .local-select, #my-drive-select-all, #keeper-select-all, #github-select-all, .local-select-all')) {
             allMatching = false; selectionChanged();
+            if (!busy() && !resultsStale) { clearError(); status.textContent = ''; }
         }
     });
-    document.getElementById('explorer-select-page').addEventListener('click', () => {
-        allMatching = false; boxes().forEach(box => box.checked = true);
-        boxes()[0]?.dispatchEvent(new Event('change', {bubbles:true})); selectionChanged();
-    });
-    selectMatching.addEventListener('click', () => {
-        if (resultsStale || busy()) { status.textContent = 'Refresh saved results before selecting all matching entries.'; return; }
-        boxes().forEach(box => box.checked = true);
-        boxes()[0]?.dispatchEvent(new Event('change', {bubbles:true}));
-        allMatching = true; selectionChanged();
-        status.textContent = `All ${pager.dataset.total} matching entries selected for the next tag action. Drive folder tags also apply to descendants.`;
-    });
+    matchCheckboxes.forEach(checkbox => checkbox.addEventListener('change', () => {
+        if (resultsStale || busy()) { selectionChanged(); showError('Refresh saved results before selecting all matching entries.'); return; }
+        allMatching = checkbox.checked;
+        selectionChanged(); clearError();
+        status.textContent = allMatching ? `All ${pager.dataset.total} filtered entries selected.` : 'Current page selected.';
+    }));
     clear.addEventListener('click', () => {
         allMatching = false;
         boxes().forEach(box => box.checked = false);
@@ -122,7 +183,7 @@
     }
     async function drain() {
         if (working || failed) return;
-        working = true;
+        clearError(); working = true;
         while (queue.length) {
             status.textContent = `Saving tags… ${queue.length} change(s) pending. You can keep selecting and tagging.`;
             try {
@@ -132,23 +193,25 @@
                 queue.shift();
             } catch (_) {
                 failed = true; working = false; retry.hidden = false; discard.hidden = false;
-                status.textContent = 'Not saved. Your changes remain queued in this tab. Retry saving before leaving.';
+                showError('Not saved. Your changes remain queued in this tab. Retry saving before leaving.');
                 return;
             }
         }
         try {
             await reconcile();
             if (!queue.length) status.textContent = 'Tags saved. Refresh results to update filtering, sorting, and totals.';
-        } catch (_) { status.textContent = 'Tags saved, but display refresh failed. Refresh results to verify.'; }
+        } catch (_) { showError('Tags saved, but display refresh failed. Refresh results to verify.'); }
         working = false; refresh.hidden = false;
         if (queue.length) drain();
     }
     form?.addEventListener('submit', event => {
         if (event.defaultPrevented) return;
         const url = event.submitter?.getAttribute('formaction') || form.action;
-        // Metadata refresh and migration retain their existing form behavior.
-        if (event.submitter?.id?.includes('metadata') || event.submitter?.id?.includes('migrate')) {
-            if (busy() || allMatching) { event.preventDefault(); status.textContent = 'These actions require a saved, current-page selection.'; }
+        if (event.submitter?.id?.includes('migrate')) {
+            event.preventDefault(); migrate(url); return;
+        }
+        if (event.submitter?.id?.includes('metadata')) {
+            if (busy() || allMatching) { event.preventDefault(); showError('Metadata updates require saved items selected on the current page.'); }
             else loading();
             return;
         }
@@ -175,7 +238,7 @@
     // Normal filter submissions still work without JavaScript. Mark their navigation busy.
     document.addEventListener('submit', event => {
         if (event.defaultPrevented || event.target === form) return;
-        if (busy()) { event.preventDefault(); status.textContent = 'Wait for tags to finish saving before changing results.'; return; }
+        if (busy()) { event.preventDefault(); showError('Wait for tags to finish saving before changing results.'); return; }
         const destination = event.submitter?.getAttribute('formaction') || event.target.action;
         if (event.submitter?.getAttribute('formtarget') === '_blank' || event.target.target === '_blank' || /export|download/.test(new URL(destination, location.href).pathname)) return;
         if (event.target.method.toLowerCase() === 'get') {
@@ -190,11 +253,11 @@
         if (!anchor || anchor.target || anchor.hasAttribute('download') || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
         const url = new URL(anchor.href, window.location.href);
         if (url.origin !== location.origin || url.hash || /export|download/.test(url.pathname)) return;
-        if (busy()) { event.preventDefault(); status.textContent = 'Finish saving tags before leaving this page.'; return; }
+        if (busy()) { event.preventDefault(); showError('Finish saving tags before leaving this page.'); return; }
         loading();
     });
     window.addEventListener('beforeunload', event => { if (busy()) { event.preventDefault(); event.returnValue = ''; } });
-    window.addEventListener('pageshow', () => { document.body.classList.remove('boreal-loading'); document.querySelector('main')?.removeAttribute('aria-busy'); if (document.querySelector('main')) document.querySelector('main').inert = false; });
+    window.addEventListener('pageshow', () => { migrating = false; migrationProgress.close(); document.body.classList.remove('boreal-loading'); document.querySelector('main')?.removeAttribute('aria-busy'); if (document.querySelector('main')) document.querySelector('main').inert = false; });
     selectionChanged();
 })();
 </script>

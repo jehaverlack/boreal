@@ -32,7 +32,7 @@
         if (!headers.length || headers.some(header => header.colSpan !== 1)) return;
         const key = 'boreal.columnWidths.v1:' + window.location.pathname + ':'
             + table.dataset.columnWidths + ':' + (new URLSearchParams(window.location.search).get('drive') || '');
-        const minimum = headers.map(header => header.querySelector('input[type="checkbox"]') ? 36 : 80);
+        const minimum = headers.map(header => header.querySelector('[data-explorer-all-matches]') ? 136 : header.querySelector('input[type="checkbox"]') ? 36 : 80);
         const clamp = (width, index) => Math.min(2000, Math.max(minimum[index], Math.round(width)));
         const defaults = headers.map((header, index) => clamp(header.getBoundingClientRect().width, index));
         let widths = [...defaults];
