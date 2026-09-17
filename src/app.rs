@@ -22,6 +22,34 @@ use crate::{
     },
 };
 
+// A source failure must not prevent independent sources from refreshing.
+fn run_metadata_source<T: Default>(
+    failures: &mut Vec<String>,
+    label: &str,
+    database: &Database,
+    scan_id: i64,
+    cancelled: &AtomicBool,
+    update: impl FnOnce() -> Result<T, database::DatabaseError>,
+) -> T {
+    let result = if cancelled.load(Ordering::Acquire) {
+        Err("Metadata update cancelled".into())
+    } else {
+        update()
+    };
+    match result {
+        Ok(value) => value,
+        Err(error) => {
+            let message = format!("{label}: {error}");
+            log::error!("Metadata source failed: {message}");
+            if scan_id > 0 {
+                let _ = database.fail_scan_run(scan_id, &message);
+            }
+            failures.push(message);
+            T::default()
+        }
+    }
+}
+
 pub struct AppState {
     pub runtime: Runtime,
 
@@ -891,10 +919,7 @@ impl AppState {
         let rclone_path = if google_selected || selection.s3 {
             match state.rclone_state() {
                 RcloneState::Ready(status) => status.path,
-                _ => {
-                    state.finish_metadata_job();
-                    return Err("Rclone is not ready".to_string());
-                }
+                _ => PathBuf::new(),
             }
         } else {
             PathBuf::new()
@@ -911,29 +936,6 @@ impl AppState {
             && inventory_settings.directory_sheet_enabled)
             .then(|| inventory_settings.directory_sheet_url.trim().to_string())
             .filter(|url| !url.is_empty());
-        if selection.directory_info && directory_sheet_url.is_none() {
-            state.finish_metadata_job();
-            return Err(
-                "Directory Info requires a configured directory spreadsheet URL".to_string(),
-            );
-        }
-        if selection.keeper
-            && (!inventory_settings.keeper_enabled
-                || inventory_settings.keeper_command.trim().is_empty())
-        {
-            state.finish_metadata_job();
-            return Err(
-                "Keeper metadata requires a configured Keeper Commander connection".to_string(),
-            );
-        }
-        if selection.local_files && !inventory_settings.local_files_enabled {
-            state.finish_metadata_job();
-            return Err("Local Files metadata is not enabled in Settings".to_string());
-        }
-        if selection.s3 && !inventory_settings.s3_enabled {
-            state.finish_metadata_job();
-            return Err("S3 metadata is not enabled in Settings".to_string());
-        }
         let scan_id = match if selection.my_drive {
             database.start_scan_run("my-drive")
         } else {
@@ -998,17 +1000,18 @@ impl AppState {
             let worker_state = Arc::clone(&state);
             let failure_database = database.clone();
             let result = tokio::task::spawn_blocking(move || {
-                    if google_selected {
+                    let mut failures = Vec::new();
+                    if google_selected && !rclone_path.as_os_str().is_empty() {
                     match rclone::identity::fetch_read_only_account(&worker_state.runtime, &rclone_path) {
                         Ok(identity) => {
-                            database::directory::save_remote_account(
+                            if let Err(error) = database::directory::save_remote_account(
                                 &database,
                                 RemoteKind::MyDriveRo.name(),
                                 identity.email.as_deref(),
                                 identity.display_name.as_deref(),
                                 identity.account_id.as_deref(),
                                 &identity.raw_json,
-                            )?;
+                            ) { log::warn!("Unable to save Google account identity: {error}"); }
                             println!(
                                 "Authenticated Google account verified for remote={}",
                                 RemoteKind::MyDriveRo.name(),
@@ -1019,9 +1022,10 @@ impl AppState {
                         }
                     }
                     }
-                    if let Some(sheet_url) = directory_sheet_url.as_deref() {
+                    if selection.directory_info {
+                    run_metadata_source(&mut failures, "Persons", &database, 0, &worker_state.job_cancellation, || {
+                        let sheet_url = directory_sheet_url.as_deref().ok_or("Persons requires a configured directory spreadsheet URL")?;
                         let timing_started = Instant::now();
-                        let mut timing_complete = false;
                         worker_state.set_metadata_state(MetadataState::Updating(MetadataProgress {
                             selection,
                             phase: "Downloading directory spreadsheet".to_string(),
@@ -1051,7 +1055,6 @@ impl AppState {
                                     &csv,
                                 ) {
                                     Ok(summary) => {
-                                        timing_complete = true;
                                         log::info!(
                                             "Linked directory spreadsheet imported: spreadsheet_id={}, gid={}, rows={}, created={}, updated={}, rejected={}",
                                             location.spreadsheet_id,
@@ -1069,6 +1072,7 @@ impl AppState {
                                             sheet_url,
                                             &error.to_string(),
                                         );
+                                        return Err(error);
                                     }
                                 }
                             }
@@ -1079,15 +1083,15 @@ impl AppState {
                                     sheet_url,
                                     &error.to_string(),
                                 );
+                                return Err(error);
                             }
                         }
-                        if timing_complete {
-                            let _ = database.record_metadata_timing(
-                                "directory",
-                                timing_started.elapsed().as_secs(),
-                            );
-                        }
+                        let _ = database.record_metadata_timing("directory", timing_started.elapsed().as_secs());
+                        Ok(())
+                    });
                     }
+                    let my_drive_summary = run_metadata_source(&mut failures, "My Drive", &database, scan_id, &worker_state.job_cancellation, || {
+                        if selection.my_drive && rclone_path.as_os_str().is_empty() { return Err("Rclone is not ready".into()); }
                     let my_drive_timing = selection.my_drive.then(Instant::now);
                     let items = if selection.my_drive {
                         worker_state.set_metadata_state(MetadataState::Updating(MetadataProgress {
@@ -1144,6 +1148,10 @@ impl AppState {
                     if let Some(started) = my_drive_timing {
                         let _ = database.record_metadata_timing("my-drive", started.elapsed().as_secs());
                     }
+                        Ok(my_drive_summary)
+                    });
+                    let shared_summary = run_metadata_source(&mut failures, "Shared with me", &database, shared_scan_id, &worker_state.job_cancellation, || {
+                        if selection.shared_with_me && rclone_path.as_os_str().is_empty() { return Err("Rclone is not ready".into()); }
                     let shared_with_me_timing = selection.shared_with_me.then(Instant::now);
                     let shared_items = if selection.shared_with_me {
                     worker_state.set_metadata_state(MetadataState::Updating(MetadataProgress {
@@ -1185,16 +1193,20 @@ impl AppState {
                     if let Some(started) = shared_with_me_timing {
                         let _ = database.record_metadata_timing("shared-with-me", started.elapsed().as_secs());
                     }
+                        Ok(shared_summary)
+                    });
                     let mut shared_drives_summary = database::inventory::InventorySummary::default();
                     if selection.shared_drives || selection.specific_shared_drive {
+                    shared_drives_summary = run_metadata_source(&mut failures, "Shared Drives", &database, shared_drives_scan_id, &worker_state.job_cancellation, || {
+                    if rclone_path.as_os_str().is_empty() { return Err("Rclone is not ready".into()); }
                     let shared_drives_timing = Instant::now();
                     worker_state.set_metadata_state(MetadataState::Updating(MetadataProgress {
                         selection,
                         phase: "Discovering Shared Drives".to_string(),
-                        files_scanned: files,
-                        folders_scanned: folders,
+                        files_scanned: my_drive_summary.files_scanned,
+                        folders_scanned: my_drive_summary.folders_scanned,
                         permissions_scanned: 0,
-                        bytes_discovered: bytes,
+                        bytes_discovered: my_drive_summary.bytes_discovered,
                         errors: 0,
                     }));
                     let mut shared_drives = rclone::inventory::discover_shared_drives(
@@ -1225,6 +1237,7 @@ impl AppState {
                     let mut shared_drive_errors = 0_u64;
                     if permission_scanning {
                         for (index, drive) in shared_drives.iter().enumerate() {
+                            if worker_state.job_cancellation.load(Ordering::Acquire) { return Err("Metadata update cancelled".into()); }
                             worker_state.set_metadata_state(MetadataState::Updating(MetadataProgress {
                                 selection,
                                 phase: format!(
@@ -1242,11 +1255,12 @@ impl AppState {
                                 &drive.id,
                             ) {
                                 Ok(permissions) => {
-                                    database::inventory::record_shared_drive_permissions(
-                                        &database,
-                                        &drive.id,
-                                        &permissions,
-                                    )?;
+                                    if let Err(error) = database::inventory::record_shared_drive_permissions(
+                                        &database, &drive.id, &permissions,
+                                    ) {
+                                        shared_drive_errors += 1;
+                                        log::error!("Unable to save Shared Drive permissions: drive_id={}, error={error}", drive.id);
+                                    }
                                     log::info!(
                                         "Shared Drive membership fetched: drive_id={}, permissions={}",
                                         drive.id,
@@ -1281,7 +1295,15 @@ impl AppState {
                             "Shared Drive scan started: drive_index={}, drive_count={}, drive_id={}, name={}",
                             index + 1, shared_drives.len(), drive.id, drive.name,
                         );
-                        let drive_scan_id = database.start_scan_run(&format!("shared-drive:{}", drive.id))?;
+                        if worker_state.job_cancellation.load(Ordering::Acquire) { return Err("Metadata update cancelled".into()); }
+                        let drive_scan_id = match database.start_scan_run(&format!("shared-drive:{}", drive.id)) {
+                            Ok(id) => id,
+                            Err(error) => {
+                                shared_drive_errors += 1;
+                                log::error!("Unable to start Shared Drive scan: drive_id={}, error={error}", drive.id);
+                                continue;
+                            }
+                        };
                         let drive_result = rclone::inventory::fetch_shared_drive(
                             &worker_state.runtime, &rclone_path, drive_scan_id, &drive.id,
                             permission_scanning,
@@ -1297,9 +1319,12 @@ impl AppState {
                         });
                         match drive_result {
                             Ok(drive_summary) => {
-                                database::inventory::record_shared_drive_scan(
+                                if let Err(error) = database::inventory::record_shared_drive_scan(
                                     &database, &drive.id, &drive_summary,
-                                )?;
+                                ) {
+                                    shared_drive_errors += 1;
+                                    log::error!("Unable to record Shared Drive scan: drive_id={}, error={error}", drive.id);
+                                }
                                 shared_drives_summary.files_scanned += drive_summary.files_scanned;
                                 shared_drives_summary.folders_scanned += drive_summary.folders_scanned;
                                 shared_drives_summary.permissions_scanned += drive_summary.permissions_scanned;
@@ -1322,6 +1347,7 @@ impl AppState {
                         }
                     }
                     shared_drives_summary = database::inventory::shared_drives_aggregate(&database)?;
+                    if shared_drive_errors > 0 { return Err(format!("{shared_drive_errors} Shared Drive scan or permission update(s) failed; successful updates were saved").into()); }
                     if selection.shared_drives {
                         database.complete_scan_run(shared_drives_scan_id, &shared_drives_summary)?;
                     }
@@ -1334,8 +1360,12 @@ impl AppState {
                         timing_source,
                         shared_drives_timing.elapsed().as_secs(),
                     );
+                    Ok(shared_drives_summary.clone())
+                    });
                     }
                     if selection.github {
+                    run_metadata_source(&mut failures, "GitHub", &database, 0, &worker_state.job_cancellation, || {
+
                         let timing_started = Instant::now();
                         worker_state.set_metadata_state(MetadataState::Updating(MetadataProgress {
                             selection,
@@ -1351,8 +1381,12 @@ impl AppState {
                         database::github::synchronize(&database, &repositories)?;
                         let _ = database.record_metadata_timing("github", timing_started.elapsed().as_secs());
                         log::info!("GitHub repository metadata updated: repositories={}", repositories.len());
+                        Ok(())
+                    });
                     }
                     if selection.keeper {
+                    run_metadata_source(&mut failures, "Keeper", &database, 0, &worker_state.job_cancellation, || {
+                        if !inventory_settings.keeper_enabled || inventory_settings.keeper_command.trim().is_empty() { return Err("Keeper requires a configured Commander connection".into()); }
                         let timing_started = Instant::now();
                         worker_state.set_metadata_state(MetadataState::Updating(MetadataProgress {
                             selection,
@@ -1371,8 +1405,12 @@ impl AppState {
                         crate::database::keeper::synchronize(&database, &snapshot)?;
                         let _ = database.record_metadata_timing("keeper", timing_started.elapsed().as_secs());
                         log::info!("Keeper vault metadata updated: folders={}, records={}", snapshot.folders.len().saturating_sub(1), snapshot.records.len());
+                        Ok(())
+                    });
                     }
                     if selection.local_files {
+                    run_metadata_source(&mut failures, "Local Files", &database, 0, &worker_state.job_cancellation, || {
+                        if !inventory_settings.local_files_enabled { return Err("Local Files is not enabled in Settings".into()); }
                         let timing_started = Instant::now();
                         worker_state.set_metadata_state(MetadataState::Updating(MetadataProgress { selection, phase:"Scanning local files".to_string(), files_scanned:0, folders_scanned:0, permissions_scanned:0, bytes_discovered:0, errors:0 }));
                         let roots=crate::local_files::parse_roots(&inventory_settings.local_file_roots);
@@ -1384,8 +1422,12 @@ impl AppState {
                         crate::database::local_files::synchronize_cancellable(&database,&scan.items,&worker_state.job_cancellation)?;
                         let _ = database.record_metadata_timing("local-files", timing_started.elapsed().as_secs());
                         log::info!("Local Files metadata updated: items={}, skipped={}, errors={}",scan.items.len(),scan.skipped,scan.errors.len());
+                        Ok(())
+                    });
                     }
                     if selection.s3 {
+                    run_metadata_source(&mut failures, "S3", &database, 0, &worker_state.job_cancellation, || {
+                        if !inventory_settings.s3_enabled { return Err("S3 is not enabled in Settings".into()); } if rclone_path.as_os_str().is_empty() { return Err("Rclone is not ready".into()); }
                         let timing_started = Instant::now();
                         worker_state.set_metadata_state(MetadataState::Updating(MetadataProgress { selection, phase:"Fetching S3 object metadata".to_string(), files_scanned:0, folders_scanned:0, permissions_scanned:0, bytes_discovered:0, errors:0 }));
                         let objects = crate::s3::inventory(
@@ -1400,13 +1442,17 @@ impl AppState {
                         )?;
                         let _ = database.record_metadata_timing("s3", timing_started.elapsed().as_secs());
                         log::info!("S3 metadata updated: remote={}, objects={}", inventory_settings.s3_remote_name, objects.len());
+                        Ok(())
+                    });
                     }
-                    Ok::<_, crate::database::DatabaseError>((my_drive_summary, shared_drives_summary, shared_summary))
+                    Ok::<_, crate::database::DatabaseError>((my_drive_summary, shared_drives_summary, shared_summary, failures))
                 }).await;
 
             match result {
-                Ok(Ok((summary, shared_drives_summary, shared_summary))) => {
-                    if selection.shared_drives || selection.specific_shared_drive {
+                Ok(Ok((summary, shared_drives_summary, shared_summary, failures))) => {
+                    if (selection.shared_drives || selection.specific_shared_drive)
+                        && !shared_drives_summary.completed_at.is_empty()
+                    {
                         println!(
                             "Shared Drives update completed: scan_id={shared_drives_scan_id}, files={}, folders={}, permissions={}, bytes={}, deleted_items={}",
                             shared_drives_summary.files_scanned,
@@ -1416,7 +1462,7 @@ impl AppState {
                             shared_drives_summary.deleted_items,
                         );
                     }
-                    if selection.my_drive {
+                    if selection.my_drive && !summary.completed_at.is_empty() {
                         println!(
                             "Metadata update completed: scan_id={scan_id}, files={}, folders={}, permissions={}, bytes={}, deleted_items={}",
                             summary.files_scanned,
@@ -1426,7 +1472,7 @@ impl AppState {
                             summary.deleted_items,
                         );
                     }
-                    if selection.shared_with_me {
+                    if selection.shared_with_me && !shared_summary.completed_at.is_empty() {
                         println!(
                             "Shared with me update completed: scan_id={shared_scan_id}, files={}, folders={}, permissions={}, bytes={}, deleted_items={}",
                             shared_summary.files_scanned,
@@ -1436,7 +1482,9 @@ impl AppState {
                             shared_summary.deleted_items,
                         );
                     }
-                    if summary.completed_at.is_empty() {
+                    if !failures.is_empty() {
+                        state.set_metadata_state(MetadataState::Error(format!("Metadata update finished with failures. Successful source updates were saved.\n{}", failures.join("\n"))));
+                    } else if summary.completed_at.is_empty() {
                         state.set_metadata_state(MetadataState::NotSynchronized);
                     } else {
                         state.set_metadata_state(MetadataState::Synchronized(MetadataSummary {
@@ -1718,5 +1766,95 @@ fn remote_state(remotes: &GoogleRemotesState, kind: RemoteKind) -> &RemoteState 
     match kind {
         RemoteKind::MyDriveRw => &remotes.rw,
         RemoteKind::MyDriveRo => &remotes.ro,
+    }
+}
+
+#[cfg(test)]
+mod metadata_failure_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn failed_sources_do_not_block_later_metadata_updates() {
+        let root = std::env::temp_dir().join(format!(
+            "boreal-source-failures-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let files = root.join("files");
+        std::fs::create_dir_all(&files).unwrap();
+        std::fs::write(files.join("example.txt"), "saved metadata").unwrap();
+        let state = Arc::new(AppState::new(Runtime {
+            boreal_home: root.join("home"),
+            boreal: serde_json::json!({}),
+            directories: [
+                ("SQLITE".into(), root.join("home/sqlite")),
+                ("CONF".into(), root.join("home/conf")),
+            ]
+            .into_iter()
+            .collect(),
+        }));
+        let db = state.database().unwrap();
+        let mut settings = database::settings::load(&db).unwrap();
+        settings.keeper_enabled = false;
+        settings.local_files_enabled = true;
+        settings.local_file_roots = files.to_string_lossy().into_owned();
+        database::settings::save(&db, &settings).unwrap();
+        // Rclone isn't ready and Keeper isn't configured. Local Files must still run.
+        let selection = MetadataUpdateSelection {
+            my_drive: true,
+            shared_drives: false,
+            specific_shared_drive: false,
+            shared_with_me: false,
+            directory_info: false,
+            github: false,
+            keeper: true,
+            local_files: true,
+            s3: false,
+        };
+        AppState::start_metadata_update(Arc::clone(&state), selection, String::new()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while *state.metadata_job_active.lock().unwrap() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(database::local_files::summary(&db).unwrap().files, 1);
+        match state.metadata_state() {
+            MetadataState::Error(message) => {
+                assert!(message.contains("My Drive: Rclone is not ready"));
+                assert!(message.contains("Keeper:"));
+                assert!(!message.contains("Local Files:"));
+            }
+            other => panic!("Expected combined failure summary, got {other:?}"),
+        }
+        let status: String = db
+            .connect()
+            .unwrap()
+            .query_row(
+                "SELECT status FROM scan_runs WHERE scan_type = 'my-drive'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "error");
+        let mut failures = Vec::new();
+        let cancelled = AtomicBool::new(true);
+        run_metadata_source(
+            &mut failures,
+            "Cancelled source",
+            &db,
+            0,
+            &cancelled,
+            || -> Result<(), database::DatabaseError> {
+                panic!("cancelled sources must not run");
+            },
+        );
+        assert!(failures[0].contains("cancelled"));
+        drop(state);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
