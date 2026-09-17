@@ -17,6 +17,7 @@
                 <a class="nav-link" href="#keeper-login">Keeper sign-in</a>
                 <a class="nav-link" href="#explorers">Drive explorers</a>
                 <a class="nav-link" href="#explorer-interaction">Pages and saving tags</a>
+                <a class="nav-link" href="#notes">Item notes</a>
                 <a class="nav-link" href="#duplicates">Duplicate candidates</a>
                 <a class="nav-link" href="#tags">Tags</a>
                 <a class="nav-link" href="#persons">Persons</a>
@@ -49,6 +50,7 @@
 
         <section id="metadata" class="mb-4" data-doc-entry>
             <h2 class="h4">Update the local metadata inventory</h2>
+            <p>If one selected source fails, BOREAL continues updating the remaining sources. Successful updates are saved, and a combined error summary identifies failed sources after the run finishes. Fix those connections and select them for another update. Cancelling or quitting still stops further work.</p>
             <div class="card"><div class="card-body">
                 <p>BOREAL searches its local SQLite inventory. Use <strong>Update</strong> to refresh that inventory from Google Drive.</p>
                 <ul class="mb-0">
@@ -80,6 +82,7 @@
                 <ul class="mb-0">
                     <li>Select <strong>Keeper vault metadata</strong> from Update to import regular and shared folders, record titles and types, modification dates, attachment counts and sizes, and folder-sharing information.</li>
                     <li>Open folders to browse their records, sort by column, and add or remove local tags on folders and records. Use Export Excel or Print to PDF to export the current folder or all-folder search with its filters and sorting. A record linked into multiple folders keeps the same tags everywhere. Permissions group users under each access label, with Persons identity pills for matching email addresses and aliases. User tags filter items by the tags on their sharing identities; click a user tag to include it, click again to exclude it, and a third time to clear it. Select multiple tags to require every condition (AND).</li>
+                    <li>Click the Keeper icon beside a row’s checkbox to open that record or folder in Keeper Web Vault in a new tab. Record names also open Keeper; folder names browse inside BOREAL. Keeper requires its own sign-in and access to the item.</li>
                     <li>The helper emits only approved metadata. It excludes record fields, usernames, passwords, URLs, notes, custom-field values, TOTP seeds, keys and attachment contents.</li>
                     <li>Keeper manages authentication through its private configuration and system keyring. BOREAL needs a resumable session for background indexing.</li>
                 </ul>
@@ -109,6 +112,8 @@
                     <li>Click a folder name to browse it inside BOREAL.</li>
                     <li>Click the Google Drive icon or a file name to open the item in Google Drive.</li>
                     <li>Use column fields to filter by name, type, size, date, owner, or permission.</li>
+                    <li>Click <strong>Filters</strong> above the table to collapse or expand the filter panel. Its state is remembered in this browser; collapsing it keeps your filters active and leaves the column search fields available.</li>
+                    <li><strong>Filtered Items</strong> summarizes matching items across all pages. <strong>Current page</strong> summarizes the displayed page; selecting rows changes it to <strong>Selected items</strong>. Sizes sum the listed items, including cumulative folder sizes. Hover over a size for the exact byte count; rounded values can look the same for different selections.</li>
                     <li>Drag the right edge of a column header to adjust its width. Widths are remembered in this browser for each explorer, including after sorting, filtering, or changing tags. Use <strong>Reset widths</strong> above the table to restore the default layout. You can also Tab to a column edge and use Left/Right arrows; hold Shift for larger adjustments. Printed reports retain their default layout.</li>
                     <li>Click a hollow tag pill to require that tag. Click the solid pill again to exclude that tag; click the red “Not” pill to clear it.</li>
                     <li>Additional tags narrow results with AND: for example, <strong>Keep</strong> and <strong>Not Needs Review</strong> require Keep and exclude Needs Review. The same three-click cycle works for item and user tags in every explorer. The Any/All pill clears that tag group; Keeper calls its vault-tag reset <strong>Any Folder</strong>.</li>
@@ -125,15 +130,21 @@
         <section id="explorer-interaction" class="mb-4" data-doc-entry>
             <h2 class="h4">Pages, selection, and saving tags</h2>
             <p>Drive folder explorers, Keeper, GitHub, and Local Files show 50 entries per page by default. Choose 25, 50, 100, or 200 under <strong>Entries per page</strong>; BOREAL remembers this preference in your browser. Filters and sorting apply to all matching entries before paging. Excel exports and Drive, Keeper, and GitHub print views include all matching results.</p>
-            <p>Use the first checkbox in the table header to select the current page. When the page is selected and more matches exist, a second <strong>All Matches</strong> checkbox appears. Check it to select the filtered results across every page for tagging or migration. Uncheck it to keep only the current page selected. Changing an individual row clears All Matches. Drive folder tags also apply to descendants. All-page selection is consumed by the next tag action; refresh the saved results before selecting all pages for another bulk change.</p>
+            <p>Use the first checkbox in the table header to select the current page. When the page is selected and more matches exist, a second <strong>All Matches</strong> checkbox appears. Check it to select the filtered results across every page for tagging, or for migration in Google Drive explorers. Uncheck it to keep only the current page selected. Changing an individual row clears All Matches. Drive folder tags also apply to descendants. All-page selection is consumed by the next tag action; refresh the saved results before selecting all pages for another bulk change.</p>
             <p>Tags update immediately with a <strong>Saving…</strong> indicator while changes are sent in order. You can keep selecting and tagging on the current page. Wait for <strong>Tags saved</strong> before navigating away. Use <strong>Refresh results</strong> afterward to update tag-dependent filters, sorting, and totals without losing track of an unfinished save.</p>
             <p>If saving fails, use <strong>Retry saving</strong>. Pending changes remain only in this tab, not in browser storage. <strong>Discard pending changes and refresh</strong> reloads the saved state; earlier changes may already have reached the database. Retries expire after 24 hours. Permission lists scroll within a 200px area and expand when printed.</p>
         </section>
 
+        <section id="notes" class="mb-4" data-doc-entry>
+            <h2 class="h4">Item notes</h2>
+            <p>Every explorer has a Notes column, after Permissions or Access where available. Click <i class="bi bi-plus-lg" aria-hidden="true"></i> <strong>Add note</strong> to add a comment, or the sticky-note icon beside an existing note to edit it. Each item can have multiple notes. Use <strong>Delete note</strong> in the editor to remove an existing note.</p>
+            <p>Notes support Markdown, including bold, italics, lists, code, and links. Plain web addresses also become links and open in a new tab. Notes are saved locally in BOREAL and remain through metadata refreshes. The same item shows the same notes wherever it appears. Long note lists scroll within the column.</p>
+        </section>
+
         <section id="duplicates" class="mb-4" data-doc-entry>
             <h2 class="h4">Find duplicate candidates</h2>
-            <p>In My Drive, Shared with me, or a Shared Drive folder explorer, check <strong>Duplicate candidates (all folders in this Drive inventory)</strong> and select <strong>Apply filters</strong>. BOREAL compares live indexed entries across that inventory, including other folders. Each candidate shows its path and the number of entries with matching metadata. Choose <strong>Duplicate candidates (current folder only)</strong> to compare immediate children at the current location, including top-level entries. This option takes priority if both boxes are checked; other filters still apply.</p>
-            <p>Files match on exact, case-sensitive name, type, and known size. Folders match on exact name only. These are candidates for review, not proof of identical contents. Deleted entries and files with unknown sizes do not establish a match. Counts describe the full matching group; other active filters can hide some members. Pagination, sorting, exports, and all-matching tag selection respect the candidate filter. Opening a folder returns to normal folder browsing.</p>
+            <p>In My Drive, Shared with me, or a Shared Drive folder explorer, choose <strong>Duplicate items (top level)</strong> to compare filtered items directly in the current folder, or <strong>Duplicate items (recursive)</strong> to include that folder's descendants. At the inventory root, recursive mode searches all its folders. Top level takes priority if both options are checked. Select <strong>Apply filters</strong> to update the results.</p>
+            <p>BOREAL applies the view's filters before forming duplicate groups. Only groups with at least two matching entries remain, and copy counts include only entries within the filtered scope, across all pages. Files match on exact, case-sensitive name, type, and known size; folders match on exact name only. Deleted entries and files with unknown sizes do not establish a match. These are candidates for review, not proof of identical contents. Pagination, sorting, exports, and All Matches actions use these filtered candidates. Opening a folder returns to normal folder browsing.</p>
             <p>Local Files already provides <strong>Duplicates only</strong> based on available file checksums. Folder contents are not compared. Duplicate detection does not delete or merge items.</p>
         </section>
 
@@ -170,7 +181,7 @@
                 <h3 class="h6">Excel reports</h3>
                 <p>Apply explorer filters and click <strong>Export Excel</strong>. The workbook contains a Report Context sheet describing the filters and a Results sheet with clickable Google Drive links.</p>
                 <h3 class="h6">PDF reports</h3>
-                <p>Apply explorer filters and click <strong>Print to PDF</strong>. BOREAL opens the complete filtered report in a new tab without the explorer's scrolling limits. Click <strong>Print / Save PDF</strong> and select your browser's PDF destination. The report requests landscape legal paper and retains clickable links.</p>
+                <p>Apply explorer filters and click <strong>Print to PDF</strong>. BOREAL opens the complete filtered report in a new tab without the explorer's scrolling limits. Names, permissions, and notes wrap within page-sized columns; full notes can continue across pages. Click <strong>Print / Save PDF</strong> and select your browser's PDF destination. Printing waits for notes to load. The report requests landscape legal paper and retains clickable links.</p>
                 <h3 class="h6">Local downloads</h3>
                 <p class="mb-0">Click the download icon beside an inventory item or accessible Shared Drive, choose a local destination folder, and start the copy. Downloads are retained in <strong>Migrations</strong>, can be resumed after interruption, and never delete the source. Use the Download status item to check the active copy.</p>
             </div></div>
@@ -180,6 +191,9 @@
             <h2 class="h4">Migrate Drive content</h2>
             <div class="card"><div class="card-body">
                 <p>Select one or more active items in <strong>My Drive</strong>, <strong>Shared with me</strong>, or a <strong>Shared Drive</strong>, then click <strong>Migrate</strong>. The Migration Assistant records the source inventory and guides destination selection and copying. Shared Drive folders can be copied to another Shared Drive, a My Drive folder, or a local directory.</p>
+                <p>To migrate more than one page, select the page using the first header checkbox, then check <strong>All Matches</strong> before clicking <strong>Migrate</strong>. The plan resolves all matches using the current folder and filters. Exclude deleted items before migrating.</p>
+                <p><strong>Preparing your migration</strong> appears while BOREAL builds the plan. Large selections may take a while; wait for the assistant to open. If preparation fails, the modal closes and a red alert explains the error. If the connection was interrupted, check Migrations for an existing plan before retrying. Finish saving tags and refresh the results before making another all-matches selection.</p>
+                <p>Long lists in the Migrations table scroll within their columns to keep rows within 200px. The assistant's source list also scrolls so destination controls remain reachable.</p>
                 <ol>
                     <li>Review the selected files, folders, and estimated size.</li>
                     <li>Select a local folder, or paste and validate an allowed Google Drive destination folder URL.</li>
@@ -217,6 +231,8 @@
                     <li>You can also use <strong>App → Quit BOREAL</strong> or Ctrl-C in the terminal to stop the application gracefully. Interactive quit actions warn when active work would be interrupted.</li>
                     <li><strong>Remotes</strong> shows BOREAL’s Rclone configuration status.</li>
                     <li>BOREAL binds only to the local computer and stores its database, configuration, credentials, and logs under the user-specific BOREAL directory.</li>
+                    <li>Metadata can be sensitive: names, paths, record titles, identities, permissions, and tags can reveal private information. Protect the BOREAL home and exported reports with restricted access and encrypted storage/backups. Review and redact logs, screenshots, and exports before sharing them; never share credentials or an unredacted BOREAL database.</li>
+                    <li>The terminal prints the WebUI URL separately from Rclone setup results. Rclone becoming ready does not mean every source is connected; check <strong>App → Settings</strong> for each source's connection status.</li>
                     <li>Inventory operations use the read-only remote. Google migrations require the separate read/write remote; local tagging and reporting do not alter Google Drive content.</li>
                 </ul>
             </div></div>

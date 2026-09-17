@@ -7,6 +7,8 @@ pub struct MigrationJob {
     pub id: i64,
     pub source_kind: String,
     pub source_scope: String,
+    pub selection_url: String,
+    pub revised_from: i64,
     pub operation_kind: String,
     pub status: String,
     pub phase: String,
@@ -239,7 +241,7 @@ pub fn list(
                 files_copied, bytes_copied, exceptions_count, created_at,
                 COALESCE(started_at, ''), COALESCE(completed_at, ''), error_message,
                 COALESCE(archived_at, ''), destination_drive_id, destination_folder_id,
-                COALESCE(copy_completed_at, ''), resume_count, source_scope
+                COALESCE(copy_completed_at, ''), resume_count, source_scope, selection_url, COALESCE(revised_from,0)
          FROM migration_jobs mj
          WHERE (?1 OR mj.archived_at IS NULL)
            AND (?2 = '' OR CAST(mj.id AS TEXT) LIKE ?3 OR mj.source_kind LIKE ?3
@@ -277,7 +279,7 @@ pub fn get(database: &Database, id: i64) -> Result<Option<MigrationJob>, Databas
                     files_copied, bytes_copied, exceptions_count, created_at,
                     COALESCE(started_at, ''), COALESCE(completed_at, ''), error_message
                     , COALESCE(archived_at, ''), destination_drive_id, destination_folder_id,
-                    COALESCE(copy_completed_at, ''), resume_count, source_scope
+                    COALESCE(copy_completed_at, ''), resume_count, source_scope, selection_url, COALESCE(revised_from,0)
              FROM migration_jobs WHERE id = ?1",
             [id],
             job_from_row,
@@ -320,7 +322,7 @@ pub fn cancel(database: &Database, id: i64) -> Result<(), DatabaseError> {
     let connection = database.connect()?;
     let changed = connection.execute(
         "DELETE FROM migration_jobs
-         WHERE id = ?1 AND started_at IS NULL AND status IN ('draft', 'ready')",
+         WHERE id = ?1 AND started_at IS NULL AND archived_at IS NULL AND status IN ('draft', 'ready')",
         [id],
     )?;
     if changed == 0 {
@@ -507,7 +509,7 @@ pub fn set_destination(
             destination_drive_name = ?4, destination_folder_id = ?5,
             destination_folder_name = ?6, status = 'ready', phase = 'Ready for copy authorization',
             updated_at = CURRENT_TIMESTAMP, error_message = ''
-         WHERE id = ?1 AND started_at IS NULL AND status IN ('draft', 'ready')",
+         WHERE id = ?1 AND started_at IS NULL AND archived_at IS NULL AND status IN ('draft', 'ready')",
         params![id, url, drive_id, drive_name, folder_id, folder_name],
     )?;
     if changed == 0 {
@@ -527,7 +529,7 @@ pub fn set_local_destination(
              destination_drive_name = 'Local folder', destination_folder_id = '',
              destination_folder_name = ?2, status = 'ready', phase = 'Ready to download',
              updated_at = CURRENT_TIMESTAMP, error_message = ''
-         WHERE id = ?1 AND started_at IS NULL AND status IN ('draft', 'ready')",
+         WHERE id = ?1 AND source_kind <> 'local-files' AND started_at IS NULL AND archived_at IS NULL AND status IN ('draft', 'ready')",
         params![id, destination_path],
     )?;
     if changed == 0 {
@@ -579,6 +581,8 @@ fn job_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MigrationJob> {
         id: row.get(0)?,
         source_kind: row.get(1)?,
         source_scope: row.get(25)?,
+        selection_url: row.get(26)?,
+        revised_from: row.get(27)?,
         operation_kind: row.get(2)?,
         status: row.get(3)?,
         phase: row.get(4)?,
@@ -604,4 +608,58 @@ fn job_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MigrationJob> {
         resume_count: row.get::<_, i64>(24)? as u64,
         sources: Vec::new(),
     })
+}
+
+/// Keep the original plan and create a revised selection before copying starts.
+pub fn revise_selection(
+    database: &Database,
+    id: i64,
+    removed: &[String],
+) -> Result<i64, DatabaseError> {
+    if removed.is_empty() {
+        return Err("Uncheck at least one item to revise the selection".into());
+    }
+    let mut c = database.connect()?;
+    let tx = c.transaction()?;
+    let editable:bool=tx.query_row("SELECT started_at IS NULL AND archived_at IS NULL AND status IN ('draft','ready') FROM migration_jobs WHERE id=?1",[id],|r|r.get(0))?;
+    if !editable {
+        return Err("Only an unstarted migration can have its selection revised".into());
+    }
+    let old = load_sources(&tx, id)?;
+    let remove: std::collections::HashSet<_> = removed.iter().collect();
+    if remove
+        .iter()
+        .any(|id| !old.iter().any(|s| &s.item_id == *id))
+    {
+        return Err("The selection changed; reload the migration".into());
+    }
+    let keep: Vec<_> = old
+        .iter()
+        .filter(|s| !remove.contains(&s.item_id))
+        .collect();
+    if keep.is_empty() {
+        return Err("Keep at least one source item".into());
+    }
+    let mut names = std::collections::HashSet::new();
+    if keep.iter().any(|s| !names.insert(&s.name)) {
+        return Err("Some selected items still share a destination name. Keep one item from each highlighted group.".into());
+    }
+    tx.execute("INSERT INTO migration_jobs(source_scope,source_kind,operation_kind,status,phase,destination_kind,destination_url,destination_path,destination_drive_id,destination_drive_name,destination_folder_id,destination_folder_name,selection_url,revised_from) SELECT source_scope,source_kind,operation_kind,CASE WHEN destination_folder_name<>'' THEN 'ready' ELSE 'draft' END,'Selection revised; review destination',destination_kind,destination_url,destination_path,destination_drive_id,destination_drive_name,destination_folder_id,destination_folder_name,selection_url,id FROM migration_jobs WHERE id=?1",[id])?;
+    let new_id = tx.last_insert_rowid();
+    for source in keep {
+        tx.execute("INSERT INTO migration_sources(migration_id,item_id,name,relative_path,is_directory,files_total,folders_total,bytes_total) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![new_id,source.item_id,source.name,source.relative_path,source.is_directory,source.files_total as i64,source.folders_total as i64,source.bytes_total as i64])?;
+        tx.execute("INSERT INTO local_migration_entries SELECT ?1,source_id,root_path,relative_path,is_directory,size_bytes FROM local_migration_entries WHERE migration_id=?2 AND source_id=?3",params![new_id,id,source.item_id])?;
+    }
+    tx.execute("UPDATE migration_jobs SET (files_total,folders_total,bytes_total)=(SELECT SUM(files_total),SUM(folders_total),SUM(bytes_total) FROM migration_sources WHERE migration_id=?1) WHERE id=?1",[new_id])?;
+    tx.execute("UPDATE migration_jobs SET archived_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?1",[id])?;
+    tx.commit()?;
+    Ok(new_id)
+}
+
+pub fn save_selection_url(database: &Database, id: i64, url: &str) -> Result<(), DatabaseError> {
+    database.connect()?.execute(
+        "UPDATE migration_jobs SET selection_url=?2 WHERE id=?1",
+        params![id, url],
+    )?;
+    Ok(())
 }

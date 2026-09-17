@@ -14,7 +14,7 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Item {
     pub root_path: String,
     pub relative_path: String,
@@ -23,6 +23,10 @@ pub struct Item {
     pub is_directory: bool,
     pub size_bytes: u64,
     pub modified_unix: i64,
+    #[serde(default)]
+    pub modified_nanos: Option<u32>,
+    #[serde(default)]
+    pub file_identity: String,
     pub checksum_sha256: String,
     pub is_symlink: bool,
     pub symlink_target: String,
@@ -53,7 +57,7 @@ pub struct ScanResult {
 
 pub fn scan(
     options: &ScanOptions,
-    cached: &HashMap<(String, String), (u64, i64, String)>,
+    cached: &HashMap<(String, String), (u64, i64, Option<u32>, String)>,
 ) -> ScanResult {
     let mut result = parallel_walk(options);
     if result.cancelled {
@@ -78,8 +82,12 @@ pub fn scan(
             continue;
         }
         let key = (item.root_path.clone(), item.relative_path.clone());
-        if let Some((size, mtime, hash)) = cached.get(&key) {
-            if *size == item.size_bytes && *mtime == item.modified_unix && !hash.is_empty() {
+        if let Some((size, mtime, nanos, hash)) = cached.get(&key) {
+            if *size == item.size_bytes
+                && *mtime == item.modified_unix
+                && *nanos == item.modified_nanos
+                && !hash.is_empty()
+            {
                 item.checksum_sha256 = hash.clone();
                 continue;
             }
@@ -220,7 +228,17 @@ fn read_directory(
             return batch;
         }
     };
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                batch
+                    .errors
+                    .push(format!("{}: {error}", task.directory.display()));
+                batch.skipped += 1;
+                continue;
+            }
+        };
         if cancellation_requested(options) {
             batch.cancelled = true;
             break;
@@ -275,6 +293,12 @@ fn read_directory(
                 metadata.len()
             },
             modified_unix,
+            modified_nanos: metadata
+                .modified()
+                .ok()
+                .and_then(|v| v.duration_since(UNIX_EPOCH).ok())
+                .map(|v| v.subsec_nanos()),
+            file_identity: file_identity(&metadata),
             checksum_sha256: String::new(),
             is_symlink,
             symlink_target,
@@ -298,6 +322,23 @@ fn cancellation_requested(options: &ScanOptions) -> bool {
         .cancellation
         .as_ref()
         .is_some_and(|cancellation| cancellation.load(Ordering::Acquire))
+}
+
+#[cfg(unix)]
+fn file_identity(metadata: &fs::Metadata) -> String {
+    use std::os::unix::fs::MetadataExt;
+    let birth = metadata
+        .created()
+        .ok()
+        .and_then(|v| v.duration_since(UNIX_EPOCH).ok())
+        .map(|v| v.as_nanos().to_string())
+        .unwrap_or_default();
+    format!("{}:{}:{birth}", metadata.dev(), metadata.ino())
+}
+
+#[cfg(not(unix))]
+fn file_identity(_metadata: &fs::Metadata) -> String {
+    String::new()
 }
 
 fn accumulate_folder_sizes(items: &mut [Item]) {
@@ -645,6 +686,98 @@ mod tests {
         assert_eq!(size("reports/annual"), 6);
         assert_eq!(size("reports"), 10);
         fs::remove_dir_all(parent).expect("test directory should be removable");
+    }
+
+    #[test]
+    fn indexed_totals_respect_exclusions_and_subsecond_edits_refresh_checksums() {
+        let root = std::env::temp_dir().join(format!(
+            "boreal-scan-history-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("folder/nested")).unwrap();
+        fs::write(root.join("folder/a"), b"aaaa").unwrap();
+        fs::write(root.join("folder/nested/b"), b"bbbb").unwrap();
+        fs::write(root.join("folder/.hidden"), b"excluded").unwrap();
+        let a = root.join("folder/a");
+        let set_time = |nanos| {
+            fs::File::open(&a)
+                .unwrap()
+                .set_times(
+                    fs::FileTimes::new()
+                        .set_modified(UNIX_EPOCH + std::time::Duration::new(1_700_000_000, nanos)),
+                )
+                .unwrap()
+        };
+        set_time(100);
+        let options = ScanOptions {
+            roots: vec![root.clone()],
+            exclude_hidden: true,
+            exclude_caches: true,
+            exclude_temporary: true,
+            exclude_patterns: vec![],
+            boreal_home: root.join("boreal-home"),
+            cancellation: None,
+        };
+        let before = scan(&options, &HashMap::new());
+        assert!(before.errors.is_empty());
+        assert_eq!(
+            before
+                .items
+                .iter()
+                .find(|i| i.relative_path == "folder")
+                .unwrap()
+                .size_bytes,
+            8
+        );
+        let cache = before
+            .items
+            .iter()
+            .map(|i| {
+                (
+                    (i.root_path.clone(), i.relative_path.clone()),
+                    (
+                        i.size_bytes,
+                        i.modified_unix,
+                        i.modified_nanos,
+                        i.checksum_sha256.clone(),
+                    ),
+                )
+            })
+            .collect();
+        fs::write(&a, b"cccc").unwrap();
+        set_time(200);
+        fs::rename(
+            root.join("folder/nested/b"),
+            root.join("folder/nested/renamed"),
+        )
+        .unwrap();
+        let after = scan(&options, &cache);
+        assert!(after.errors.is_empty());
+        let old = before
+            .items
+            .iter()
+            .find(|i| i.relative_path == "folder/a")
+            .unwrap();
+        let new = after
+            .items
+            .iter()
+            .find(|i| i.relative_path == "folder/a")
+            .unwrap();
+        assert_eq!(old.modified_unix, new.modified_unix);
+        assert_ne!(old.checksum_sha256, new.checksum_sha256);
+        let changes = crate::database::local_file_history::diff(before.items, after.items, true);
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.kind == "Changed" && c.detail.contains("Content checksum"))
+        );
+        #[cfg(unix)]
+        assert!(changes.iter().any(|c| c.kind == "Moved"));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TARGETS=(
-    "x86_64-unknown-linux-gnu"
-    "aarch64-unknown-linux-gnu"
-    "armv7-unknown-linux-gnueabihf"
-    "x86_64-pc-windows-gnu"
-    "x86_64-apple-darwin"
-    "aarch64-apple-darwin"
-)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=lib/linux-build-deps.sh
+source "$SCRIPT_DIR/lib/linux-build-deps.sh"
+
+NATIVE_ONLY=false
+case "${1:-}" in
+    --native-only) NATIVE_ONLY=true ;;
+    --help|-h) echo "Usage: $0 [--native-only]"; echo "Set up Debian/Ubuntu or RHEL-family build tools for enabled metadata.json targets."; exit 0 ;;
+    '') ;;
+    *) echo "ERROR: Unknown option: $1" >&2; exit 1 ;;
+esac
+if (( $# > 1 )); then echo "ERROR: Too many arguments." >&2; exit 1; fi
 
 echo "==> BOREAL Linux build environment setup"
 
@@ -42,10 +47,15 @@ if [[ "$(uname -s)" != "Linux" ]]; then
     exit 1
 fi
 
-if ! command -v apt >/dev/null 2>&1; then
-    echo "ERROR: This setup script currently supports Debian/Ubuntu systems using apt."
-    exit 1
-fi
+detect_linux_family
+for required in sudo "$PACKAGE_MANAGER"; do
+    if ! command -v "$required" >/dev/null 2>&1; then
+        echo "ERROR: $required is required on $LINUX_NAME. Install it before running setup." >&2
+        exit 1
+    fi
+done
+HOST_TARGET=$(linux_host_target)
+echo "==> Distribution: $LINUX_NAME ($PACKAGE_MANAGER)"
 
 #
 # BOREAL uses a per-user Rust environment.
@@ -85,7 +95,7 @@ configure_bashrc() {
     echo "------------------------------------------------------------"
     echo
 
-    read -r -p "Update ${bashrc} to use the per-user Rust environment? [y/N] " answer
+    read -r -p "Update ${bashrc} to use the per-user Rust environment? [y/N] " answer || answer=N
 
     case "${answer}" in
         y|Y|yes|YES|Yes)
@@ -145,16 +155,19 @@ echo "    RUSTUP_HOME: ${RUSTUP_HOME}"
 echo
 echo "==> Installing system build dependencies"
 
-sudo apt update
-
-sudo apt install -y \
-    build-essential \
-    pkg-config \
-    curl \
-    jq \
-    gcc-mingw-w64-x86-64 \
-    gcc-aarch64-linux-gnu \
-    gcc-arm-linux-gnueabihf
+install_native_dependencies
+if $NATIVE_ONLY; then
+    TARGETS=("$HOST_TARGET")
+else
+    read_linux_build_targets "$PROJECT_ROOT/metadata.json"
+fi
+verify_target_compiler "$HOST_TARGET" "$HOST_TARGET"
+for target in "${TARGETS[@]}"; do
+    install_target_compiler "$target" "$HOST_TARGET"
+    if [[ "$target" != "$HOST_TARGET" ]]; then
+        verify_target_compiler "$target" "$HOST_TARGET"
+    fi
+done
 
 echo
 echo "==> Checking user Rust installation"
@@ -255,7 +268,7 @@ done
 configure_bashrc
 
 echo
-echo "==> Build environment ready"
+echo "==> Build environment ready for native builds and the selected targets"
 echo
 
 echo "Rust environment:"

@@ -340,6 +340,11 @@ pub struct MigrationView {
     pub running: bool,
     pub allows_my_drive_destination: bool,
     pub allows_google_destination: bool,
+    pub local_source: bool,
+    pub can_edit_selection: bool,
+    pub name_conflicts: usize,
+    pub selection_url: String,
+    pub revised_from: i64,
     pub sources: Vec<MigrationSourceView>,
 }
 
@@ -355,6 +360,7 @@ pub struct MigrationSourceView {
     pub status: String,
     pub error_message: String,
     pub drive_url: String,
+    pub conflicting_name: bool,
 }
 
 #[allow(dead_code)]
@@ -706,11 +712,19 @@ fn keeper_entry_view(record: database::keeper::EntryRow) -> KeeperEntryView {
         }
     }
     KeeperEntryView {
-        vault_url: if record.is_folder || record.uid.is_empty() {
-            String::new()
+        vault_url: if record.uid.is_empty() {
+            "https://keepersecurity.com/vault/".into()
         } else {
+            // Formats used by Keeper Web Vault's record and folder link controls.
+            let route = if !record.is_folder {
+                "detail"
+            } else if record.item_type == "shared_folder" {
+                "shared_folder"
+            } else {
+                "folder"
+            };
             format!(
-                "https://keepersecurity.com/vault/#detail/{}",
+                "https://keepersecurity.com/vault/#{route}/{}",
                 url_encode_component(&record.uid)
             )
         },
@@ -1566,6 +1580,8 @@ struct SelectedMetadataUpdateForm {
 #[derive(serde::Deserialize)]
 struct NewMigrationForm {
     #[serde(default)]
+    source_url: String,
+    #[serde(default)]
     selected_item_ids: String,
     #[serde(default)]
     inventory_scope: String,
@@ -1646,6 +1662,9 @@ struct MigrationListQuery {
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(index))
+        .route("/notes/list", post(super::notes::list))
+        .route("/notes/save", post(super::notes::save))
+        .route("/notes/delete", post(super::notes::delete))
         .route("/about", get(about))
         .route("/update", get(update_page).post(check_for_updates))
         .route("/docs", get(docs_page))
@@ -1715,7 +1734,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/ui/keeper-primary-nav", get(ui_keeper_primary_nav))
         .route("/ui/keeper-launcher", get(ui_keeper_launcher))
         .route("/local-files", get(local_files_page))
+        .route("/local-files/changes", get(local_file_changes_page))
         .route("/local-files/tags", post(apply_local_file_tag))
+        .route("/local-files/migrate", post(create_local_migration))
         .route("/local-files/tags/remove", post(remove_local_file_tag))
         .route("/local-files/owners", post(associate_local_file_owner))
         .route(
@@ -1730,6 +1751,11 @@ pub fn router() -> Router<Arc<AppState>> {
             post(create_shared_drive_download_migration),
         )
         .route("/migrations/{migration_id}", get(migration_wizard))
+        .route(
+            "/migrations/{migration_id}/selection",
+            post(revise_migration_selection),
+        )
+        .route("/drive-history", get(drive_history_page))
         .route("/migrations/{migration_id}/cancel", post(cancel_migration))
         .route(
             "/migrations/{migration_id}/archive",
@@ -3357,6 +3383,8 @@ fn create_migration_plan(
         operation_kind,
     )
     .map_err(|error| error.to_string())?;
+    let url = validated_selection_url(&form.source_url, &form.inventory_scope);
+    database::migration::save_selection_url(database, id, &url).map_err(|e| e.to_string())?;
     log::info!(
         "Migration plan created: migration_id={id}, source_kind={source_kind}, sources={}",
         item_ids.len()
@@ -3402,6 +3430,195 @@ async fn create_shared_drive_download_migration(
     Ok(Redirect::to(&format!("/migrations/{id}")))
 }
 
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+struct DriveHistoryQuery {
+    scope: String,
+    q: String,
+    state: String,
+    item: String,
+    #[serde(flatten)]
+    pagination: PageQuery,
+}
+
+#[derive(Template)]
+#[template(path = "drive-history.html", config = "askama.toml")]
+struct DriveHistoryTemplate {
+    navigation: Navigation,
+    title: &'static str,
+    active_page: &'static str,
+    alerts: Vec<AlertItem>,
+    status_items: Vec<StatusItem>,
+    poll_rclone: bool,
+    query: DriveHistoryQuery,
+    records: Vec<database::drive_history::Record>,
+    versions: Vec<database::drive_history::Version>,
+    pagination: PageView,
+    explorer_url: String,
+}
+
+async fn drive_history_page(
+    State(state): State<Arc<AppState>>,
+    Query(mut query): Query<DriveHistoryQuery>,
+) -> Result<Html<String>, StatusCode> {
+    tokio::task::spawn_blocking(move || {
+        if query.scope.is_empty() {
+            query.scope = database::inventory::SHARED_WITH_ME_SCOPE.into();
+        }
+        let explorer_url = drive_scope_explorer_url(&query.scope).ok_or(StatusCode::BAD_REQUEST)?;
+        let database = state
+            .database()
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        let size = query.pagination.size();
+        let (mut records, total) = database::drive_history::list(
+            &database,
+            &query.scope,
+            &query.q,
+            query.state != "all" && query.item.is_empty(),
+            &query.item,
+            query.pagination.page.saturating_sub(1).saturating_mul(size),
+            size,
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let (mut versions, version_total) = if query.item.is_empty() {
+            (vec![], 0)
+        } else {
+            database::drive_history::versions(
+                &database,
+                &query.scope,
+                &query.item,
+                query.pagination.page.saturating_sub(1).saturating_mul(size),
+                size,
+            )
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        };
+        if !query.item.is_empty() && records.is_empty() {
+            records = database::drive_history::list(
+                &database,
+                &query.scope,
+                "",
+                false,
+                &query.item,
+                0,
+                1,
+            )
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .0;
+        }
+        for record in &mut records {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&record.metadata) {
+                record.metadata = serde_json::to_string_pretty(&value).unwrap_or_default();
+            }
+        }
+        for version in &mut versions {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&version.metadata) {
+                version.metadata = serde_json::to_string_pretty(&value).unwrap_or_default();
+            }
+        }
+        let pagination = query.pagination.view(if query.item.is_empty() {
+            total
+        } else {
+            version_total
+        });
+        let rclone_state = state.rclone_state();
+        let google_client_state = state.google_client_state();
+        let google_remotes_state = state.google_remotes_state();
+        let metadata_state = state.metadata_state();
+        render_template(&DriveHistoryTemplate {
+            navigation: navigation(&state),
+            title: "Drive history - BOREAL",
+            active_page: match query.scope.as_str() {
+                database::inventory::MY_DRIVE_SCOPE => "my-drive",
+                database::inventory::SHARED_WITH_ME_SCOPE => "shared-with-me",
+                _ => "shared-drives",
+            },
+            alerts: build_alerts(
+                &rclone_state,
+                &google_client_state,
+                bookmark_reminder_visible(&state),
+            ),
+            status_items: build_status_items(
+                &state,
+                &rclone_state,
+                &google_client_state,
+                &google_remotes_state,
+                &metadata_state,
+                configured_remote_count(&state.runtime, &rclone_state),
+                authenticated_google_email(&state),
+                &state.update_state(),
+            ),
+            poll_rclone: should_poll_ui(&rclone_state, &google_remotes_state, &metadata_state),
+            query,
+            records,
+            versions,
+            pagination,
+            explorer_url,
+        })
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+}
+
+fn drive_scope_explorer_url(scope: &str) -> Option<String> {
+    match scope {
+        database::inventory::MY_DRIVE_SCOPE => Some("/my-drive".into()),
+        database::inventory::SHARED_WITH_ME_SCOPE => Some("/shared-with-me".into()),
+        _ => scope
+            .strip_prefix(database::inventory::SHARED_DRIVE_SCOPE_PREFIX)
+            .filter(|id| {
+                !id.is_empty()
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            })
+            .map(|id| format!("/shared-drives?drive={id}")),
+    }
+}
+
+fn validated_selection_url(url: &str, scope: &str) -> String {
+    let base = if scope == "local-files" {
+        "/local-files".to_string()
+    } else {
+        drive_scope_explorer_url(scope).unwrap_or_else(|| "/my-drive".into())
+    };
+    if url.len() <= 16000
+        && !url.contains(['\r', '\n', '\\'])
+        && url.split('?').next() == base.split('?').next()
+    {
+        url.to_string()
+    } else {
+        base
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ReviseSelectionForm {
+    remove_item_ids: String,
+}
+
+async fn revise_migration_selection(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Form(form): Form<ReviseSelectionForm>,
+) -> Result<Response<Body>, StatusCode> {
+    let database = state
+        .database()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let removed = serde_json::from_str::<Vec<String>>(&form.remove_item_ids)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let result = tokio::task::spawn_blocking(move || {
+        database::migration::revise_selection(&database, id, &removed)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    match result {
+        Ok(new_id) => Ok(Redirect::to(&format!("/migrations/{new_id}")).into_response()),
+        Err(error) => {
+            render_migration_wizard(&state, id, error.to_string()).map(IntoResponse::into_response)
+        }
+    }
+}
+
 async fn migration_wizard(
     State(state): State<Arc<AppState>>,
     Path(migration_id): Path<i64>,
@@ -3433,9 +3650,11 @@ async fn save_migration_destination(
                 return Err(format!("Rclone is not ready: {error}"));
             }
         };
+        let local_upload = job.source_kind == "local-files";
         let probe_state = Arc::clone(&state);
         let probe_folder_id = folder_id.clone();
         let destination = tokio::task::spawn_blocking(move || {
+            if local_upload { return rclone::migration::validate_upload_destination(&probe_state.runtime, &executable, &probe_folder_id); }
             rclone::migration::validate_destination(
                 &probe_state.runtime,
                 &executable,
@@ -3447,7 +3666,7 @@ async fn save_migration_destination(
         .map_err(|error| format!("Destination validation task failed: {error}"))?
         .map_err(|error| error.to_string())?;
 
-        if job.sources.iter().any(|source| source.is_directory && destination.folders.iter().any(|folder| folder.id == source.item_id)) {
+        if job.source_kind != "local-files" && job.sources.iter().any(|source| source.is_directory && destination.folders.iter().any(|folder| folder.id == source.item_id)) {
             return Err("Choose a destination outside the selected source folders; a folder cannot be copied into itself or its descendants.".into());
         }
         let local_destination = database::migration::resolve_destination(&database, &folder_id)
@@ -3685,21 +3904,38 @@ fn render_migration_wizard(
 }
 
 fn migration_view(job: database::migration::MigrationJob) -> MigrationView {
-    let can_cancel = job.started_at.is_empty() && matches!(job.status.as_str(), "draft" | "ready");
+    let can_cancel = job.started_at.is_empty()
+        && job.archived_at.is_empty()
+        && matches!(job.status.as_str(), "draft" | "ready");
     let can_archive =
         !matches!(job.status.as_str(), "preflight" | "running") && job.archived_at.is_empty();
-    let can_start = job.status == "ready" && job.started_at.is_empty();
+    let can_start =
+        job.status == "ready" && job.started_at.is_empty() && job.archived_at.is_empty();
     let can_resume = matches!(job.status.as_str(), "interrupted" | "error" | "copied")
         && job.archived_at.is_empty();
     let running = matches!(job.status.as_str(), "preflight" | "running");
-    let allows_my_drive_destination =
-        matches!(job.source_kind.as_str(), "shared-with-me" | "shared-drive");
+    let allows_my_drive_destination = matches!(
+        job.source_kind.as_str(),
+        "shared-with-me" | "shared-drive" | "local-files"
+    );
     let allows_google_destination = true;
+    let local_source = job.source_kind == "local-files";
+    let mut names = HashMap::new();
+    for source in &job.sources {
+        *names.entry(source.name.clone()).or_insert(0usize) += 1;
+    }
+    let name_conflicts = job.sources.iter().filter(|s| names[&s.name] > 1).count();
+    let can_edit_selection = job.started_at.is_empty()
+        && job.archived_at.is_empty()
+        && matches!(job.status.as_str(), "draft" | "ready");
     let sources = job
         .sources
         .into_iter()
         .map(|source| MigrationSourceView {
-            drive_url: if source.is_directory {
+            conflicting_name: names[&source.name] > 1,
+            drive_url: if local_source {
+                String::new()
+            } else if source.is_directory {
                 format!("https://drive.google.com/drive/folders/{}", source.item_id)
             } else {
                 format!("https://drive.google.com/open?id={}", source.item_id)
@@ -3718,6 +3954,7 @@ fn migration_view(job: database::migration::MigrationJob) -> MigrationView {
     MigrationView {
         id: job.id,
         source_label: match job.source_kind.as_str() {
+            "local-files" => "Local Files".into(),
             "my-drive" => "My Drive".into(),
             "shared-drive" => "Shared Drive".into(),
             _ => "Shared with Me".into(),
@@ -3769,6 +4006,11 @@ fn migration_view(job: database::migration::MigrationJob) -> MigrationView {
         running,
         allows_my_drive_destination,
         allows_google_destination,
+        local_source,
+        can_edit_selection,
+        name_conflicts,
+        selection_url: job.selection_url,
+        revised_from: job.revised_from,
         sources,
     }
 }
@@ -4794,9 +5036,9 @@ fn render_drive_explorer(
     filter_tags.push(no_tags_filter_pill(&query.tag));
     filter_tags.push(TagFilterPill {
         slug: database::inventory::DELETED_TAG_FILTER.to_string(),
-        name: "Deleted".to_string(),
+        name: "No longer seen".to_string(),
         description:
-            "Items no longer present in Google Drive but retained in BOREAL's local inventory."
+            "Items missing from the latest index, including removed, unshared, or inaccessible items. Their records remain in BOREAL."
                 .to_string(),
         color: "#6c757d".to_string(),
         text_color: "#ffffff",
@@ -5859,9 +6101,283 @@ fn local_files_primary_navigation(enabled: bool) -> Html<String> {
     }
 }
 
+#[derive(Template)]
+#[template(path = "local-file-changes.html", config = "askama.toml")]
+struct LocalFileChangesTemplate {
+    navigation: Navigation,
+    title: &'static str,
+    active_page: &'static str,
+    alerts: Vec<AlertItem>,
+    status_items: Vec<StatusItem>,
+    poll_rclone: bool,
+    snapshots: Vec<database::local_file_history::Snapshot>,
+    query: LocalChangesQuery,
+    pagination: PageView,
+    changes: Vec<LocalChangeView>,
+    scope_changed: bool,
+    ready: bool,
+    counts: String,
+}
+
+#[derive(Default, serde::Deserialize)]
+#[serde(default)]
+struct LocalChangesQuery {
+    before: i64,
+    after: i64,
+    q: String,
+    kind: String,
+    #[serde(flatten)]
+    pagination: PageQuery,
+}
+
+struct LocalChangeView {
+    kind: &'static str,
+    color: &'static str,
+    before: LocalChangeSide,
+    after: LocalChangeSide,
+    detail: String,
+}
+
+#[derive(Default)]
+struct LocalChangeSide {
+    path: String,
+    metadata: String,
+}
+
+fn local_change_side(item: Option<crate::local_files::Item>) -> LocalChangeSide {
+    let Some(item) = item else {
+        return LocalChangeSide::default();
+    };
+    let kind = if item.is_symlink {
+        "Symlink"
+    } else if item.is_directory {
+        "Folder"
+    } else {
+        "File"
+    };
+    let metadata = format!(
+        "{kind} · {} bytes indexed\nModified: {} (local time)\nOwner: {} ({}) · Group: {} ({}){}{}",
+        item.size_bytes,
+        match item.modified_nanos {
+            Some(nanos) => format!(
+                "{}.{nanos:09}",
+                database::local_files::format_unix(item.modified_unix)
+            ),
+            None => database::local_files::format_unix(item.modified_unix),
+        },
+        item.owner_username,
+        item.owner_identifier,
+        item.group_name,
+        item.group_identifier,
+        if item.symlink_target.is_empty() {
+            String::new()
+        } else {
+            format!("\nTarget: {}", item.symlink_target)
+        },
+        if item.checksum_sha256.is_empty() {
+            String::new()
+        } else {
+            format!("\nSHA-256: {}", item.checksum_sha256)
+        }
+    );
+    LocalChangeSide {
+        path: std::path::Path::new(&item.root_path)
+            .join(&item.relative_path)
+            .to_string_lossy()
+            .into_owned(),
+        metadata,
+    }
+}
+
+async fn local_file_changes_page(
+    State(state): State<Arc<AppState>>,
+    Query(mut query): Query<LocalChangesQuery>,
+) -> Result<Html<String>, StatusCode> {
+    if !local_files_enabled(&state) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let database = state
+        .database()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let snapshots = database::local_file_history::snapshots(&database)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if query.after == 0 {
+        query.after = snapshots.first().map_or(0, |s| s.id);
+    }
+    if query.before == 0 {
+        query.before = snapshots
+            .iter()
+            .find(|s| s.id < query.after)
+            .map_or(0, |s| s.id);
+    }
+    let before = snapshots.iter().find(|s| s.id == query.before);
+    let after = snapshots.iter().find(|s| s.id == query.after);
+    if (query.before != 0 && before.is_none())
+        || (query.after != 0 && after.is_none())
+        || (query.before > 0 && query.before >= query.after)
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let ready = before.is_some() && after.is_some();
+    let scope_changed = ready && before.unwrap().scope != after.unwrap().scope;
+    let mut changes = if ready {
+        database::local_file_history::compare(&database, query.before, query.after, !scope_changed)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    } else {
+        Vec::new()
+    };
+    let counts = ["Added", "Changed", "Deleted", "Moved", "Removed from index"]
+        .iter()
+        .map(|kind| {
+            format!(
+                "{} {}",
+                changes.iter().filter(|c| c.kind == *kind).count(),
+                kind.to_lowercase()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let search = query.q.to_lowercase();
+    changes.retain(|c| {
+        (query.kind.is_empty() || c.kind == query.kind)
+            && (search.is_empty()
+                || [&c.before, &c.after].iter().any(|side| {
+                    side.as_ref().is_some_and(|i| {
+                        format!("{}/{}", i.root_path, i.relative_path)
+                            .to_lowercase()
+                            .contains(&search)
+                    })
+                }))
+    });
+    let pagination = query.pagination.view(changes.len());
+    let changes = changes
+        .into_iter()
+        .skip((pagination.page - 1) * pagination.size)
+        .take(pagination.size)
+        .map(|c| LocalChangeView {
+            kind: c.kind,
+            color: match c.kind {
+                "Added" => "success",
+                "Deleted" | "Removed from index" => "danger",
+                "Moved" => "primary",
+                _ => "warning",
+            },
+            before: local_change_side(c.before),
+            after: local_change_side(c.after),
+            detail: c.detail,
+        })
+        .collect();
+    let rclone_state = state.rclone_state();
+    let google_client_state = state.google_client_state();
+    let google_remotes_state = state.google_remotes_state();
+    let metadata_state = state.metadata_state();
+    render_template(&LocalFileChangesTemplate {
+        navigation: navigation(&state),
+        title: "Compare Local Files updates - BOREAL",
+        active_page: "local-files",
+        alerts: build_alerts(
+            &rclone_state,
+            &google_client_state,
+            bookmark_reminder_visible(&state),
+        ),
+        status_items: build_status_items(
+            &state,
+            &rclone_state,
+            &google_client_state,
+            &google_remotes_state,
+            &metadata_state,
+            configured_remote_count(&state.runtime, &rclone_state),
+            authenticated_google_email(&state),
+            &state.update_state(),
+        ),
+        poll_rclone: should_poll_ui(&rclone_state, &google_remotes_state, &metadata_state),
+        snapshots,
+        query,
+        pagination,
+        changes,
+        scope_changed,
+        ready,
+        counts,
+    })
+}
+
+async fn create_local_migration(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<LocalMigrationForm>,
+) -> Result<Response<Body>, (StatusCode, String)> {
+    let background = form.background;
+    let id = tokio::task::spawn_blocking(move || {
+        if !local_files_enabled(&state) {
+            return Err("Local Files is not enabled".to_string());
+        }
+        let database = state.database().map_err(|e| e.to_string())?;
+        let ids = if form.all_matching {
+            local_explorer_roots(&database, &form.query, false)
+                .map_err(|_| "Unable to resolve the local selection".to_string())?
+                .0
+                .into_iter()
+                .flat_map(|root| root.items.into_iter().map(|i| i.id))
+                .collect()
+        } else {
+            comma_separated_values(&form.selected_item_ids)
+                .iter()
+                .map(|id| {
+                    id.parse::<i64>()
+                        .map_err(|_| "Invalid local selection".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let id = database::local_migration::create(&database, &ids).map_err(|e| e.to_string())?;
+        database::migration::save_selection_url(
+            &database,
+            id,
+            &validated_selection_url(&form.source_url, "local-files"),
+        )
+        .map_err(|e| e.to_string())?;
+        Ok::<_, String>(id)
+    })
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Unable to prepare local migration".to_string(),
+        )
+    })?
+    .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let url = format!("/migrations/{id}");
+    if background {
+        Ok(axum::Json(serde_json::json!({"url":url})).into_response())
+    } else {
+        Ok(Redirect::to(&url).into_response())
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct LocalMigrationForm {
+    #[serde(default)]
+    source_url: String,
+    #[serde(default)]
+    background: bool,
+    #[serde(default)]
+    all_matching: bool,
+    #[serde(default)]
+    selected_item_ids: String,
+    #[serde(flatten)]
+    query: LocalFilesQuery,
+}
+
 async fn local_files_page(
     State(state): State<Arc<AppState>>,
     Query(query): Query<LocalFilesQuery>,
+) -> Result<Html<String>, StatusCode> {
+    tokio::task::spawn_blocking(move || render_local_files_page(&state, query))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+}
+
+fn render_local_files_page(
+    state: &AppState,
+    query: LocalFilesQuery,
 ) -> Result<Html<String>, StatusCode> {
     if !local_files_enabled(&state) {
         return Err(StatusCode::NOT_FOUND);
@@ -5936,7 +6452,7 @@ fn local_explorer_roots(
         database::settings::load(&database).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let configured_roots = crate::local_files::parse_roots(&settings.local_file_roots);
     let safe_path = normalize_local_explorer_path(&query.path).ok_or(StatusCode::BAD_REQUEST)?;
-    let list = |root: &str, current_path: &str, window| {
+    let list = |root: &str, current_path: &str, window, known_total| {
         database::local_files::list_children_page(
             &database,
             root,
@@ -5954,6 +6470,7 @@ fn local_explorer_roots(
             &query.sort,
             query.direction == "desc",
             window,
+            known_total,
         )
         .map_err(|error| {
             log::error!("Unable to list local files: {error}");
@@ -5976,6 +6493,7 @@ fn local_explorer_roots(
             &root.to_string_lossy(),
             &current_path,
             page.then_some((0, 0)),
+            None,
         )?;
         roots.push(LocalRootView {
             index,
@@ -5994,7 +6512,13 @@ fn local_explorer_roots(
         for root in &mut roots {
             let take = remaining.min(root.total.saturating_sub(skip));
             if take > 0 {
-                root.items = list(&root.root_path, &root.current_path, Some((skip, take)))?.0;
+                root.items = list(
+                    &root.root_path,
+                    &root.current_path,
+                    Some((skip, take)),
+                    Some(root.total),
+                )?
+                .0;
             }
             skip = skip.saturating_sub(root.total);
             remaining -= take;
@@ -8774,6 +9298,256 @@ mod tests {
     }
 
     #[test]
+    fn local_file_explorer_renders_migration_selection_and_wizard() {
+        let item = database::local_files::Row {
+            id: 7,
+            root_path: "/home/user/reports".into(),
+            relative_path: "Annual Report.pdf".into(),
+            name: "Annual Report.pdf".into(),
+            extension: "pdf".into(),
+            type_label: "PDF".into(),
+            is_directory: false,
+            size_bytes: 1024,
+            size_label: "1.0 KB".into(),
+            modified_unix: 1,
+            modified_label: "2026-09-17T12:00:00".into(),
+            checksum_sha256: String::new(),
+            is_symlink: false,
+            symlink_target: String::new(),
+            full_path: "/home/user/reports/Annual Report.pdf".into(),
+            icon_class: "bi-file-earmark-pdf",
+            owner_username: String::new(),
+            owner_identifier: String::new(),
+            owner_principal_id: 0,
+            owner_display_name: String::new(),
+            group_name: String::new(),
+            group_identifier: String::new(),
+            duplicate_copies: 0,
+            tags: vec![],
+        };
+        let html = LocalFilesTemplate {
+            navigation: Navigation::from_settings(&InventorySettings {
+                local_files_enabled: true,
+                ..Default::default()
+            }),
+            pagination: PageQuery::default().view(60),
+            title: "Local Files - BOREAL",
+            active_page: "local-files",
+            alerts: vec![],
+            status_items: vec![],
+            poll_rclone: false,
+            roots: vec![LocalRootView {
+                total: 60,
+                index: 0,
+                root_path: "/home/user/reports".into(),
+                current_path: String::new(),
+                parent_path: String::new(),
+                items: vec![item],
+            }],
+            summary: database::local_files::Summary::default(),
+            query: LocalFilesQuery {
+                tag: "needs-review".into(),
+                ..Default::default()
+            },
+            tags: vec![],
+            filter_tags: vec![],
+            persons: vec![],
+        }
+        .render()
+        .unwrap();
+        assert!(html.contains("id=\"local-migrate-button\""));
+        assert!(html.contains("formaction=\"/local-files/migrate\""));
+        let job = database::migration::MigrationJob {
+            id: 1,
+            source_kind: "local-files".into(),
+            source_scope: "local-files".into(),
+            selection_url: String::new(),
+            revised_from: 0,
+            operation_kind: "drive-copy".into(),
+            status: "draft".into(),
+            phase: "Select destination".into(),
+            destination_url: String::new(),
+            destination_kind: "google-drive".into(),
+            destination_path: String::new(),
+            destination_drive_name: String::new(),
+            destination_folder_name: String::new(),
+            destination_drive_id: String::new(),
+            destination_folder_id: String::new(),
+            files_total: 1,
+            folders_total: 0,
+            bytes_total: 1024,
+            files_copied: 0,
+            bytes_copied: 0,
+            exceptions_count: 0,
+            created_at: String::new(),
+            started_at: String::new(),
+            completed_at: String::new(),
+            copy_completed_at: String::new(),
+            archived_at: String::new(),
+            resume_count: 0,
+            error_message: String::new(),
+            sources: vec![database::migration::MigrationSource {
+                item_id: "7".into(),
+                name: "Annual Report.pdf".into(),
+                relative_path: "/home/user/reports/Annual Report.pdf".into(),
+                is_directory: false,
+                files_total: 1,
+                folders_total: 0,
+                bytes_total: 1024,
+                status: "pending".into(),
+                error_message: String::new(),
+            }],
+        };
+        let mut conflict_job = job.clone();
+        conflict_job.selection_url = "/local-files?tag=needs-review&name=Report".into();
+        for (id, name, path) in [
+            ("8", "Annual Report.pdf", "/other/Annual Report.pdf"),
+            ("9", "Other.txt", "/other/Other.txt"),
+        ] {
+            let mut source = job.sources[0].clone();
+            source.item_id = id.into();
+            source.name = name.into();
+            source.relative_path = path.into();
+            source.bytes_total = 99;
+            conflict_job.sources.push(source);
+        }
+        let conflict_view = migration_view(conflict_job);
+        assert_eq!(conflict_view.name_conflicts, 2);
+        assert!(conflict_view.can_edit_selection);
+        assert!(
+            conflict_view.sources[0].conflicting_name && conflict_view.sources[1].conflicting_name
+        );
+        assert!(!conflict_view.sources[2].conflicting_name);
+        let conflict_wizard = MigrationWizardTemplate {
+            navigation: Navigation::from_settings(&InventorySettings::default()),
+            title: "Migration - BOREAL",
+            active_page: "migrations",
+            alerts: vec![],
+            status_items: vec![],
+            poll_rclone: false,
+            migration: conflict_view,
+            error: String::new(),
+        }
+        .render()
+        .unwrap();
+        assert!(conflict_wizard.contains("/other/Annual Report.pdf"));
+        assert!(conflict_wizard.contains("filename conflicts"));
+        let view = migration_view(job);
+        assert!(view.local_source && view.allows_my_drive_destination);
+        assert!(view.sources[0].drive_url.is_empty());
+        let wizard = MigrationWizardTemplate {
+            navigation: Navigation::from_settings(&InventorySettings {
+                local_files_enabled: true,
+                ..Default::default()
+            }),
+            title: "Migration - BOREAL",
+            active_page: "migrations",
+            alerts: vec![],
+            status_items: vec![],
+            poll_rclone: false,
+            migration: view,
+            error: String::new(),
+        }
+        .render()
+        .unwrap();
+        assert!(wizard.contains("Local files may be copied to My Drive or a Shared Drive"));
+        assert!(!wizard.contains("/local-destination"));
+        assert!(!wizard.contains("https://drive.google.com/open?id=7"));
+        if let Ok(directory) = std::env::var("BOREAL_UI_FIXTURE_DIR") {
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                std::path::Path::new(&directory).join("local-files.html"),
+                html,
+            )
+            .unwrap();
+            std::fs::write(
+                std::path::Path::new(&directory).join("local-migration.html"),
+                wizard,
+            )
+            .unwrap();
+            std::fs::write(
+                std::path::Path::new(&directory).join("migration-conflicts.html"),
+                conflict_wizard,
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn local_file_comparison_renders_both_sides_and_escapes_paths() {
+        let item = crate::local_files::Item {
+            root_path: "/home/user/reports".into(),
+            relative_path: "<script>alert(1)</script>.txt".into(),
+            name: "report.txt".into(),
+            size_bytes: 1024,
+            modified_unix: 1_788_243_845,
+            owner_username: "researcher".into(),
+            owner_identifier: "1000".into(),
+            group_name: "staff".into(),
+            group_identifier: "1000".into(),
+            ..Default::default()
+        };
+        let mut moved = item.clone();
+        moved.relative_path = "annual/report.txt".into();
+        let html = LocalFileChangesTemplate {
+            navigation: Navigation::from_settings(&InventorySettings {
+                local_files_enabled: true,
+                ..Default::default()
+            }),
+            title: "Compare Local Files updates - BOREAL",
+            active_page: "local-files",
+            alerts: vec![],
+            status_items: vec![],
+            poll_rclone: false,
+            snapshots: vec![
+                database::local_file_history::Snapshot {
+                    id: 2,
+                    completed_at: "2026-09-17 12:00:00".into(),
+                    scope: "test".into(),
+                    item_count: 1,
+                },
+                database::local_file_history::Snapshot {
+                    id: 1,
+                    completed_at: "2026-09-16 12:00:00".into(),
+                    scope: "test".into(),
+                    item_count: 1,
+                },
+            ],
+            query: LocalChangesQuery {
+                before: 1,
+                after: 2,
+                ..Default::default()
+            },
+            pagination: PageQuery::default().view(1),
+            changes: vec![LocalChangeView {
+                kind: "Moved",
+                color: "primary",
+                before: local_change_side(Some(item)),
+                after: local_change_side(Some(moved)),
+                detail: "Matching unique filesystem identity; move inferred".into(),
+            }],
+            scope_changed: false,
+            ready: true,
+            counts: "0 added · 0 changed · 0 deleted · 1 moved".into(),
+        }
+        .render()
+        .unwrap();
+        assert!(html.contains("Before · #1"));
+        assert!(html.contains("After · #2"));
+        assert!(html.contains("annual/report.txt"));
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(html.contains("Current files"));
+        if let Ok(directory) = std::env::var("BOREAL_UI_FIXTURE_DIR") {
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                std::path::Path::new(&directory).join("local-file-changes.html"),
+                html,
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
     fn keeper_explorer_renders_record_metadata_and_escapes_titles() {
         let tag = database::inventory::Tag {
             slug: "needs-review".into(),
@@ -8863,6 +9637,10 @@ mod tests {
                 "Missing Keeper UI element: {expected}"
             );
         }
+        let icon = html
+            .find("data-keeper-external-link")
+            .expect("record launch icon");
+        assert!(html[icon..].contains("src=\"/assets/keeper-logo.svg\""));
         assert!(html.contains("href=\"https://keepersecurity.com/vault/#detail/record-one\""));
         assert!(html.contains("target=\"_blank\" rel=\"noopener noreferrer\""));
         assert_eq!(template.entries[0].permissions.len(), 2);
@@ -8878,6 +9656,25 @@ mod tests {
         assert!(html.contains("/keeper/export.xlsx"));
         assert!(html.contains("Print to PDF"));
         assert!(html.contains("/assets/keeper-logo.svg"));
+        for (kind, route) in [
+            ("user_folder", "folder"),
+            ("shared_folder_folder", "folder"),
+            ("shared_folder", "shared_folder"),
+        ] {
+            let mut folder = template.entries[0].record.clone();
+            folder.is_folder = true;
+            folder.item_type = kind.into();
+            folder.uid = "folder-one".into();
+            let folder = keeper_entry_view(folder);
+            assert_eq!(
+                folder.vault_url,
+                format!("https://keepersecurity.com/vault/#{route}/folder-one")
+            );
+            template.entries.push(folder);
+        }
+        let folders_html = template.render().unwrap();
+        assert_eq!(folders_html.matches("data-keeper-external-link").count(), 4);
+        assert!(folders_html.contains("href=\"/keeper?folder=folder-one\""));
         template.query.print = true;
         let print = template.render().unwrap();
         assert!(print.contains("Print / Save PDF"));

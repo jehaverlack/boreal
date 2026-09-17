@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex flex-column h-100 overflow-hidden">
+<div class="d-flex justify-content-between align-items-center mb-3"><h1 class="h3 mb-0">Compare Local Files updates</h1><a href="/local-files" class="btn btn-outline-primary">Current files</a></div>
+<p class="small text-body-secondary mb-2">Compare saved metadata from completed indexing updates. Sizes include indexed descendants only. This does not store file contents or show line-by-line content differences. Moves are inferred from unique filesystem identities or available checksums; ambiguous matches remain additions and deletions.</p>
+<form method="get" class="row g-2 align-items-end mb-3">
+<div class="col-md-4"><label class="form-label" for="before">Before</label><select id="before" name="before" class="form-select">{% for snapshot in snapshots %}<option value="{{ snapshot.id }}" {% if query.before == snapshot.id %}selected{% endif %}>#{{ snapshot.id }} · {{ snapshot.completed_at }} UTC · {{ snapshot.item_count }} entries</option>{% endfor %}</select></div>
+<div class="col-md-4"><label class="form-label" for="after">After</label><select id="after" name="after" class="form-select">{% for snapshot in snapshots %}<option value="{{ snapshot.id }}" {% if query.after == snapshot.id %}selected{% endif %}>#{{ snapshot.id }} · {{ snapshot.completed_at }} UTC · {{ snapshot.item_count }} entries</option>{% endfor %}</select></div>
+<div class="col-md-4"><button class="btn btn-primary" {% if !ready %}disabled{% endif %}>Compare updates</button></div>
+<div class="col-md-8"><label for="change-search" class="form-label small">Search either path</label><input id="change-search" class="form-control" name="q" value="{{ query.q }}" placeholder="File or folder path"></div>
+<div class="col-md-4"><label for="change-kind" class="form-label small">Change type</label><select id="change-kind" name="kind" class="form-select"><option value="">All changes</option>{% for kind in ["Added", "Changed", "Deleted", "Moved", "Removed from index"] %}<option {% if query.kind == *kind %}selected{% endif %}>{{ kind }}</option>{% endfor %}</select></div>
+<input type="hidden" name="page_size" value="{{ pagination.size }}">
+</form>
+{% if scope_changed %}<div class="alert alert-warning py-2">These updates used different indexing settings, or the older index predates history tracking. Missing entries are labeled “Removed from index” because they may have been excluded rather than deleted.</div>{% endif %}
+{% if !ready %}<div class="alert alert-info">A comparison needs two saved indexes. Run Local Files metadata updates to build history. Cancelled or incomplete scans do not replace the current index.</div>{% else %}
+<div class="small mb-2">{{ counts }}</div>
+{% include "partials/explorer-pagination.html" %}
+<div class="table-responsive flex-grow-1 border rounded" style="min-height:0"><table class="table align-top mb-0" style="table-layout:fixed;min-width:48rem"><thead class="table-light sticky-top"><tr><th style="width:18%">Change</th><th style="width:41%">Before · #{{ query.before }}</th><th style="width:41%">After · #{{ query.after }}</th></tr></thead><tbody>
+{% for change in changes %}<tr><td><span class="badge text-bg-{{ change.color }}">{{ change.kind }}</span><div class="small mt-2">{{ change.detail }}</div></td>
+<td class="{% if change.before.path.len() > 0 %}border-start border-danger{% endif %}" style="overflow-wrap:anywhere">{% if change.before.path.len() > 0 %}<div class="font-monospace mb-2">{{ change.before.path }}</div><div class="small text-body-secondary" style="white-space:pre-wrap">{{ change.before.metadata }}</div>{% else %}<span class="text-body-secondary">Not present</span>{% endif %}</td>
+<td class="{% if change.after.path.len() > 0 %}border-start border-success{% endif %}" style="overflow-wrap:anywhere">{% if change.after.path.len() > 0 %}<div class="font-monospace mb-2">{{ change.after.path }}</div><div class="small text-body-secondary" style="white-space:pre-wrap">{{ change.after.metadata }}</div>{% else %}<span class="text-body-secondary">Not present</span>{% endif %}</td></tr>{% endfor %}
+{% if changes.is_empty() %}<tr><td colspan="3" class="text-center text-body-secondary py-4">No changes match this comparison and its filters.</td></tr>{% endif %}
+</tbody></table></div>
+{% endif %}
+</div>
+<script>
+(() => {
+    const form = document.querySelector('form[method="get"]');
+    const before = document.getElementById('before'), after = document.getElementById('after');
+    form.addEventListener('submit', event => {
+        before.setCustomValidity(Number(before.value) >= Number(after.value) ? 'Choose an earlier update for Before.' : '');
+        if (!before.reportValidity()) event.preventDefault();
+    });
+    before.addEventListener('change', () => before.setCustomValidity(''));
+    after.addEventListener('change', () => before.setCustomValidity(''));
+    const pager = document.getElementById('explorer-pagination');
+    if (!pager) return;
+    const page = Number(pager.dataset.page), size = document.getElementById('explorer-page-size');
+    size.value = pager.dataset.size;
+    function navigate(pageNumber, pageSize) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('before', '{{ query.before }}');
+        url.searchParams.set('after', '{{ query.after }}');
+        url.searchParams.set('page', String(pageNumber));
+        url.searchParams.set('page_size', pageSize);
+        window.location.assign(url);
+    }
+    size.addEventListener('change', () => navigate(1, size.value));
+    pager.querySelectorAll('[data-page-step]').forEach(button => {
+        const target = page + Number(button.dataset.pageStep);
+        button.disabled = target < 1 || target > Number(pager.dataset.pages);
+        button.addEventListener('click', () => navigate(target, size.value));
+    });
+})();
+</script>
+{% endblock %}

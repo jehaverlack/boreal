@@ -46,40 +46,42 @@ pub struct Summary {
 }
 pub fn checksum_cache(
     db: &Database,
-) -> Result<HashMap<(String, String), (u64, i64, String)>, DatabaseError> {
+) -> Result<HashMap<(String, String), (u64, i64, Option<u32>, String)>, DatabaseError> {
     let c = db.connect()?;
-    let mut s=c.prepare("SELECT root_path,relative_path,size_bytes,modified_unix,checksum_sha256 FROM local_file_items WHERE checksum_sha256<>''")?;
+    let mut s=c.prepare("SELECT root_path,relative_path,size_bytes,modified_unix,modified_nanos,checksum_sha256 FROM local_file_items WHERE checksum_sha256<>''")?;
     let rows = s.query_map([], |r| {
         Ok((
             (r.get(0)?, r.get(1)?),
-            (r.get::<_, i64>(2)? as u64, r.get(3)?, r.get(4)?),
+            (r.get::<_, i64>(2)? as u64, r.get(3)?, r.get(4)?, r.get(5)?),
         ))
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
 #[cfg(test)]
 pub fn synchronize(db: &Database, items: &[Item]) -> Result<(), DatabaseError> {
-    synchronize_inner(db, items, None)
+    synchronize_inner(db, items, "test", None)
 }
 
 pub fn synchronize_cancellable(
     db: &Database,
     items: &[Item],
+    scope: &str,
     cancellation: &Arc<AtomicBool>,
 ) -> Result<(), DatabaseError> {
-    synchronize_inner(db, items, Some(cancellation))
+    synchronize_inner(db, items, scope, Some(cancellation))
 }
 
 fn synchronize_inner(
     db: &Database,
     items: &[Item],
+    scope: &str,
     cancellation: Option<&Arc<AtomicBool>>,
 ) -> Result<(), DatabaseError> {
     let mut c = db.connect()?;
     let tx = c.transaction()?;
     tx.execute("UPDATE local_file_items SET is_accessible=0", [])?;
     {
-        let mut statement = tx.prepare("INSERT INTO local_file_items(root_path,relative_path,name,extension,is_directory,size_bytes,modified_unix,checksum_sha256,owner_username,owner_identifier,group_name,group_identifier,is_symlink,symlink_target,is_accessible,last_seen_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,1,CURRENT_TIMESTAMP) ON CONFLICT(root_path,relative_path) DO UPDATE SET name=excluded.name,extension=excluded.extension,is_directory=excluded.is_directory,size_bytes=excluded.size_bytes,modified_unix=excluded.modified_unix,checksum_sha256=excluded.checksum_sha256,owner_username=excluded.owner_username,owner_identifier=excluded.owner_identifier,group_name=excluded.group_name,group_identifier=excluded.group_identifier,is_symlink=excluded.is_symlink,symlink_target=excluded.symlink_target,is_accessible=1,last_seen_at=CURRENT_TIMESTAMP")?;
+        let mut statement = tx.prepare("INSERT INTO local_file_items(root_path,relative_path,name,extension,is_directory,size_bytes,modified_unix,checksum_sha256,owner_username,owner_identifier,group_name,group_identifier,is_symlink,symlink_target,modified_nanos,file_identity,parent_path,is_accessible,last_seen_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,1,CURRENT_TIMESTAMP) ON CONFLICT(root_path,relative_path) DO UPDATE SET name=excluded.name,extension=excluded.extension,is_directory=excluded.is_directory,size_bytes=excluded.size_bytes,modified_unix=excluded.modified_unix,checksum_sha256=excluded.checksum_sha256,owner_username=excluded.owner_username,owner_identifier=excluded.owner_identifier,group_name=excluded.group_name,group_identifier=excluded.group_identifier,is_symlink=excluded.is_symlink,symlink_target=excluded.symlink_target,modified_nanos=excluded.modified_nanos,file_identity=excluded.file_identity,parent_path=excluded.parent_path,is_accessible=1,last_seen_at=CURRENT_TIMESTAMP")?;
         for i in items {
             if cancellation.is_some_and(|value| value.load(std::sync::atomic::Ordering::Acquire)) {
                 return Err("Local Files database update cancelled".into());
@@ -98,11 +100,21 @@ fn synchronize_inner(
                 i.group_name,
                 i.group_identifier,
                 i.is_symlink,
-                i.symlink_target
+                i.symlink_target,
+                i.modified_nanos,
+                i.file_identity,
+                i.relative_path
+                    .rsplit_once('/')
+                    .map_or("", |(parent, _)| parent)
             ])?;
         }
     }
     tx.execute("INSERT INTO settings(key,value,updated_at) VALUES('local_files.last_sync_at',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP",[])?;
+    tx.execute_batch(include_str!("sql/refresh_local_file_rollups.sql"))?;
+    super::local_file_history::record(&tx, items, scope, cancellation)?;
+    if cancellation.is_some_and(|value| value.load(std::sync::atomic::Ordering::Acquire)) {
+        return Err("Local Files database update cancelled".into());
+    }
     tx.commit()?;
     Ok(())
 }
@@ -141,6 +153,7 @@ pub fn list_children(
         sort,
         descending,
         None,
+        None,
     )
     .map(|(rows, _)| rows)
 }
@@ -162,6 +175,7 @@ pub fn list_children_page(
     sort: &str,
     descending: bool,
     window: Option<(usize, usize)>,
+    known_total: Option<usize>,
 ) -> Result<(Vec<Row>, usize), DatabaseError> {
     let c = db.connect()?;
     let (modified_comparison, modified_value) = parse_modified_filter(modified)?;
@@ -178,8 +192,16 @@ pub fn list_children_page(
     let direction = if descending { "DESC" } else { "ASC" };
     let type_expression = "CASE WHEN i.is_symlink=1 THEN 'symlink' WHEN i.is_directory=1 THEN 'folder' WHEN i.extension<>'' THEN i.extension ELSE 'file' END";
     let size_expression = "CASE WHEN i.size_bytes>=1000000000000 THEN printf('%.1f TB',i.size_bytes/1000000000000.0) WHEN i.size_bytes>=1000000000 THEN printf('%.1f GB',i.size_bytes/1000000000.0) WHEN i.size_bytes>=1000000 THEN printf('%.1f MB',i.size_bytes/1000000.0) WHEN i.size_bytes>=1000 THEN printf('%.1f KB',i.size_bytes/1000.0) ELSE CAST(i.size_bytes AS TEXT)||' B' END";
+    let scope = if search.is_empty() {
+        "i.parent_path=?2"
+    } else {
+        "(?10<>'' AND (instr(lower(i.name),lower(?10))>0 OR instr(lower(i.relative_path),lower(?10))>0 OR instr(lower({type_expression}),lower(?10))>0 OR instr(lower(CAST(i.size_bytes AS TEXT)),lower(?10))>0 OR instr(lower({size_expression}),lower(?10))>0 OR instr(lower(replace(datetime(i.modified_unix,'unixepoch','localtime'),' ','T')),lower(?10))>0 OR instr(lower(i.owner_username),lower(?10))>0 OR instr(lower(i.owner_identifier),lower(?10))>0 OR instr(lower(COALESCE(p.display_name,'')),lower(?10))>0 OR instr(lower(i.group_name),lower(?10))>0 OR instr(lower(i.group_identifier),lower(?10))>0))"
+    };
+    let scope = scope
+        .replace("{type_expression}", type_expression)
+        .replace("{size_expression}", size_expression);
     let sql = format!(
-        "SELECT i.id,i.root_path,i.relative_path,i.name,i.extension,i.is_directory,i.size_bytes,i.modified_unix,i.checksum_sha256,CASE WHEN i.checksum_sha256='' THEN 0 ELSE (SELECT COUNT(*) FROM local_file_items d WHERE d.is_accessible=1 AND d.checksum_sha256=i.checksum_sha256) END copies,(SELECT group_concat(t.slug||char(30)||t.name||char(30)||t.color||char(30)||t.description,char(31)) FROM local_file_tags lft JOIN tags t ON t.id=lft.tag_id WHERE lft.local_file_id=i.id),i.owner_username,i.owner_identifier,COALESCE(p.id,0),COALESCE(p.display_name,''),i.group_name,i.group_identifier,i.is_symlink,i.symlink_target FROM local_file_items i LEFT JOIN principals p ON lower(p.username)=lower(i.owner_username) WHERE i.is_accessible=1 AND i.root_path=?1 AND ((?10='' AND ((?2='' AND instr(i.relative_path,'/')=0) OR (?2<>'' AND i.relative_path LIKE ?2||'/%' AND instr(substr(i.relative_path,length(?2)+2),'/')=0))) OR (?10<>'' AND (instr(lower(i.name),lower(?10))>0 OR instr(lower(i.relative_path),lower(?10))>0 OR instr(lower({type_expression}),lower(?10))>0 OR instr(lower(CAST(i.size_bytes AS TEXT)),lower(?10))>0 OR instr(lower({size_expression}),lower(?10))>0 OR instr(lower(replace(datetime(i.modified_unix,'unixepoch','localtime'),' ','T')),lower(?10))>0 OR instr(lower(i.owner_username),lower(?10))>0 OR instr(lower(i.owner_identifier),lower(?10))>0 OR instr(lower(COALESCE(p.display_name,'')),lower(?10))>0 OR instr(lower(i.group_name),lower(?10))>0 OR instr(lower(i.group_identifier),lower(?10))>0))) AND (?3='' OR instr(lower(i.name),lower(?3))>0) AND (?4='' OR instr(lower(i.relative_path),lower(?4))>0) AND (?5='' OR instr(lower({type_expression}),lower(?5))>0) AND (?6='' OR instr(lower(CAST(i.size_bytes AS TEXT)),lower(?6))>0 OR instr(lower({size_expression}),lower(?6))>0) AND (?11=0 OR (?11=1 AND datetime(i.modified_unix,'unixepoch','localtime') > replace(?7,'T',' ')) OR (?11=2 AND datetime(i.modified_unix,'unixepoch','localtime') >= replace(?7,'T',' ')) OR (?11=3 AND datetime(i.modified_unix,'unixepoch','localtime') < replace(?7,'T',' ')) OR (?11=4 AND datetime(i.modified_unix,'unixepoch','localtime') <= replace(?7,'T',' ')) OR (?11=5 AND substr(datetime(i.modified_unix,'unixepoch','localtime'),1,length(?7))=replace(?7,'T',' '))) AND (?12='' OR instr(lower(i.owner_username),lower(?12))>0 OR instr(lower(i.owner_identifier),lower(?12))>0 OR instr(lower(COALESCE(p.display_name,'')),lower(?12))>0) AND (?13='' OR instr(lower(i.group_name),lower(?13))>0 OR instr(lower(i.group_identifier),lower(?13))>0) AND NOT EXISTS (SELECT 1 FROM json_each(?8) tag_term WHERE (CASE WHEN json_extract(tag_term.value,'$[1]')='__untagged__' THEN NOT EXISTS(SELECT 1 FROM local_file_tags x WHERE x.local_file_id=i.id) ELSE EXISTS(SELECT 1 FROM local_file_tags x JOIN tags xt ON xt.id=x.tag_id WHERE x.local_file_id=i.id AND xt.slug=json_extract(tag_term.value,'$[1]')) END) = json_extract(tag_term.value,'$[0]')) AND (?9=0 OR (i.checksum_sha256<>'' AND (SELECT COUNT(*) FROM local_file_items d WHERE d.is_accessible=1 AND d.checksum_sha256=i.checksum_sha256)>1)) ORDER BY i.is_directory DESC,{order} {direction},i.id"
+        "SELECT i.id,i.root_path,i.relative_path,i.name,i.extension,i.is_directory,i.size_bytes,i.modified_unix,i.checksum_sha256,i.duplicate_copies copies,(SELECT group_concat(t.slug||char(30)||t.name||char(30)||t.color||char(30)||t.description,char(31)) FROM local_file_tags lft JOIN tags t ON t.id=lft.tag_id WHERE lft.local_file_id=i.id),i.owner_username,i.owner_identifier,COALESCE(p.id,0),COALESCE(p.display_name,''),i.group_name,i.group_identifier,i.is_symlink,i.symlink_target FROM local_file_items i LEFT JOIN principals p ON lower(p.username)=lower(i.owner_username) WHERE i.is_accessible=1 AND i.root_path=?1 AND {scope} AND (?3='' OR instr(lower(i.name),lower(?3))>0) AND (?4='' OR instr(lower(i.relative_path),lower(?4))>0) AND (?5='' OR instr(lower({type_expression}),lower(?5))>0) AND (?6='' OR instr(lower(CAST(i.size_bytes AS TEXT)),lower(?6))>0 OR instr(lower({size_expression}),lower(?6))>0) AND (?11=0 OR (?11=1 AND datetime(i.modified_unix,'unixepoch','localtime') > replace(?7,'T',' ')) OR (?11=2 AND datetime(i.modified_unix,'unixepoch','localtime') >= replace(?7,'T',' ')) OR (?11=3 AND datetime(i.modified_unix,'unixepoch','localtime') < replace(?7,'T',' ')) OR (?11=4 AND datetime(i.modified_unix,'unixepoch','localtime') <= replace(?7,'T',' ')) OR (?11=5 AND substr(datetime(i.modified_unix,'unixepoch','localtime'),1,length(?7))=replace(?7,'T',' '))) AND (?12='' OR instr(lower(i.owner_username),lower(?12))>0 OR instr(lower(i.owner_identifier),lower(?12))>0 OR instr(lower(COALESCE(p.display_name,'')),lower(?12))>0) AND (?13='' OR instr(lower(i.group_name),lower(?13))>0 OR instr(lower(i.group_identifier),lower(?13))>0) AND NOT EXISTS (SELECT 1 FROM json_each(?8) tag_term WHERE (CASE WHEN json_extract(tag_term.value,'$[1]')='__untagged__' THEN NOT EXISTS(SELECT 1 FROM local_file_tags x WHERE x.local_file_id=i.id) ELSE EXISTS(SELECT 1 FROM local_file_tags x JOIN tags xt ON xt.id=x.tag_id WHERE x.local_file_id=i.id AND xt.slug=json_extract(tag_term.value,'$[1]')) END) = json_extract(tag_term.value,'$[0]')) AND (?9=0 OR i.duplicate_copies>1) ORDER BY i.is_directory DESC,{order} {direction},i.id"
     );
     let parameters = params![
         root,
@@ -196,7 +218,9 @@ pub fn list_children_page(
         owner,
         group
     ];
-    let total = if window.is_some() {
+    let total = if let Some(total) = known_total {
+        total
+    } else if window.is_some() {
         c.query_row(
             &format!(
                 "SELECT COUNT(*) FROM ({})",
@@ -208,6 +232,9 @@ pub fn list_children_page(
     } else {
         0
     };
+    if window.is_some_and(|(_, limit)| limit == 0) {
+        return Ok((Vec::new(), total));
+    }
     let sql = if let Some((offset, limit)) = window {
         format!("{sql} LIMIT {} OFFSET {offset}", limit.min(200))
     } else {
@@ -361,7 +388,7 @@ fn parse_tags(value: Option<String>) -> Vec<Tag> {
         })
         .collect()
 }
-fn format_unix(value: i64) -> String {
+pub(crate) fn format_unix(value: i64) -> String {
     if value <= 0 {
         String::new()
     } else {
@@ -425,7 +452,7 @@ fn file_icon_class(extension: &str) -> &'static str {
 }
 pub fn summary(db: &Database) -> Result<Summary, DatabaseError> {
     let c = db.connect()?;
-    let mut summary=c.query_row("SELECT COALESCE(SUM(CASE WHEN is_directory=0 THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN is_directory=1 THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN is_directory=0 THEN size_bytes ELSE 0 END),0),(SELECT COUNT(*) FROM (SELECT checksum_sha256 FROM local_file_items WHERE is_accessible=1 AND checksum_sha256<>'' GROUP BY checksum_sha256 HAVING COUNT(*)>1)),(SELECT COALESCE(SUM((copies-1)*size_bytes),0) FROM (SELECT size_bytes,COUNT(*) copies FROM local_file_items WHERE is_accessible=1 AND checksum_sha256<>'' GROUP BY checksum_sha256,size_bytes HAVING COUNT(*)>1)),COALESCE((SELECT value FROM settings WHERE key='local_files.last_sync_at'),'') FROM local_file_items WHERE is_accessible=1",[],|r|Ok(Summary{files:r.get::<_,i64>(0)? as u64,folders:r.get::<_,i64>(1)? as u64,bytes:r.get::<_,i64>(2)? as u64,size_label:String::new(),duplicate_groups:r.get::<_,i64>(3)? as u64,duplicate_bytes:r.get::<_,i64>(4)? as u64,duplicate_size_label:String::new(),completed_at:r.get(5)?}))?;
+    let mut summary=c.query_row("SELECT files,folders,bytes,duplicate_groups,duplicate_bytes,COALESCE((SELECT value FROM settings WHERE key='local_files.last_sync_at'),'') FROM local_file_summary WHERE singleton=1",[],|r|Ok(Summary{files:r.get::<_,i64>(0)? as u64,folders:r.get::<_,i64>(1)? as u64,bytes:r.get::<_,i64>(2)? as u64,size_label:String::new(),duplicate_groups:r.get::<_,i64>(3)? as u64,duplicate_bytes:r.get::<_,i64>(4)? as u64,duplicate_size_label:String::new(),completed_at:r.get(5)?}))?;
     summary.size_label = format_bytes(summary.bytes);
     summary.duplicate_size_label = format_bytes(summary.duplicate_bytes);
     Ok(summary)

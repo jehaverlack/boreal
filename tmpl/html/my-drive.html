@@ -17,6 +17,7 @@
         <h1 class="h3 mb-1"><i class="bi bi-folder2-open text-primary me-2"></i>{{ heading }}</h1>
     </div>
     <div class="d-flex gap-2 boreal-report-hide">
+        <a class="btn btn-sm btn-outline-secondary" href="/drive-history?scope={{ inventory_scope }}">History / unavailable items</a>
         {% if drive_id.len() > 0 %}<a class="btn btn-sm btn-outline-secondary" href="/shared-drives"><i class="bi bi-arrow-left me-1"></i>All Shared Drives</a>{% endif %}
         {% if has_parent %}
     <form method="get" action="{{ explorer_path }}">
@@ -122,7 +123,7 @@
     <div class="col-auto"><button class="btn btn-sm btn-outline-danger" type="submit" name="print" value="true" formtarget="_blank"><i class="bi bi-file-earmark-pdf me-1"></i>Print to PDF</button></div>
     <div class="col-auto form-check align-self-center ms-1">
         <input class="form-check-input" type="checkbox" id="my-drive-include-deleted" name="include_deleted" value="true" {% if include_deleted %}checked{% endif %}>
-        <label class="form-check-label small" for="my-drive-include-deleted">Include deleted items</label>
+        <label class="form-check-label small" for="my-drive-include-deleted">Include unavailable / removed items</label>
     </div>
 </form>
 </details>
@@ -197,9 +198,6 @@
         <button id="my-drive-remove-tag-button" class="btn btn-sm btn-outline-danger" type="submit" formaction="{{ tag_remove_action }}" disabled>
             <i class="bi bi-tag-fill me-1"></i>Remove
         </button>
-        <button id="my-drive-update-metadata-button" class="btn btn-sm btn-outline-primary" type="submit" formaction="/metadata/update-selected" disabled>
-            <i class="bi bi-arrow-clockwise me-1"></i>Update metadata
-        </button>
         {% if active_page == "my-drive" || active_page == "shared-with-me" || active_page == "shared-drives" %}
         <button id="my-drive-migrate-button" formnovalidate class="btn btn-sm btn-outline-success" type="submit" formaction="/migrations/new" disabled>
             <i class="bi bi-arrow-right-circle me-1"></i>Migrate
@@ -213,37 +211,37 @@
     <div class="table-responsive boreal-explorer-table">
         <table data-column-widths="my-drive" class="table table-hover align-middle mb-0">
             <colgroup>
-                <col class="boreal-col-select">
-                <col class="boreal-col-gdrive">
+                <col class="boreal-col-select boreal-report-hide">
+                <col class="boreal-col-gdrive boreal-report-hide">
                 <col class="boreal-col-type">
                 <col class="boreal-col-name">
                 <col class="boreal-col-size">
                 <col class="boreal-col-modified">
                 <col class="boreal-col-owner">
                 <col class="boreal-col-permissions">
-            </colgroup>
+            <col class="boreal-col-notes"></colgroup>
             <thead class="table-light">
                 <tr>
-                    <th scope="col" class="text-center">
+                    <th scope="col" class="text-center boreal-report-hide">
                         <input class="form-check-input" type="checkbox" id="my-drive-select-all" title="Select all visible items" aria-label="Select all visible items">
 {% include "partials/explorer-selection.html" %}
                     </th>
-                    <th scope="col" class="text-center">GDrive</th>
+                    <th scope="col" class="text-center boreal-report-hide">GDrive</th>
                     <th scope="col"><a class="text-body text-decoration-none d-block text-center" href="{{ type_sort_url }}" title="Sort by type">Type {% if sort == "type" %}<i class="bi {% if direction == "desc" %}bi-sort-down-alt{% else %}bi-sort-down{% endif %}"></i>{% endif %}</a><input class="form-control form-control-sm mt-1" form="my-drive-filter-form" name="type_filter" value="{{ type_filter }}" placeholder="Type" aria-label="Filter by type"></th>
                     <th scope="col"><a class="text-body text-decoration-none d-block" href="{{ name_sort_url }}">Name {% if sort == "name" %}<i class="bi {% if direction == "desc" %}bi-sort-alpha-down-alt{% else %}bi-sort-alpha-down{% endif %}"></i>{% endif %}</a><input class="form-control form-control-sm mt-1" form="my-drive-filter-form" name="q" value="{{ search }}" placeholder="Search name" aria-label="Filter by name"></th>
                     <th scope="col"><a class="text-body text-decoration-none d-block" href="{{ size_sort_url }}">Size {% if sort == "size" %}<i class="bi {% if direction == "desc" %}bi-sort-numeric-down-alt{% else %}bi-sort-numeric-down{% endif %}"></i>{% endif %}</a><input class="form-control form-control-sm mt-1" form="my-drive-filter-form" name="size_filter" value="{{ size_filter }}" placeholder=">5GB" aria-label="Filter by size expression" title="Examples: >5GB, <=250MB, =0B"></th>
                     <th scope="col"><a class="text-body text-decoration-none d-block" href="{{ modified_sort_url }}">Modified {% if sort == "modified" %}<i class="bi {% if direction == "desc" %}bi-sort-down-alt{% else %}bi-sort-down{% endif %}"></i>{% endif %}</a><input class="form-control form-control-sm mt-1" form="my-drive-filter-form" name="modified_filter" value="{{ modified_filter }}" placeholder=">2026-01-01" aria-label="Filter by modified-date expression" title="Examples: >2026-01-01, <=2025-12-31"></th>
                     <th scope="col"><a class="text-body text-decoration-none d-block" href="{{ owner_sort_url }}">Owner {% if sort == "owner" %}<i class="bi {% if direction == "desc" %}bi-sort-alpha-down-alt{% else %}bi-sort-alpha-down{% endif %}"></i>{% endif %}</a><input class="form-control form-control-sm mt-1" form="my-drive-filter-form" name="owner_filter" value="{{ owner_filter }}" placeholder="Owner or !owner" aria-label="Filter or exclude owner"></th>
                     <th scope="col"><span class="d-block">Permissions</span><input class="form-control form-control-sm mt-1" form="my-drive-filter-form" name="permission_filter" value="{{ permission_filter }}" placeholder="User or domain" aria-label="Filter permissions"></th>
-                </tr>
+                <th scope="col">Notes</th></tr>
             </thead>
             <tbody>
                 {% for row in rows %}
                 <tr class="{% if row.is_deleted %}table-secondary opacity-75{% endif %}" data-is-directory="{% if row.is_directory %}true{% else %}false{% endif %}" data-size-bytes="{{ row.size_bytes }}" data-permission-count="{{ row.permission_count }}">
-                    <td class="text-center">
+                    <td class="text-center boreal-report-hide">
                         <input class="form-check-input my-drive-item-select" type="checkbox" value="{{ row.item_id }}" data-is-deleted="{% if row.is_deleted %}true{% else %}false{% endif %}" aria-label="Select {{ row.name }} for tag editing">
                     </td>
-                    <td class="text-center">
+                    <td class="text-center boreal-report-hide">
                         <a href="{{ row.drive_url }}" target="_blank" rel="noopener noreferrer" title="Open in Google Drive" aria-label="Open {{ row.name }} in Google Drive">
                             <svg class="boreal-google-drive-icon" viewBox="0 0 87.3 78" aria-hidden="true">
                                 <path fill="#0066da" d="m6.6 66.9 3.8 6.6c.8 1.4 2 2.5 3.4 3.3L27.4 53H.2c0 1.6.4 3.2 1.2 4.6z"/>
@@ -260,7 +258,7 @@
                             <i class="bi bi-download" aria-hidden="true"></i>
                         </button>{% endif %}
                     </td>
-                    <td class="text-center small"><i class="bi {{ row.type_icon }} fs-6 text-primary" title="{{ row.mime_type }}" aria-label="{{ row.mime_type }}"></i></td>
+                    <td class="text-center small">{% if print_view %}<span>{{ row.mime_type }}</span>{% else %}<i class="bi {{ row.type_icon }} fs-6 text-primary" title="{{ row.mime_type }}" aria-label="{{ row.mime_type }}"></i>{% endif %}</td>
                     <th scope="row" class="boreal-name-cell small">
                         <a href="{{ row.name_url }}" {% if row.name_new_tab %}target="_blank" rel="noopener noreferrer"{% endif %} class="text-decoration-none boreal-name-link" title="{% if row.is_directory %}Browse folder in BOREAL{% else %}Open in Google Drive{% endif %}">
                             {{ row.name }}
@@ -268,7 +266,7 @@
                         <a class="boreal-print-only small ms-1" href="{{ row.drive_url }}" title="Open {{ row.name }} in Google Drive">Open in Google Drive</a>
                         {% if row.duplicate_count > 1 %}<span class="badge text-bg-warning" title="Matching metadata, not verified identical content">{{ row.duplicate_count }} candidates</span><div class="small text-body-secondary text-break">{{ row.relative_path }}</div>{% endif %}
                         <span class="boreal-item-tags" data-explorer-tags-cell>{% for tag in row.tags %}<span class="badge rounded-pill ms-1" style="background-color: {{ tag.color }}; color: {{ tag.text_color }};" title="{{ tag.description }} (click: include → exclude → clear; conditions use AND)">{{ tag.name }}</span>{% endfor %}</span>
-                        {% if row.is_deleted %}<span class="badge rounded-pill text-bg-secondary ms-1">Deleted</span>{% endif %}
+                        {% if row.is_deleted %}<span class="badge rounded-pill text-bg-secondary ms-1">No longer seen</span>{% endif %}
                     </th>
                     <td class="text-nowrap small">{{ row.size }}</td>
                     <td class="text-nowrap small">{{ row.modified_at }}</td>
@@ -294,10 +292,10 @@
                         </div>
                         {% endif %}
                     </td>
-                </tr>
+<td data-note-kind="drive" data-note-key="{{ row.item_id }}"><span class="small text-body-secondary">Loading notes…</span></td>                </tr>
                 {% endfor %}
                 {% if rows.is_empty() %}
-                <tr><td colspan="8" class="text-center text-body-secondary py-4">This folder contains no indexed items.</td></tr>
+                <tr><td colspan="9" class="text-center text-body-secondary py-4">This folder contains no indexed items.</td></tr>
                 {% endif %}
             </tbody>
         </table>
@@ -327,7 +325,6 @@
         const visibleRows = Array.from(document.querySelectorAll("tbody tr[data-size-bytes]"));
         const applyButton = document.getElementById("my-drive-apply-tag-button");
         const removeButton = document.getElementById("my-drive-remove-tag-button");
-        const updateMetadataButton = document.getElementById("my-drive-update-metadata-button");
         const migrateButton = document.getElementById("my-drive-migrate-button");
         const selectionCount = document.getElementById("my-drive-selection-count");
         const selectedItemIds = document.getElementById("my-drive-selected-item-ids");
@@ -336,6 +333,11 @@
             return;
         }
 
+        let allMatchingSelected = false;
+        document.addEventListener('boreal:selection-changed', event => {
+            allMatchingSelected = event.detail.allMatching;
+            updateSelectAll();
+        });
         function updateSelectAll() {
             const selectedCheckboxes = itemCheckboxes.filter((checkbox) => checkbox.checked);
             const selected = selectedCheckboxes.length;
@@ -344,8 +346,6 @@
             selectAll.indeterminate = selected > 0 && selected < itemCheckboxes.length;
             applyButton.disabled = selected === 0;
             removeButton.disabled = selected === 0;
-            updateMetadataButton.disabled = selected === 0 || includesDeleted;
-            updateMetadataButton.title = includesDeleted ? "Deleted items can be tagged but cannot be refreshed" : "";
             if (migrateButton) {
                 migrateButton.disabled = selected === 0;
                 migrateButton.title = includesDeleted ? "Deleted items cannot be migrated" : "";
@@ -356,6 +356,19 @@
                 .map((checkbox) => checkbox.value)
                 .join(",");
 
+            if (allMatchingSelected) {
+                document.getElementById("explorer-summary-heading").textContent = "Selected items";
+                for (const field of ["items", "files", "folders", "size", "permissions"]) {
+                    const source = document.getElementById(`explorer-filtered-summary-${field}`);
+                    const destination = document.getElementById(`explorer-summary-${field}`);
+                    destination.textContent = source.textContent;
+                    if (field === "size") {
+                        destination.dataset.sizeBytes = source.dataset.sizeBytes;
+                        destination.title = source.title;
+                    }
+                }
+                return;
+            }
             const summaryRows = selected > 0
                 ? selectedCheckboxes.map((checkbox) => checkbox.closest("tr"))
                 : visibleRows;

@@ -5,12 +5,27 @@
 | **Name** | boreal |
 | **Author** | John Haverlack |
 | **License** | MIT |
-| **Version** | 1.2.3 |
+| **Version** | 1.2.4 |
 | **Maturity** | STABLE |
-| **Date** | 2026-09-15 |
+| **Date** | 2026-09-17 |
+
+## v1.2.4 - 2026-09-17 (STABLE)
+
+- Fixed PDF Export Formatting
+- Fixing No Longer Seen Filters
+- Faster Local File Explorer
+- Starup Message Cleanup
+- Cleaning up Selected Stats
+- Adding Item Notes
+- Fixed Failed Update - Other update continue
+- Fixing Github Security Review Issues
+- Adding Keeper Link
+- Start v1.2.4
 
 ## v1.2.3 - 2026-09-15 (STABLE)
 
+- v1.2.3
+- v1.2.3
 - v1.2.3
 - Start v1.2.3
 
@@ -364,6 +379,14 @@ Added Migration Assitant and Polished Interfaces
 **Summary**
 Project Initialization
 
-- v1.2.3
-- Start v1.2.3
+- Fixed PDF Export Formatting
+- Fixing No Longer Seen Filters
+- Faster Local File Explorer
+- Starup Message Cleanup
+- Cleaning up Selected Stats
+- Adding Item Notes
+- Fixed Failed Update - Other update continue
+- Fixing Github Security Review Issues
+- Adding Keeper Link
+- Start v1.2.4
 

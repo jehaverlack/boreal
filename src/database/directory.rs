@@ -12,6 +12,7 @@ pub struct ImportSummary {
 
 #[derive(Debug, Clone, Default)]
 pub struct DirectorySummary {
+    pub completed_at: String,
     pub principals: u64,
     pub organizations: u64,
     pub groups: u64,
@@ -121,7 +122,8 @@ pub fn summary(database: &Database) -> Result<DirectorySummary, DatabaseError> {
             (SELECT COUNT(*) FROM principals
              WHERE lower(trim(principal_type)) IN ('person', 'user')
                AND status IN ('former', 'departing')),
-            (SELECT COUNT(*) FROM directory_sources WHERE enabled = 1)",
+            (SELECT COUNT(*) FROM directory_sources WHERE enabled = 1),
+            (SELECT COALESCE(MAX(stamp),'') FROM (SELECT completed_at AS stamp FROM directory_import_runs WHERE status='complete' UNION ALL SELECT updated_at FROM principals))",
             [],
             |row| {
                 Ok(DirectorySummary {
@@ -130,6 +132,7 @@ pub fn summary(database: &Database) -> Result<DirectorySummary, DatabaseError> {
                     groups: row.get::<_, i64>(2)? as u64,
                     former_or_departing: row.get::<_, i64>(3)? as u64,
                     sources: row.get::<_, i64>(4)? as u64,
+                    completed_at:row.get(5)?,
                 })
             },
         )

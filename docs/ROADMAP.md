@@ -4,6 +4,8 @@
 
 ## Feature Requests
 
+Reviewed against the v1.2.3 source on 2026-09-15. Checked items indicate implementation in the repository; they do not imply validation on every supported operating system.
+
 - [x] On quit, if jobs are running prompt the users before stopping.
 - [ ] Add an Data Retention Date to flag data for removal.
 - [x] Add Use cases to About
@@ -12,6 +14,8 @@
 - [x] Streamline Client ID Setup
 - [x] Separate Google Client ID creation wizard from JSON upload
 - [x] Migration Wizard
+- [x] Speed up Local Files browsing with stored folder totals, indexed parent lookups, and cached summary and duplicate counts.
+- [x] Migrate local indexed selections, including all filtered matches, to My Drive or Shared Drive folders.
 - [x] new Version Detection
 - [x] Add robust logging, Remove startup messages on console.
 - [x] Taskbar Menu Icon
@@ -26,11 +30,11 @@
    -  Improved People Statuses
 - [x] Cleanup Dashboard for modules and colorize modules.
 - [x] Cleanup Menu order
-- [x] Identify and filter duplicate file/folder candidates in Drive explorers; preserve checksum-based duplicate filtering in Local Files.
+- [x] Identify duplicate file/folder candidates within the filtered Google Drive view, with top-level and recursive scopes; preserve checksum-based duplicate filtering in Local Files.
 - [ ] Verify matching folder contents and provide a deduplication workflow.
 - [ ] Linux SystemD service
-- [ ] Update Documenation
-- [ ] Security Docs Sensitivity of Meta Data
+- [x] Update documentation to match current explorer controls and duplicate-filter behavior.
+- [x] Document the sensitivity of stored metadata, logs, and exported reports, including handling and backup guidance.
 - [x] Simplified Readme
 - [x] Add a Gear to SEttings Page
 - [x] Add icons to Menu Items
@@ -43,8 +47,33 @@
 - [x] Show loading feedback during explorer navigation and prevent leaving while tag saves are pending.
 - [x] Limit Drive and Keeper permissions lists to 200px with vertical scrolling; expand them for printing.
 - [x] Paginate Drive folder, Keeper, GitHub, and Local Files results with 25/50/100/200 entries per page, a remembered page-size preference, and explicit current-page/all-matching selection.
-- [ ]  On startup the terminal message shows:  Startup status: WebUI ready; background initialization is continuing.  This is confusing and should be more clear once Boreal is finsishe initalizing.
-- [ ] When pages load the Nav Bar menus loads items slowly.  The navbar should load quickly and be consistend regardless of page load status.
+- [x] Clarify startup messages: report WebUI availability separately from Rclone readiness, optional WebGUI failure, and setup failure; direct users to Settings for source connection status.
+- [x] Render enabled navigation items in the initial HTML on every page, without separate menu-loading requests or runtime availability checks.
+- [x] Show separate Filtered Items and Current page statistics in Google Drive explorers, including sizes for each scope.
+- [x] Collapse explorer filter sections and remember their open/closed state.
+- [x] Select the current page with the table-header checkbox and expose All Matches for selection across filtered pages; remove the redundant pagination selection links.
+- [x] Create Google Drive migration plans from all filtered matches across pages, with progress feedback and visible error alerts.
+- [x] Limit migration table rows to 200px with scrolling within columns; also scroll long source lists in the migration assistant.
+- [x] Link Keeper records and folders to Web Vault from a dedicated Keeper icon column; keep folder-name navigation within BOREAL and align table headers with Google Drive explorers.
+
+### Next steps after Local Files performance and migration
+
+- [x] Preserve previously indexed Drive records, including items removed, unshared, or inaccessible. Add a flat history view across historical paths and save prior metadata and permissions before changes; retain current items as the default explorer view.
+- [x] Make migration name-collision errors actionable: edit the saved selection, highlight every conflicting top-level name, and save a revised plan with its destination and original explorer filters. Archive the original plan for reference.
+- [x] Explain why duplicate candidates differ from migration conflicts. Drive duplicate filtering matches name, kind, MIME type, and size; migration conflicts require only equal top-level names. The selection editor shows full paths and sizes for resolution.
+- [x] Show Persons metadata age on the dashboard using the latest successful import or manual person-record update; failed imports do not advance it.
+
+### Follow-up review
+
+Completed after approval:
+
+1. Updated explorer documentation for scoped duplicate detection, collapsible filters, scoped statistics, all-matches migration feedback, and Keeper record links.
+2. Updated security guidance for the latest 1.2.x patch and the sensitivity of local metadata, logs, exports, and backups.
+3. Clarified terminal startup feedback without implying that every optional source is connected.
+
+**Still awaiting discussion:** a per-item tag dialog. Existing tag operations can provide a starting point, but selection behavior and interaction with queued saves need agreement first. Item comments and retention dates require additional data-model and workflow decisions.
+
+The per-user installer, stable launcher, startup registration, and staged-update phases below remain open. Existing portable launches and duplicate-instance protection provide a baseline; they do not complete the installation workflow.
 
 
 
@@ -107,7 +136,7 @@ The stable launcher will select the current version, start BOREAL, apply a stage
 - [ ] Portable BOREAL should continue to work without installation.
 - [ ] Installation, startup registration, updates, repair, and uninstall should not require administrator access.
 - [ ] Starting BOREAL from the OS application menu should open the running WebUI or start it when necessary.
-- [ ] Prevent duplicate backend instances by retaining the existing-instance check.
+- [x] Prevent duplicate backend instances with the existing-instance check and port reservation (`src/main.rs`). Retain this behavior when adding the installer and stable launcher.
 - [ ] Quote and validate every generated executable and configuration path.
 - [ ] Preserve `BOREAL_HOME`, credentials, inventory data, and logs across binary upgrades.
 - [ ] Sign/notarize platform releases where supported and never activate an unverified download.

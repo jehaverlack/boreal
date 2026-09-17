@@ -5,6 +5,7 @@ Linux: python3 tools/test-rclone-auth.py /path/to/rclone
 Uses a temporary config and mock OAuth server. Rclone's callback port (53682)
 must be free. An xdg-open stub follows only loopback URLs.
 """
+import http.client
 import http.server
 import json
 import os
@@ -24,11 +25,14 @@ class OAuthServer(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         params = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-        callback = params['redirect_uri'][0]
-        assert urllib.parse.urlsplit(callback).hostname in ('127.0.0.1', 'localhost')
+        callback = params.get('redirect_uri', [''])[0]
+        if callback not in ('http://127.0.0.1:53682/', 'http://localhost:53682/') or not params.get('state'):
+            self.send_error(400, 'Invalid mock OAuth callback')
+            return
         query = urllib.parse.urlencode({'code': 'synthetic-code', 'state': params['state'][0]})
         self.send_response(302)
-        self.send_header('Location', callback + '?' + query)
+        # Use a fixed loopback destination, never request text in the header.
+        self.send_header('Location', 'http://127.0.0.1:53682/?' + query)
         self.end_headers()
 
     def do_POST(self):
@@ -81,6 +85,19 @@ urllib.request.build_opener(urllib.request.ProxyHandler({}), LoopbackOnly()).ope
             return result
 
         try:
+            # Exercise callbacks that hostname-only validation would miss.
+            for callback in ('http://127.0.0.1:53682/\r\nX-Injected: yes',
+                             'http://127.0.0.1:53682/?extra=1',
+                             'http://127.0.0.1:9999/', 'https://example.com/', ''):
+                connection = http.client.HTTPConnection('127.0.0.1', server.server_port)
+                connection.request('GET', '/authorize?' + urllib.parse.urlencode({
+                    'redirect_uri': callback, 'state': 'synthetic-state'}))
+                response = connection.getresponse()
+                assert response.status == 400
+                assert response.getheader('Location') is None
+                assert response.getheader('X-Injected') is None
+                response.read()
+                connection.close()
             for name, scope in [('my-drive-ro', 'drive.readonly'), ('my-drive-rw', 'drive')]:
                 options = ['client_id', 'synthetic-app', 'client_secret', 'synthetic-secret',
                            'scope', scope, 'auth_url', endpoint + '/authorize', 'token_url', endpoint + '/token']

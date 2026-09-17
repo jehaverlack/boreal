@@ -46,7 +46,8 @@ th:has([data-explorer-all-matches]) { width: 136px; min-width: 136px; text-align
         body.set('selected_item_ids', boxes().filter(box => box.checked).map(box => box.value).join(','));
         body.set('all_matching', String(allMatching));
         body.set('background', 'true');
-        body.set('tag', body.get('tag_filter') || '');
+        body.set('source_url', window.location.pathname + window.location.search);
+        if (body.has('tag_filter')) body.set('tag', body.get('tag_filter') || '');
         body.set('owner_identity_tag', body.get('owner_identity_tag_filter') || '');
         body.set('permission_identity_tag', body.get('permission_identity_tag_filter') || '');
         clearError(); migrating = true;
@@ -110,6 +111,7 @@ th:has([data-explorer-all-matches]) { width: 136px; min-width: 136px; text-align
         });
     });
     function selectionChanged() {
+        document.dispatchEvent(new CustomEvent('boreal:selection-changed', {detail:{allMatching}}));
         const selected = boxes().filter(box => box.checked);
         const pageSelected = selected.length > 0 && selected.length === boxes().length;
         matchCheckboxes.forEach(checkbox => {
@@ -138,7 +140,7 @@ th:has([data-explorer-all-matches]) { width: 136px; min-width: 136px; text-align
         if (resultsStale || busy()) { selectionChanged(); showError('Refresh saved results before selecting all matching entries.'); return; }
         allMatching = checkbox.checked;
         selectionChanged(); clearError();
-        status.textContent = allMatching ? `All ${pager.dataset.total} filtered entries selected.` : 'Current page selected.';
+        status.textContent = '';
     }));
     clear.addEventListener('click', () => {
         allMatching = false;

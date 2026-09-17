@@ -5,8 +5,8 @@
     "description": "Browser-based Organizer for Rclone Exploration, Audit and Lookup",
     "abbr": "BOREAL",
     "icon": "fa-solid fa-cloud-bolt",
-    "version": "1.2.3",
-    "version_date": "2026-09-15",
+    "version": "1.2.4",
+    "version_date": "2026-09-17",
     "maturity": "STABLE",
     "author": "John Haverlack",
     "copyright": "2026 University of Alaska Fairbanks",
@@ -17,9 +17,9 @@
   },
   "BUILD_TARGETS": {
     "x86_64-unknown-linux-gnu": true,
-    "aarch64-unknown-linux-gnu": true,
-    "armv7-unknown-linux-gnueabihf": true,
-    "x86_64-pc-windows-gnu": true,
+    "aarch64-unknown-linux-gnu": false,
+    "armv7-unknown-linux-gnueabihf": false,
+    "x86_64-pc-windows-gnu": false,
     "x86_64-apple-darwin": true,
     "aarch64-apple-darwin": true
   },

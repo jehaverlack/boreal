@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
+const templateSection = require('./test-template-section.cjs');
 const base = fs.readFileSync(path.join(__dirname, '../tmpl/html/base.html'), 'utf8');
 const tagWindow = {};
 const tagScriptStart = base.indexOf('        window.borealToggleTag =');
@@ -224,7 +225,7 @@ console.log('Keeper vault tags: mixed filters, three-click cycle and Any Folder 
 
 const guide = fs.readFileSync(path.join(__dirname, '../tmpl/html/partials/google-setup-guide.html'), 'utf8');
 const guideSteps = [{},{},{},{},{}], guideBack = element(), guideNext = element(), guideCount = {};
-vm.runInNewContext(guide.match(/<script>([\s\S]*?)<\/script>/)[1], {document: {
+vm.runInNewContext(templateSection(guide, 'script'), {document: {
     querySelectorAll: () => guideSteps,
     getElementById: id => ({'google-setup-back':guideBack,'google-setup-next':guideNext,'google-setup-count':guideCount}[id]),
 }});

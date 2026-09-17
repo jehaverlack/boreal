@@ -143,25 +143,21 @@ if [[ "$HOST_OS" == "Linux" ]]; then
         check_target "$WINDOWS_X86_64"
     fi
 
-    echo "==> Checking cross-compilers"
-
-    if target_enabled "$LINUX_AARCH64"; then
-        check_command \
-            aarch64-linux-gnu-gcc \
-            "Install with: sudo apt install gcc-aarch64-linux-gnu"
-    fi
-
-    if target_enabled "$LINUX_ARMV7"; then
-        check_command \
-            arm-linux-gnueabihf-gcc \
-            "Install with: sudo apt install gcc-arm-linux-gnueabihf"
-    fi
-
-    if target_enabled "$WINDOWS_X86_64"; then
-        check_command \
-            x86_64-w64-mingw32-gcc \
-            "Install with: sudo apt install gcc-mingw-w64-x86-64"
-    fi
+    echo "==> Checking target C compilers"
+    # shellcheck source=lib/linux-build-deps.sh
+    source "$SCRIPT_DIR/lib/linux-build-deps.sh"
+    host_target=$(linux_host_target)
+    for target in "$LINUX_X86_64" "$LINUX_AARCH64" "$LINUX_ARMV7" "$WINDOWS_X86_64"; do
+        if target_enabled "$target"; then
+            compiler=$(compiler_for_target "$target" "$host_target")
+            check_command "$compiler" "Run ./tools/setup-build-linux.sh; see docs/BUILDING.md for distribution-specific cross-compilers."
+            # Use the native compiler on ARM hosts too; override the repository's
+            # cross-linker defaults only for this build process.
+            target_key=${target//-/_}
+            export "CARGO_TARGET_${target_key^^}_LINKER=$compiler"
+            export "CC_${target_key}=$compiler"
+        fi
+    done
 
     # ---------------------------------------------
     # Linux x86_64
