@@ -34,7 +34,7 @@ pub fn validate_destination(
         if require_shared_drive {
             return Err("My Drive migrations require a Shared Drive destination folder".into());
         }
-        let folders = destination_folder_chain(runtime, folder, "")?;
+        let folders = destination_folder_chain(runtime, folder, "", RemoteKind::MyDriveRo)?;
         let destination = folders
             .last()
             .ok_or("Google Drive returned no destination folder")?;
@@ -59,7 +59,7 @@ pub fn validate_destination(
     } else {
         folder.name.clone()
     };
-    let folders = destination_folder_chain(runtime, folder, &drive.id)?;
+    let folders = destination_folder_chain(runtime, folder, &drive.id, RemoteKind::MyDriveRo)?;
     Ok(SharedDriveDestination {
         drive_id: drive.id,
         drive_name: drive.name,
@@ -69,10 +69,62 @@ pub fn validate_destination(
     })
 }
 
+/// Local uploads need only the Google account authorized to write the target.
+pub fn validate_upload_destination(
+    runtime: &Runtime,
+    executable: &Path,
+    folder_id: &str,
+) -> Result<SharedDriveDestination, RcloneError> {
+    let output = command::run(
+        executable,
+        [
+            "backend",
+            "drives",
+            &format!("{}:", RemoteKind::MyDriveRw.name()),
+            "--json",
+            "--config",
+            config::path(runtime)?.to_string_lossy().as_ref(),
+        ],
+    )?;
+    if !output.status.success() {
+        return Err("Add and authorize My Drive RW before selecting an upload destination".into());
+    }
+    let drives: Vec<inventory::SharedDrive> = serde_json::from_slice(&output.stdout)?;
+    let folder =
+        identity::fetch_google_drive_folder_for_remote(runtime, RemoteKind::MyDriveRw, folder_id)?;
+    if !folder.can_add_children {
+        return Err("The Google account cannot add files to this folder".into());
+    }
+    let drive_id = folder.drive_id.clone();
+    let drive_name = if drive_id.is_empty() {
+        "My Drive".to_string()
+    } else {
+        drives
+            .iter()
+            .find(|d| d.id == drive_id)
+            .map(|d| d.name.clone())
+            .unwrap_or_else(|| drive_id.clone())
+    };
+    let folder_name = if folder.id == drive_id {
+        drive_name.clone()
+    } else {
+        folder.name.clone()
+    };
+    let folders = destination_folder_chain(runtime, folder, &drive_id, RemoteKind::MyDriveRw)?;
+    Ok(SharedDriveDestination {
+        drive_id,
+        drive_name,
+        folder_id: folder_id.to_string(),
+        folder_name,
+        folders,
+    })
+}
+
 fn destination_folder_chain(
     runtime: &Runtime,
     destination: identity::GoogleDriveFolder,
     shared_drive_id: &str,
+    remote: RemoteKind,
 ) -> Result<Vec<identity::GoogleDriveFolder>, RcloneError> {
     let mut folders = vec![destination];
     for _ in 0..100 {
@@ -82,7 +134,7 @@ fn destination_folder_chain(
         if !shared_drive_id.is_empty() && parent_id == shared_drive_id {
             break;
         }
-        let parent = identity::fetch_google_drive_folder(runtime, parent_id)?;
+        let parent = identity::fetch_google_drive_folder_for_remote(runtime, remote, parent_id)?;
         if parent.drive_id != folders[0].drive_id {
             return Err("Destination folder ancestry crosses Google Drive boundaries".into());
         }
@@ -258,7 +310,7 @@ fn source_remote(kind: &str, scope: &str, path: &str) -> Result<String, RcloneEr
     ))
 }
 
-fn destination_remote(drive_id: &str, folder_id: &str) -> String {
+pub(super) fn destination_remote(drive_id: &str, folder_id: &str) -> String {
     if drive_id.is_empty() {
         format!(
             "{},root_folder_id={folder_id}:",

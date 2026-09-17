@@ -684,7 +684,7 @@ impl AppState {
             _ => return Err("Rclone is not ready".to_string()),
         };
         let remotes = state.google_remotes_state();
-        if !matches!(remotes.ro, RemoteState::Ready) {
+        if job.source_kind != "local-files" && !matches!(remotes.ro, RemoteState::Ready) {
             return Err("My Drive RO is not ready".to_string());
         }
         if job.destination_kind == "google-drive" && !matches!(remotes.rw, RemoteState::Ready) {
@@ -719,6 +719,13 @@ impl AppState {
         tokio::spawn(async move {
             let failure_database = database.clone();
             let result = tokio::task::spawn_blocking(move || -> Result<(), String> {
+                if job.source_kind == "local-files" {
+                    if let Err(error) = rclone::local_upload::validate_sources(&database, migration_id, &job.sources) {
+                        let message = format!("Local source unavailable: {error}");
+                        let _ = database::migration::fail_preflight(&database, migration_id, &message);
+                        return Err(message);
+                    }
+                }
                 if job.destination_kind == "google-drive" {
                     if let Err(error) = rclone::migration::preflight_copy(
                         &state.runtime,
@@ -779,6 +786,8 @@ impl AppState {
                             shared_drive_id,
                             immutable: !allow_existing,
                         })
+                    } else if job.source_kind == "local-files" {
+                        rclone::local_upload::copy_source(&state.runtime, &executable, &database, migration_id, source, &job.destination_drive_id, &job.destination_folder_id, !allow_existing)
                     } else {
                         rclone::migration::copy_source(
                             &state.runtime,
@@ -1419,7 +1428,9 @@ impl AppState {
                         let cache=crate::database::local_files::checksum_cache(&database)?;
                         let scan=crate::local_files::scan(&options,&cache);
                         if scan.cancelled { return Err("Local Files metadata update cancelled".into()); }
-                        crate::database::local_files::synchronize_cancellable(&database,&scan.items,&worker_state.job_cancellation)?;
+                        if !scan.errors.is_empty() { return Err(format!("Local Files scan incomplete; the previous index was kept. {} error(s). {}", scan.errors.len(), scan.errors[0]).into()); }
+                        let scope = serde_json::to_string(&serde_json::json!({"roots": options.roots, "hidden": options.exclude_hidden, "caches": options.exclude_caches, "temporary": options.exclude_temporary, "patterns": options.exclude_patterns, "boreal_home": options.boreal_home}))?;
+                        crate::database::local_files::synchronize_cancellable(&database,&scan.items,&scope,&worker_state.job_cancellation)?;
                         let _ = database.record_metadata_timing("local-files", timing_started.elapsed().as_secs());
                         log::info!("Local Files metadata updated: items={}, skipped={}, errors={}",scan.items.len(),scan.skipped,scan.errors.len());
                         Ok(())

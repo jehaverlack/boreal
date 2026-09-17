@@ -2,7 +2,9 @@ pub mod directory;
 pub mod github;
 pub mod inventory;
 pub mod keeper;
+pub mod local_file_history;
 pub mod local_files;
+pub mod local_migration;
 pub mod migration;
 mod migrations;
 pub mod s3;
@@ -530,7 +532,7 @@ mod tests {
             })
             .expect("migration count should be readable");
 
-        assert_eq!(migration_count, 39,);
+        assert_eq!(migration_count, 42,);
 
         let safe_to_delete_scope_count: i64 = connection
             .query_row(
@@ -1259,6 +1261,231 @@ mod tests {
     }
 
     #[test]
+    fn local_file_browse_cache_tracks_index_updates_and_uses_parent_index() {
+        let root = temporary_directory();
+        let db = Database::initialize(&runtime(&root)).unwrap();
+        let item = |path: &str, directory, bytes, hash: &str| crate::local_files::Item {
+            root_path: "/inventory".into(),
+            relative_path: path.into(),
+            name: path.rsplit('/').next().unwrap().into(),
+            is_directory: directory,
+            size_bytes: bytes,
+            checksum_sha256: hash.into(),
+            ..Default::default()
+        };
+        let items = vec![
+            item("folder%", true, 30, ""),
+            item("folder%/a", false, 10, "same"),
+            item("folder%/b", false, 10, "same"),
+            item("folder%/nested", true, 10, ""),
+            item("folder%/nested/c", false, 10, ""),
+        ];
+        local_files::synchronize(&db, &items).unwrap();
+        let summary = local_files::summary(&db).unwrap();
+        assert_eq!(
+            (
+                summary.files,
+                summary.folders,
+                summary.bytes,
+                summary.duplicate_groups,
+                summary.duplicate_bytes
+            ),
+            (3, 2, 30, 1, 10)
+        );
+        let (rows, count) = local_files::list_children_page(
+            &db,
+            "/inventory",
+            "folder%",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            false,
+            "name",
+            false,
+            Some((0, 25)),
+            None,
+        )
+        .unwrap();
+        assert_eq!(count, 3);
+        assert_eq!(rows[0].name, "nested");
+        assert_eq!(rows[0].size_bytes, 10);
+        assert_eq!(rows[1].duplicate_copies, 2);
+        let c = db.connect().unwrap();
+        let mut statement = c.prepare("EXPLAIN QUERY PLAN SELECT id FROM local_file_items WHERE is_accessible=1 AND root_path=?1 AND parent_path=?2 ORDER BY is_directory DESC,name COLLATE NOCASE,id LIMIT 50").unwrap();
+        let plan = statement
+            .query_map(params!["/inventory", "folder%"], |r| r.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .join(" ");
+        assert!(plan.contains("local_file_children_idx"), "{plan}");
+        assert!(
+            !plan.contains("SCAN") && !plan.contains("TEMP B-TREE"),
+            "{plan}"
+        );
+        local_files::synchronize(&db, &items[..2]).unwrap();
+        let summary = local_files::summary(&db).unwrap();
+        assert_eq!(
+            (
+                summary.files,
+                summary.bytes,
+                summary.duplicate_groups,
+                summary.duplicate_bytes
+            ),
+            (1, 10, 0, 0)
+        );
+        let copies: i64 = c
+            .query_row(
+                "SELECT duplicate_copies FROM local_file_items WHERE relative_path='folder%/a'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(copies, 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_file_migration_freezes_selection_deduplicates_descendants_and_preserves_jobs() {
+        let root = temporary_directory();
+        let db = Database::initialize(&runtime(&root)).unwrap();
+        db.connect().unwrap().execute("INSERT OR REPLACE INTO settings(key,value) VALUES('local_files.roots','/inventory')",[]).unwrap();
+        let item = |path: &str, directory, bytes| crate::local_files::Item {
+            root_path: "/inventory".into(),
+            relative_path: path.into(),
+            name: path.rsplit('/').next().unwrap().into(),
+            is_directory: directory,
+            size_bytes: bytes,
+            ..Default::default()
+        };
+        let mut link = item("folder%/link", false, 0);
+        link.is_symlink = true;
+        let items = vec![
+            item("folder%", true, 42),
+            item("folder%/file.txt", false, 42),
+            item("folder%/empty", true, 0),
+            item("folderX/file.txt", false, 80),
+            link,
+        ];
+        local_files::synchronize(&db, &items).unwrap();
+        let c = db.connect().unwrap();
+        let id = |path| {
+            c.query_row(
+                "SELECT id FROM local_file_items WHERE relative_path=?1",
+                [path],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap()
+        };
+        let job =
+            local_migration::create(&db, &[id("folder%/file.txt"), id("folder%"), id("folder%")])
+                .unwrap();
+        let plan = migration::get(&db, job).unwrap().unwrap();
+        assert_eq!(plan.source_kind, "local-files");
+        assert_eq!(plan.sources.len(), 1);
+        assert_eq!(
+            (plan.files_total, plan.folders_total, plan.bytes_total),
+            (1, 2, 42)
+        );
+        let entries = local_migration::entries(&db, job, &plan.sources[0].item_id).unwrap();
+        assert_eq!(entries.len(), 3);
+        assert!(entries.iter().all(|e| !e.relative_path.contains("folderX") && !e.relative_path.ends_with("link")));
+        assert!(local_migration::create(&db, &[id("folder%/link")]).is_err());
+        assert!(
+            local_migration::create(&db, &[id("folder%/file.txt"), id("folderX/file.txt")])
+                .is_err()
+        );
+        assert!(migration::set_local_destination(&db, job, "/tmp/destination").is_err());
+        migration::set_destination(
+            &db,
+            job,
+            "https://drive.google.com/drive/folders/target",
+            "",
+            "My Drive",
+            "target",
+            "Uploads",
+        )
+        .unwrap();
+        local_files::synchronize(&db, &[]).unwrap();
+        assert_eq!(
+            local_migration::entries(&db, job, &plan.sources[0].item_id)
+                .unwrap()
+                .len(),
+            3
+        );
+        migration::begin_copy(&db, job).unwrap();
+        migration::confirm_copy_started(&db, job).unwrap();
+        migration::start_source(&db, job, &plan.sources[0].item_id).unwrap();
+        migration::complete_source(&db, job, &plan.sources[0].item_id).unwrap();
+        migration::complete_copy(&db, job).unwrap();
+        assert_eq!(migration::get(&db, job).unwrap().unwrap().status, "copied");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_file_history_is_atomic_and_preserves_previous_updates() {
+        use std::sync::{Arc, atomic::AtomicBool};
+        let root = temporary_directory();
+        let database = Database::initialize(&runtime(&root)).unwrap();
+        let first = crate::local_files::Item {
+            root_path: "/inventory".into(),
+            relative_path: "old.txt".into(),
+            name: "old.txt".into(),
+            size_bytes: 12,
+            file_identity: "1:2:3".into(),
+            ..Default::default()
+        };
+        local_files::synchronize(&database, &[first.clone()]).unwrap();
+        let mut second = first.clone();
+        second.relative_path = "new.txt".into();
+        second.name = "new.txt".into();
+        local_files::synchronize(&database, &[second]).unwrap();
+        let history = local_file_history::snapshots(&database).unwrap();
+        assert_eq!(history.len(), 2);
+        let diff =
+            local_file_history::compare(&database, history[1].id, history[0].id, true).unwrap();
+        assert_eq!(diff.len(), 1);
+        assert_eq!(diff[0].kind, "Moved");
+        assert_eq!(diff[0].before.as_ref().unwrap().relative_path, "old.txt");
+        assert_eq!(local_files::summary(&database).unwrap().files, 1);
+        let c = database.connect().unwrap();
+        let current: String = c
+            .query_row(
+                "SELECT relative_path FROM local_file_items WHERE is_accessible=1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(current, "new.txt");
+        assert!(
+            local_files::synchronize_cancellable(
+                &database,
+                &[],
+                "test",
+                &Arc::new(AtomicBool::new(true))
+            )
+            .is_err()
+        );
+        assert_eq!(local_file_history::snapshots(&database).unwrap().len(), 2);
+        assert_eq!(local_files::summary(&database).unwrap().files, 1);
+        local_files::synchronize(&database, &[]).unwrap();
+        assert_eq!(local_files::summary(&database).unwrap().files, 0);
+        let latest = local_file_history::snapshots(&database).unwrap();
+        assert_eq!(
+            local_file_history::compare(&database, history[0].id, latest[0].id, true).unwrap()[0]
+                .kind,
+            "Deleted"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn local_file_search_and_username_associations_span_the_inventory() {
         let root = temporary_directory();
         let database = Database::initialize(&runtime(&root)).expect("database should initialize");
@@ -1273,6 +1500,8 @@ mod tests {
                     is_directory: true,
                     size_bytes: 42,
                     modified_unix: 1,
+                    modified_nanos: Some(0),
+                    file_identity: String::new(),
                     checksum_sha256: String::new(),
                     is_symlink: false,
                     symlink_target: String::new(),
@@ -1289,6 +1518,8 @@ mod tests {
                     is_directory: false,
                     size_bytes: 42,
                     modified_unix: 1,
+                    modified_nanos: Some(0),
+                    file_identity: String::new(),
                     checksum_sha256: String::new(),
                     is_symlink: false,
                     symlink_target: String::new(),
@@ -2316,6 +2547,7 @@ mod tests {
                 "name",
                 false,
                 Some((0, 1)),
+                None,
             )
             .unwrap();
             assert_eq!(total, expected);

@@ -14,6 +14,8 @@ Reviewed against the v1.2.3 source on 2026-09-15. Checked items indicate impleme
 - [x] Streamline Client ID Setup
 - [x] Separate Google Client ID creation wizard from JSON upload
 - [x] Migration Wizard
+- [x] Speed up Local Files browsing with stored folder totals, indexed parent lookups, and cached summary and duplicate counts.
+- [x] Migrate local indexed selections, including all filtered matches, to My Drive or Shared Drive folders.
 - [x] new Version Detection
 - [x] Add robust logging, Remove startup messages on console.
 - [x] Taskbar Menu Icon
@@ -53,6 +55,12 @@ Reviewed against the v1.2.3 source on 2026-09-15. Checked items indicate impleme
 - [x] Create Google Drive migration plans from all filtered matches across pages, with progress feedback and visible error alerts.
 - [x] Limit migration table rows to 200px with scrolling within columns; also scroll long source lists in the migration assistant.
 - [x] Link Keeper records and folders to Web Vault from a dedicated Keeper icon column; keep folder-name navigation within BOREAL and align table headers with Google Drive explorers.
+
+### Next steps after Local Files performance and migration
+
+- [ ] Investigate Shared with Me metadata updates that appear to lose prior items. Preserve all previously indexed records, including items that are removed, unshared, or inaccessible. Distinguish their historical status from the current explorer view; test updates and history visibility without deleting old metadata.
+- [ ] Make migration name-collision errors actionable: return to an editable selection while retaining its filters and selected items, highlight all items sharing a conflicting top-level destination name, and let users revise the selection before retrying.
+- [ ] Review why the current duplicate tool does not expose those migration conflicts. Distinguish filename collisions from matching file contents, and show full source paths so users can resolve same-name selections.
 
 ### Follow-up review
 

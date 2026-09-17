@@ -340,6 +340,7 @@ pub struct MigrationView {
     pub running: bool,
     pub allows_my_drive_destination: bool,
     pub allows_google_destination: bool,
+    pub local_source: bool,
     pub sources: Vec<MigrationSourceView>,
 }
 
@@ -1726,7 +1727,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/ui/keeper-primary-nav", get(ui_keeper_primary_nav))
         .route("/ui/keeper-launcher", get(ui_keeper_launcher))
         .route("/local-files", get(local_files_page))
+        .route("/local-files/changes", get(local_file_changes_page))
         .route("/local-files/tags", post(apply_local_file_tag))
+        .route("/local-files/migrate", post(create_local_migration))
         .route("/local-files/tags/remove", post(remove_local_file_tag))
         .route("/local-files/owners", post(associate_local_file_owner))
         .route(
@@ -3444,9 +3447,11 @@ async fn save_migration_destination(
                 return Err(format!("Rclone is not ready: {error}"));
             }
         };
+        let local_upload = job.source_kind == "local-files";
         let probe_state = Arc::clone(&state);
         let probe_folder_id = folder_id.clone();
         let destination = tokio::task::spawn_blocking(move || {
+            if local_upload { return rclone::migration::validate_upload_destination(&probe_state.runtime, &executable, &probe_folder_id); }
             rclone::migration::validate_destination(
                 &probe_state.runtime,
                 &executable,
@@ -3458,7 +3463,7 @@ async fn save_migration_destination(
         .map_err(|error| format!("Destination validation task failed: {error}"))?
         .map_err(|error| error.to_string())?;
 
-        if job.sources.iter().any(|source| source.is_directory && destination.folders.iter().any(|folder| folder.id == source.item_id)) {
+        if job.source_kind != "local-files" && job.sources.iter().any(|source| source.is_directory && destination.folders.iter().any(|folder| folder.id == source.item_id)) {
             return Err("Choose a destination outside the selected source folders; a folder cannot be copied into itself or its descendants.".into());
         }
         let local_destination = database::migration::resolve_destination(&database, &folder_id)
@@ -3703,14 +3708,19 @@ fn migration_view(job: database::migration::MigrationJob) -> MigrationView {
     let can_resume = matches!(job.status.as_str(), "interrupted" | "error" | "copied")
         && job.archived_at.is_empty();
     let running = matches!(job.status.as_str(), "preflight" | "running");
-    let allows_my_drive_destination =
-        matches!(job.source_kind.as_str(), "shared-with-me" | "shared-drive");
+    let allows_my_drive_destination = matches!(
+        job.source_kind.as_str(),
+        "shared-with-me" | "shared-drive" | "local-files"
+    );
     let allows_google_destination = true;
+    let local_source = job.source_kind == "local-files";
     let sources = job
         .sources
         .into_iter()
         .map(|source| MigrationSourceView {
-            drive_url: if source.is_directory {
+            drive_url: if local_source {
+                String::new()
+            } else if source.is_directory {
                 format!("https://drive.google.com/drive/folders/{}", source.item_id)
             } else {
                 format!("https://drive.google.com/open?id={}", source.item_id)
@@ -3729,6 +3739,7 @@ fn migration_view(job: database::migration::MigrationJob) -> MigrationView {
     MigrationView {
         id: job.id,
         source_label: match job.source_kind.as_str() {
+            "local-files" => "Local Files".into(),
             "my-drive" => "My Drive".into(),
             "shared-drive" => "Shared Drive".into(),
             _ => "Shared with Me".into(),
@@ -3780,6 +3791,7 @@ fn migration_view(job: database::migration::MigrationJob) -> MigrationView {
         running,
         allows_my_drive_destination,
         allows_google_destination,
+        local_source,
         sources,
     }
 }
@@ -5870,9 +5882,274 @@ fn local_files_primary_navigation(enabled: bool) -> Html<String> {
     }
 }
 
+#[derive(Template)]
+#[template(path = "local-file-changes.html", config = "askama.toml")]
+struct LocalFileChangesTemplate {
+    navigation: Navigation,
+    title: &'static str,
+    active_page: &'static str,
+    alerts: Vec<AlertItem>,
+    status_items: Vec<StatusItem>,
+    poll_rclone: bool,
+    snapshots: Vec<database::local_file_history::Snapshot>,
+    query: LocalChangesQuery,
+    pagination: PageView,
+    changes: Vec<LocalChangeView>,
+    scope_changed: bool,
+    ready: bool,
+    counts: String,
+}
+
+#[derive(Default, serde::Deserialize)]
+#[serde(default)]
+struct LocalChangesQuery {
+    before: i64,
+    after: i64,
+    q: String,
+    kind: String,
+    #[serde(flatten)]
+    pagination: PageQuery,
+}
+
+struct LocalChangeView {
+    kind: &'static str,
+    color: &'static str,
+    before: LocalChangeSide,
+    after: LocalChangeSide,
+    detail: String,
+}
+
+#[derive(Default)]
+struct LocalChangeSide {
+    path: String,
+    metadata: String,
+}
+
+fn local_change_side(item: Option<crate::local_files::Item>) -> LocalChangeSide {
+    let Some(item) = item else {
+        return LocalChangeSide::default();
+    };
+    let kind = if item.is_symlink {
+        "Symlink"
+    } else if item.is_directory {
+        "Folder"
+    } else {
+        "File"
+    };
+    let metadata = format!(
+        "{kind} · {} bytes indexed\nModified: {} (local time)\nOwner: {} ({}) · Group: {} ({}){}{}",
+        item.size_bytes,
+        match item.modified_nanos {
+            Some(nanos) => format!(
+                "{}.{nanos:09}",
+                database::local_files::format_unix(item.modified_unix)
+            ),
+            None => database::local_files::format_unix(item.modified_unix),
+        },
+        item.owner_username,
+        item.owner_identifier,
+        item.group_name,
+        item.group_identifier,
+        if item.symlink_target.is_empty() {
+            String::new()
+        } else {
+            format!("\nTarget: {}", item.symlink_target)
+        },
+        if item.checksum_sha256.is_empty() {
+            String::new()
+        } else {
+            format!("\nSHA-256: {}", item.checksum_sha256)
+        }
+    );
+    LocalChangeSide {
+        path: std::path::Path::new(&item.root_path)
+            .join(&item.relative_path)
+            .to_string_lossy()
+            .into_owned(),
+        metadata,
+    }
+}
+
+async fn local_file_changes_page(
+    State(state): State<Arc<AppState>>,
+    Query(mut query): Query<LocalChangesQuery>,
+) -> Result<Html<String>, StatusCode> {
+    if !local_files_enabled(&state) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let database = state
+        .database()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let snapshots = database::local_file_history::snapshots(&database)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if query.after == 0 {
+        query.after = snapshots.first().map_or(0, |s| s.id);
+    }
+    if query.before == 0 {
+        query.before = snapshots
+            .iter()
+            .find(|s| s.id < query.after)
+            .map_or(0, |s| s.id);
+    }
+    let before = snapshots.iter().find(|s| s.id == query.before);
+    let after = snapshots.iter().find(|s| s.id == query.after);
+    if (query.before != 0 && before.is_none())
+        || (query.after != 0 && after.is_none())
+        || (query.before > 0 && query.before >= query.after)
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let ready = before.is_some() && after.is_some();
+    let scope_changed = ready && before.unwrap().scope != after.unwrap().scope;
+    let mut changes = if ready {
+        database::local_file_history::compare(&database, query.before, query.after, !scope_changed)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    } else {
+        Vec::new()
+    };
+    let counts = ["Added", "Changed", "Deleted", "Moved", "Removed from index"]
+        .iter()
+        .map(|kind| {
+            format!(
+                "{} {}",
+                changes.iter().filter(|c| c.kind == *kind).count(),
+                kind.to_lowercase()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let search = query.q.to_lowercase();
+    changes.retain(|c| {
+        (query.kind.is_empty() || c.kind == query.kind)
+            && (search.is_empty()
+                || [&c.before, &c.after].iter().any(|side| {
+                    side.as_ref().is_some_and(|i| {
+                        format!("{}/{}", i.root_path, i.relative_path)
+                            .to_lowercase()
+                            .contains(&search)
+                    })
+                }))
+    });
+    let pagination = query.pagination.view(changes.len());
+    let changes = changes
+        .into_iter()
+        .skip((pagination.page - 1) * pagination.size)
+        .take(pagination.size)
+        .map(|c| LocalChangeView {
+            kind: c.kind,
+            color: match c.kind {
+                "Added" => "success",
+                "Deleted" | "Removed from index" => "danger",
+                "Moved" => "primary",
+                _ => "warning",
+            },
+            before: local_change_side(c.before),
+            after: local_change_side(c.after),
+            detail: c.detail,
+        })
+        .collect();
+    let rclone_state = state.rclone_state();
+    let google_client_state = state.google_client_state();
+    let google_remotes_state = state.google_remotes_state();
+    let metadata_state = state.metadata_state();
+    render_template(&LocalFileChangesTemplate {
+        navigation: navigation(&state),
+        title: "Compare Local Files updates - BOREAL",
+        active_page: "local-files",
+        alerts: build_alerts(
+            &rclone_state,
+            &google_client_state,
+            bookmark_reminder_visible(&state),
+        ),
+        status_items: build_status_items(
+            &state,
+            &rclone_state,
+            &google_client_state,
+            &google_remotes_state,
+            &metadata_state,
+            configured_remote_count(&state.runtime, &rclone_state),
+            authenticated_google_email(&state),
+            &state.update_state(),
+        ),
+        poll_rclone: should_poll_ui(&rclone_state, &google_remotes_state, &metadata_state),
+        snapshots,
+        query,
+        pagination,
+        changes,
+        scope_changed,
+        ready,
+        counts,
+    })
+}
+
+async fn create_local_migration(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<LocalMigrationForm>,
+) -> Result<Response<Body>, (StatusCode, String)> {
+    let background = form.background;
+    let id = tokio::task::spawn_blocking(move || {
+        if !local_files_enabled(&state) {
+            return Err("Local Files is not enabled".to_string());
+        }
+        let database = state.database().map_err(|e| e.to_string())?;
+        let ids = if form.all_matching {
+            local_explorer_roots(&database, &form.query, false)
+                .map_err(|_| "Unable to resolve the local selection".to_string())?
+                .0
+                .into_iter()
+                .flat_map(|root| root.items.into_iter().map(|i| i.id))
+                .collect()
+        } else {
+            comma_separated_values(&form.selected_item_ids)
+                .iter()
+                .map(|id| {
+                    id.parse::<i64>()
+                        .map_err(|_| "Invalid local selection".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        database::local_migration::create(&database, &ids).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Unable to prepare local migration".to_string(),
+        )
+    })?
+    .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let url = format!("/migrations/{id}");
+    if background {
+        Ok(axum::Json(serde_json::json!({"url":url})).into_response())
+    } else {
+        Ok(Redirect::to(&url).into_response())
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct LocalMigrationForm {
+    #[serde(default)]
+    background: bool,
+    #[serde(default)]
+    all_matching: bool,
+    #[serde(default)]
+    selected_item_ids: String,
+    #[serde(flatten)]
+    query: LocalFilesQuery,
+}
+
 async fn local_files_page(
     State(state): State<Arc<AppState>>,
     Query(query): Query<LocalFilesQuery>,
+) -> Result<Html<String>, StatusCode> {
+    tokio::task::spawn_blocking(move || render_local_files_page(&state, query))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+}
+
+fn render_local_files_page(
+    state: &AppState,
+    query: LocalFilesQuery,
 ) -> Result<Html<String>, StatusCode> {
     if !local_files_enabled(&state) {
         return Err(StatusCode::NOT_FOUND);
@@ -5947,7 +6224,7 @@ fn local_explorer_roots(
         database::settings::load(&database).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let configured_roots = crate::local_files::parse_roots(&settings.local_file_roots);
     let safe_path = normalize_local_explorer_path(&query.path).ok_or(StatusCode::BAD_REQUEST)?;
-    let list = |root: &str, current_path: &str, window| {
+    let list = |root: &str, current_path: &str, window, known_total| {
         database::local_files::list_children_page(
             &database,
             root,
@@ -5965,6 +6242,7 @@ fn local_explorer_roots(
             &query.sort,
             query.direction == "desc",
             window,
+            known_total,
         )
         .map_err(|error| {
             log::error!("Unable to list local files: {error}");
@@ -5987,6 +6265,7 @@ fn local_explorer_roots(
             &root.to_string_lossy(),
             &current_path,
             page.then_some((0, 0)),
+            None,
         )?;
         roots.push(LocalRootView {
             index,
@@ -6005,7 +6284,13 @@ fn local_explorer_roots(
         for root in &mut roots {
             let take = remaining.min(root.total.saturating_sub(skip));
             if take > 0 {
-                root.items = list(&root.root_path, &root.current_path, Some((skip, take)))?.0;
+                root.items = list(
+                    &root.root_path,
+                    &root.current_path,
+                    Some((skip, take)),
+                    Some(root.total),
+                )?
+                .0;
             }
             skip = skip.saturating_sub(root.total);
             remaining -= take;
@@ -8779,6 +9064,215 @@ mod tests {
             std::fs::write(
                 std::path::Path::new(&directory).join("remotes.html"),
                 remotes,
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn local_file_explorer_renders_migration_selection_and_wizard() {
+        let item = database::local_files::Row {
+            id: 7,
+            root_path: "/home/user/reports".into(),
+            relative_path: "Annual Report.pdf".into(),
+            name: "Annual Report.pdf".into(),
+            extension: "pdf".into(),
+            type_label: "PDF".into(),
+            is_directory: false,
+            size_bytes: 1024,
+            size_label: "1.0 KB".into(),
+            modified_unix: 1,
+            modified_label: "2026-09-17T12:00:00".into(),
+            checksum_sha256: String::new(),
+            is_symlink: false,
+            symlink_target: String::new(),
+            full_path: "/home/user/reports/Annual Report.pdf".into(),
+            icon_class: "bi-file-earmark-pdf",
+            owner_username: String::new(),
+            owner_identifier: String::new(),
+            owner_principal_id: 0,
+            owner_display_name: String::new(),
+            group_name: String::new(),
+            group_identifier: String::new(),
+            duplicate_copies: 0,
+            tags: vec![],
+        };
+        let html = LocalFilesTemplate {
+            navigation: Navigation::from_settings(&InventorySettings {
+                local_files_enabled: true,
+                ..Default::default()
+            }),
+            pagination: PageQuery::default().view(60),
+            title: "Local Files - BOREAL",
+            active_page: "local-files",
+            alerts: vec![],
+            status_items: vec![],
+            poll_rclone: false,
+            roots: vec![LocalRootView {
+                total: 60,
+                index: 0,
+                root_path: "/home/user/reports".into(),
+                current_path: String::new(),
+                parent_path: String::new(),
+                items: vec![item],
+            }],
+            summary: database::local_files::Summary::default(),
+            query: LocalFilesQuery {
+                tag: "needs-review".into(),
+                ..Default::default()
+            },
+            tags: vec![],
+            filter_tags: vec![],
+            persons: vec![],
+        }
+        .render()
+        .unwrap();
+        assert!(html.contains("id=\"local-migrate-button\""));
+        assert!(html.contains("formaction=\"/local-files/migrate\""));
+        let job = database::migration::MigrationJob {
+            id: 1,
+            source_kind: "local-files".into(),
+            source_scope: "local-files".into(),
+            operation_kind: "drive-copy".into(),
+            status: "draft".into(),
+            phase: "Select destination".into(),
+            destination_url: String::new(),
+            destination_kind: "google-drive".into(),
+            destination_path: String::new(),
+            destination_drive_name: String::new(),
+            destination_folder_name: String::new(),
+            destination_drive_id: String::new(),
+            destination_folder_id: String::new(),
+            files_total: 1,
+            folders_total: 0,
+            bytes_total: 1024,
+            files_copied: 0,
+            bytes_copied: 0,
+            exceptions_count: 0,
+            created_at: String::new(),
+            started_at: String::new(),
+            completed_at: String::new(),
+            copy_completed_at: String::new(),
+            archived_at: String::new(),
+            resume_count: 0,
+            error_message: String::new(),
+            sources: vec![database::migration::MigrationSource {
+                item_id: "7".into(),
+                name: "Annual Report.pdf".into(),
+                relative_path: "/home/user/reports/Annual Report.pdf".into(),
+                is_directory: false,
+                files_total: 1,
+                folders_total: 0,
+                bytes_total: 1024,
+                status: "pending".into(),
+                error_message: String::new(),
+            }],
+        };
+        let view = migration_view(job);
+        assert!(view.local_source && view.allows_my_drive_destination);
+        assert!(view.sources[0].drive_url.is_empty());
+        let wizard = MigrationWizardTemplate {
+            navigation: Navigation::from_settings(&InventorySettings {
+                local_files_enabled: true,
+                ..Default::default()
+            }),
+            title: "Migration - BOREAL",
+            active_page: "migrations",
+            alerts: vec![],
+            status_items: vec![],
+            poll_rclone: false,
+            migration: view,
+            error: String::new(),
+        }
+        .render()
+        .unwrap();
+        assert!(wizard.contains("Local files may be copied to My Drive or a Shared Drive"));
+        assert!(!wizard.contains("/local-destination"));
+        assert!(!wizard.contains("https://drive.google.com/open?id=7"));
+        if let Ok(directory) = std::env::var("BOREAL_UI_FIXTURE_DIR") {
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                std::path::Path::new(&directory).join("local-files.html"),
+                html,
+            )
+            .unwrap();
+            std::fs::write(
+                std::path::Path::new(&directory).join("local-migration.html"),
+                wizard,
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn local_file_comparison_renders_both_sides_and_escapes_paths() {
+        let item = crate::local_files::Item {
+            root_path: "/home/user/reports".into(),
+            relative_path: "<script>alert(1)</script>.txt".into(),
+            name: "report.txt".into(),
+            size_bytes: 1024,
+            modified_unix: 1_788_243_845,
+            owner_username: "researcher".into(),
+            owner_identifier: "1000".into(),
+            group_name: "staff".into(),
+            group_identifier: "1000".into(),
+            ..Default::default()
+        };
+        let mut moved = item.clone();
+        moved.relative_path = "annual/report.txt".into();
+        let html = LocalFileChangesTemplate {
+            navigation: Navigation::from_settings(&InventorySettings {
+                local_files_enabled: true,
+                ..Default::default()
+            }),
+            title: "Compare Local Files updates - BOREAL",
+            active_page: "local-files",
+            alerts: vec![],
+            status_items: vec![],
+            poll_rclone: false,
+            snapshots: vec![
+                database::local_file_history::Snapshot {
+                    id: 2,
+                    completed_at: "2026-09-17 12:00:00".into(),
+                    scope: "test".into(),
+                    item_count: 1,
+                },
+                database::local_file_history::Snapshot {
+                    id: 1,
+                    completed_at: "2026-09-16 12:00:00".into(),
+                    scope: "test".into(),
+                    item_count: 1,
+                },
+            ],
+            query: LocalChangesQuery {
+                before: 1,
+                after: 2,
+                ..Default::default()
+            },
+            pagination: PageQuery::default().view(1),
+            changes: vec![LocalChangeView {
+                kind: "Moved",
+                color: "primary",
+                before: local_change_side(Some(item)),
+                after: local_change_side(Some(moved)),
+                detail: "Matching unique filesystem identity; move inferred".into(),
+            }],
+            scope_changed: false,
+            ready: true,
+            counts: "0 added · 0 changed · 0 deleted · 1 moved".into(),
+        }
+        .render()
+        .unwrap();
+        assert!(html.contains("Before · #1"));
+        assert!(html.contains("After · #2"));
+        assert!(html.contains("annual/report.txt"));
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(html.contains("Current files"));
+        if let Ok(directory) = std::env::var("BOREAL_UI_FIXTURE_DIR") {
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                std::path::Path::new(&directory).join("local-file-changes.html"),
+                html,
             )
             .unwrap();
         }

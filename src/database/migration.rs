@@ -527,7 +527,7 @@ pub fn set_local_destination(
              destination_drive_name = 'Local folder', destination_folder_id = '',
              destination_folder_name = ?2, status = 'ready', phase = 'Ready to download',
              updated_at = CURRENT_TIMESTAMP, error_message = ''
-         WHERE id = ?1 AND started_at IS NULL AND status IN ('draft', 'ready')",
+         WHERE id = ?1 AND source_kind <> 'local-files' AND started_at IS NULL AND status IN ('draft', 'ready')",
         params![id, destination_path],
     )?;
     if changed == 0 {

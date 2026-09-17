@@ -46,7 +46,7 @@ th:has([data-explorer-all-matches]) { width: 136px; min-width: 136px; text-align
         body.set('selected_item_ids', boxes().filter(box => box.checked).map(box => box.value).join(','));
         body.set('all_matching', String(allMatching));
         body.set('background', 'true');
-        body.set('tag', body.get('tag_filter') || '');
+        if (body.has('tag_filter')) body.set('tag', body.get('tag_filter') || '');
         body.set('owner_identity_tag', body.get('owner_identity_tag_filter') || '');
         body.set('permission_identity_tag', body.get('permission_identity_tag_filter') || '');
         clearError(); migrating = true;

@@ -204,6 +204,21 @@ const MIGRATIONS: &[Migration] = &[
         name: "item_notes",
         sql: include_str!("migrations/0039_item_notes.sql"),
     },
+    Migration {
+        version: 40,
+        name: "local_file_history",
+        sql: include_str!("migrations/0040_local_file_history.sql"),
+    },
+    Migration {
+        version: 41,
+        name: "local_file_browse_cache",
+        sql: include_str!("migrations/0041_local_file_browse_cache.sql"),
+    },
+    Migration {
+        version: 42,
+        name: "local_file_migrations",
+        sql: include_str!("migrations/0042_local_file_migrations.sql"),
+    },
 ];
 
 pub fn apply(connection: &mut Connection) -> Result<(), DatabaseError> {
@@ -253,4 +268,84 @@ pub fn apply(connection: &mut Connection) -> Result<(), DatabaseError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod local_history_tests {
+    use super::*;
+    #[test]
+    fn local_file_migration_upgrade_preserves_existing_jobs_and_sources() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        for migration in MIGRATIONS.iter().filter(|m| m.version < 42) {
+            c.execute_batch(migration.sql).unwrap();
+        }
+        c.execute("INSERT INTO migration_jobs(id,source_scope,source_kind,status,files_total,bytes_total,resume_count,started_at,error_message) VALUES(12,'my-drive','my-drive','interrupted',3,42,2,'2026-09-01','saved error')",[]).unwrap();
+        c.execute("INSERT INTO migration_sources(migration_id,item_id,name,relative_path,is_directory,status) VALUES(12,'file-id','Report','Reports/Report',0,'completed')",[]).unwrap();
+        c.execute_batch(MIGRATIONS.iter().find(|m| m.version == 42).unwrap().sql)
+            .unwrap();
+        let job=c.query_row("SELECT status,bytes_total,resume_count,error_message FROM migration_jobs WHERE id=12",[],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,String>(3)?))).unwrap();
+        assert_eq!(job, ("interrupted".into(), 42, 2, "saved error".into()));
+        let status: String = c
+            .query_row(
+                "SELECT status FROM migration_sources WHERE migration_id=12",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "completed");
+        assert!(
+            !c.prepare("PRAGMA foreign_key_check")
+                .unwrap()
+                .query([])
+                .unwrap()
+                .next()
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn local_file_history_upgrade_repairs_sizes_and_saves_a_baseline() {
+        let c = Connection::open_in_memory().unwrap();
+        for migration in MIGRATIONS.iter().filter(|m| m.version < 40) {
+            c.execute_batch(migration.sql).unwrap();
+        }
+        c.execute("INSERT INTO settings(key,value) VALUES('local_files.last_sync_at','2026-09-17 12:00:00')", []).unwrap();
+        for (path, directory, size, accessible) in [
+            ("folder%", true, 4096, true),
+            ("folder%/nested", true, 4096, true),
+            ("folder%/nested/file", false, 7, true),
+            ("folder%/gone", false, 500, false),
+            ("folderX/file", false, 99, true),
+        ] {
+            c.execute("INSERT INTO local_file_items(root_path,relative_path,name,is_directory,size_bytes,is_accessible) VALUES('/root',?1,?1,?2,?3,?4)", params![path,directory,size,accessible]).unwrap();
+        }
+        c.execute_batch(MIGRATIONS.iter().find(|m| m.version == 40).unwrap().sql)
+            .unwrap();
+        let bytes: i64 = c
+            .query_row(
+                "SELECT size_bytes FROM local_file_items WHERE relative_path='folder%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(bytes, 7);
+        let json: String = c
+            .query_row(
+                "SELECT metadata FROM local_file_snapshot_items WHERE relative_path='folder%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let item: crate::local_files::Item = serde_json::from_str(&json).unwrap();
+        assert_eq!(item.size_bytes, 7);
+        assert!(item.is_directory);
+        let count: i64 = c
+            .query_row("SELECT item_count FROM local_file_snapshots", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 4);
+    }
 }
