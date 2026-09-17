@@ -1654,6 +1654,9 @@ struct MigrationListQuery {
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(index))
+        .route("/notes/list", post(super::notes::list))
+        .route("/notes/save", post(super::notes::save))
+        .route("/notes/delete", post(super::notes::delete))
         .route("/about", get(about))
         .route("/update", get(update_page).post(check_for_updates))
         .route("/docs", get(docs_page))

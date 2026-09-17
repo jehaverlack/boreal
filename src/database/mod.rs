@@ -530,7 +530,7 @@ mod tests {
             })
             .expect("migration count should be readable");
 
-        assert_eq!(migration_count, 38,);
+        assert_eq!(migration_count, 39,);
 
         let safe_to_delete_scope_count: i64 = connection
             .query_row(

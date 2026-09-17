@@ -61,7 +61,7 @@
                 <th scope="col"><button type="button" class="btn btn-link p-0 text-body text-decoration-none d-block text-start" data-keeper-sort="attachments">Attachments</button></th>
                 <th scope="col"><button type="button" class="btn btn-link p-0 text-body text-decoration-none d-block text-start" data-keeper-sort="size">File / attachment bytes</button></th>
                 <th scope="col"><button type="button" class="btn btn-link p-0 text-body text-decoration-none d-block text-start" data-keeper-sort="permission">Permissions</button><div class="d-flex gap-1 mt-1 boreal-report-hide"><input class="form-control form-control-sm" form="keeper-filter-form" name="shared_to" value="{{ query.shared_to }}" placeholder="Person or team" aria-label="Filter users"><input class="form-control form-control-sm" form="keeper-filter-form" name="permission" value="{{ query.permission }}" placeholder="Permission" aria-label="Filter permissions"></div></th>
-            </tr></thead>
+            <th scope="col">Notes</th></tr></thead>
             <tbody>
             {% for entry in entries %}<tr{% if !entry.record.is_accessible %} class="opacity-50"{% endif %}>
                 <td class="boreal-report-hide"><input class="form-check-input keeper-select" type="checkbox" value="{{ entry.record.uid }}" data-kind="{% if entry.record.is_folder %}folder{% else %}record{% endif %}" aria-label="Select {{ entry.record.name }}"></td>
@@ -74,7 +74,7 @@
                 <td class="small"><div class="boreal-permissions-scroll" tabindex="0" role="region" aria-label="Permissions">{% for group in entry.permissions %}<section class="mb-2"><div class="small fw-semibold text-body-secondary mb-1">{{ group.label }}</div><div class="d-flex flex-wrap gap-1">{% for user in group.users %}
                     {% if user.directory_url.len() > 0 %}<a href="{{ user.directory_url }}" class="badge rounded-pill boreal-unknown-identity text-decoration-none" title="{{ user.label }} — {{ user.tag_details }}. Click to add to Persons"><i class="bi bi-person-question me-1" aria-hidden="true"></i>{{ user.label }}</a>{% else %}<span class="badge rounded-pill {% if user.unknown %}boreal-unknown-identity{% else if !user.tagged %}text-bg-light border text-body{% endif %}" {% if user.tagged %}style="background-color:{{ user.color }};color:{{ user.text_color }}"{% endif %} title="{{ user.label }} — {{ user.tag_details }}">{% if user.unknown %}<i class="bi bi-person-question me-1" aria-hidden="true"></i>{% endif %}{{ user.label }}</span>{% endif %}
                 {% endfor %}</div></section>{% else %}—{% endfor %}</div></td>
-            </tr>{% else %}<tr><td colspan="9" class="text-center text-body-secondary py-4">No items match these filters. Run a Keeper metadata update to import vault folders and records.</td></tr>{% endfor %}
+<td data-note-kind="keeper-{% if entry.record.is_folder %}folder{% else %}record{% endif %}" data-note-key="{{ entry.record.uid }}"><span class="small text-body-secondary">Loading notes…</span></td>            </tr>{% else %}<tr><td colspan="10" class="text-center text-body-secondary py-4">No items match these filters. Run a Keeper metadata update to import vault folders and records.</td></tr>{% endfor %}
             </tbody>
         </table>
     </div>

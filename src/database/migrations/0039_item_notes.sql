@@ -1,0 +1,10 @@
+CREATE TABLE item_notes (
+ id INTEGER PRIMARY KEY,
+ kind TEXT NOT NULL,
+ item_key TEXT NOT NULL,
+ body TEXT NOT NULL,
+ revision INTEGER NOT NULL DEFAULT 1,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX item_notes_target ON item_notes(kind, item_key);

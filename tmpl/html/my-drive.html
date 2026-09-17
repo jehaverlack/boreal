@@ -221,7 +221,7 @@
                 <col class="boreal-col-modified">
                 <col class="boreal-col-owner">
                 <col class="boreal-col-permissions">
-            </colgroup>
+            <col class="boreal-col-notes"></colgroup>
             <thead class="table-light">
                 <tr>
                     <th scope="col" class="text-center">
@@ -235,7 +235,7 @@
                     <th scope="col"><a class="text-body text-decoration-none d-block" href="{{ modified_sort_url }}">Modified {% if sort == "modified" %}<i class="bi {% if direction == "desc" %}bi-sort-down-alt{% else %}bi-sort-down{% endif %}"></i>{% endif %}</a><input class="form-control form-control-sm mt-1" form="my-drive-filter-form" name="modified_filter" value="{{ modified_filter }}" placeholder=">2026-01-01" aria-label="Filter by modified-date expression" title="Examples: >2026-01-01, <=2025-12-31"></th>
                     <th scope="col"><a class="text-body text-decoration-none d-block" href="{{ owner_sort_url }}">Owner {% if sort == "owner" %}<i class="bi {% if direction == "desc" %}bi-sort-alpha-down-alt{% else %}bi-sort-alpha-down{% endif %}"></i>{% endif %}</a><input class="form-control form-control-sm mt-1" form="my-drive-filter-form" name="owner_filter" value="{{ owner_filter }}" placeholder="Owner or !owner" aria-label="Filter or exclude owner"></th>
                     <th scope="col"><span class="d-block">Permissions</span><input class="form-control form-control-sm mt-1" form="my-drive-filter-form" name="permission_filter" value="{{ permission_filter }}" placeholder="User or domain" aria-label="Filter permissions"></th>
-                </tr>
+                <th scope="col">Notes</th></tr>
             </thead>
             <tbody>
                 {% for row in rows %}
@@ -294,10 +294,10 @@
                         </div>
                         {% endif %}
                     </td>
-                </tr>
+<td data-note-kind="drive" data-note-key="{{ row.item_id }}"><span class="small text-body-secondary">Loading notes…</span></td>                </tr>
                 {% endfor %}
                 {% if rows.is_empty() %}
-                <tr><td colspan="8" class="text-center text-body-secondary py-4">This folder contains no indexed items.</td></tr>
+                <tr><td colspan="9" class="text-center text-body-secondary py-4">This folder contains no indexed items.</td></tr>
                 {% endif %}
             </tbody>
         </table>

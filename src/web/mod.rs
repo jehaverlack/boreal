@@ -1,3 +1,4 @@
+mod notes;
 pub mod routes;
 mod xlsx;
 

@@ -1,0 +1,66 @@
+<style>
+.boreal-col-notes{width:260px} [data-note-kind]{min-width:180px;vertical-align:top}.boreal-notes-list{max-height:200px;overflow:auto;overflow-wrap:anywhere}.boreal-note{display:flex;align-items:flex-start;gap:.4rem;margin-bottom:.5rem}.boreal-note-content{min-width:0;flex:1}.boreal-note-content p:last-child{margin-bottom:0}.boreal-note-content img{max-width:100%}.boreal-note-content pre{white-space:pre-wrap}.boreal-note-dialog{width:min(640px,95vw);max-height:90vh;overflow:auto;border:1px solid var(--bs-border-color);border-radius:.5rem;background:var(--bs-body-bg);color:var(--bs-body-color);padding:1.5rem}.boreal-note-dialog::backdrop{background:#0007}@media print{.boreal-notes-list{max-height:none;overflow:visible}.boreal-note-control{display:none!important}}
+</style>
+<dialog id="boreal-note-dialog" class="boreal-note-dialog" aria-labelledby="boreal-note-title">
+<form id="boreal-note-form">
+<h2 class="h5" id="boreal-note-title">Add note</h2>
+<p class="small text-body-secondary" id="boreal-note-help">Markdown supported: **bold**, *italic*, lists, and [link text](https://example.com). Web links open in a new tab.</p>
+<label class="form-label" for="boreal-note-body">Note</label><textarea id="boreal-note-body" class="form-control" rows="10" required aria-describedby="boreal-note-help"></textarea>
+<div id="boreal-note-error" class="alert alert-danger mt-2" role="alert" hidden></div>
+<div class="d-flex justify-content-end gap-2 mt-3"><button type="button" class="btn btn-outline-danger me-auto" id="boreal-note-delete" hidden>Delete note</button><button type="button" class="btn btn-secondary" id="boreal-note-cancel">Cancel</button><button class="btn btn-primary" id="boreal-note-save" type="submit">Save note</button></div>
+</form></dialog>
+<script>
+(() => {
+ const cells = [...document.querySelectorAll('[data-note-kind]')];
+ if (!cells.length) return;
+ const dialog = document.getElementById('boreal-note-dialog'), form = document.getElementById('boreal-note-form'), body = document.getElementById('boreal-note-body'), error = document.getElementById('boreal-note-error'), save = document.getElementById('boreal-note-save'), cancel = document.getElementById('boreal-note-cancel'), remove = document.getElementById('boreal-note-delete');
+ let editing, busy = false;
+ const targetOf = cell => ({kind:cell.dataset.noteKind,key:cell.dataset.noteKey});
+ const matches = (cell,target) => cell.dataset.noteKind === target.kind && cell.dataset.noteKey === target.key;
+ async function request(path, data) {
+  const response = await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  if (!response.ok) throw new Error(await response.text() || 'Unable to save notes. Please retry.');
+  return response.json();
+ }
+ function open(target,note) {
+  editing={target,id:note?.id ?? null,revision:note?.revision ?? null};body.value=note?.body || '';error.hidden=true;remove.hidden=!note;
+  document.getElementById('boreal-note-title').textContent=note?'Edit note':'Add note';dialog.showModal();body.focus();
+ }
+ function button(icon,label,action) {
+  const button=document.createElement('button');button.type='button';button.className='btn btn-sm btn-outline-secondary boreal-note-control boreal-report-hide flex-shrink-0';button.title=label;button.setAttribute('aria-label',label);
+  const glyph=document.createElement('i');glyph.className='bi '+icon;glyph.setAttribute('aria-hidden','true');button.append(glyph);button.addEventListener('click',action);return button;
+ }
+ function display(result) {
+  cells.filter(cell=>matches(cell,result.target)).forEach(cell=>{
+   cell.replaceChildren();const list=document.createElement('div');list.className='boreal-notes-list';list.setAttribute('aria-label','Notes');list.tabIndex=0;
+   result.notes.forEach(note=>{const row=document.createElement('div');row.className='boreal-note';row.append(button('bi-sticky','Edit note',()=>open(result.target,note)));const content=document.createElement('div');content.className='boreal-note-content small';content.innerHTML=note.html;row.append(content);list.append(row)});
+   cell.append(list,button('bi-plus-lg','Add note',()=>open(result.target)));
+  });
+ }
+ cancel.addEventListener('click',()=>{if(!busy)dialog.close()});dialog.addEventListener('cancel',event=>{if(busy)event.preventDefault()});
+ form.addEventListener('submit',async event=>{
+  event.preventDefault();event.stopPropagation();if(busy)return;busy=true;save.disabled=cancel.disabled=remove.disabled=true;save.textContent='Saving…';error.hidden=true;
+  try{display(await request('/notes/save',{...editing,body:body.value}));dialog.close()}
+  catch(reason){error.textContent=reason.message;error.hidden=false}
+  finally{busy=false;save.disabled=cancel.disabled=remove.disabled=false;save.textContent='Save note'}
+ });
+ remove.addEventListener('click',async()=>{
+  if(busy || !editing?.id)return;
+  busy=true;save.disabled=cancel.disabled=remove.disabled=true;remove.textContent='Deleting…';error.hidden=true;
+  try{display(await request('/notes/delete',editing));dialog.close()}
+  catch(reason){error.textContent=reason.message;error.hidden=false}
+  finally{busy=false;save.disabled=cancel.disabled=remove.disabled=false;remove.textContent='Delete note'}
+ });
+ async function load() {
+  const targets=[...new Map(cells.map(cell=>{const t=targetOf(cell);return [JSON.stringify(t),t]})).values()];
+  for(let offset=0;offset<targets.length;offset+=200){
+   const batch=targets.slice(offset,offset+200);
+   try{(await request('/notes/list',batch)).forEach(display)}
+   catch(reason){cells.filter(cell=>batch.some(t=>matches(cell,t))).forEach(cell=>{cell.replaceChildren();const alert=document.createElement('div');alert.className='text-danger small';alert.setAttribute('role','alert');alert.textContent='Notes could not load. ';cell.append(alert,button('bi-arrow-clockwise','Retry loading notes',load))})}
+  }
+ }
+ window.borealNotesReady=load();
+ // Reports must wait for notes before opening the print dialog.
+ document.querySelectorAll('[onclick="window.print()"]').forEach(button=>{button.removeAttribute('onclick');button.addEventListener('click',async()=>{await window.borealNotesReady;window.print()})});
+})();
+</script>
