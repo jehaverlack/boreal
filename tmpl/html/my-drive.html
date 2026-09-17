@@ -211,8 +211,8 @@
     <div class="table-responsive boreal-explorer-table">
         <table data-column-widths="my-drive" class="table table-hover align-middle mb-0">
             <colgroup>
-                <col class="boreal-col-select">
-                <col class="boreal-col-gdrive">
+                <col class="boreal-col-select boreal-report-hide">
+                <col class="boreal-col-gdrive boreal-report-hide">
                 <col class="boreal-col-type">
                 <col class="boreal-col-name">
                 <col class="boreal-col-size">
@@ -222,11 +222,11 @@
             <col class="boreal-col-notes"></colgroup>
             <thead class="table-light">
                 <tr>
-                    <th scope="col" class="text-center">
+                    <th scope="col" class="text-center boreal-report-hide">
                         <input class="form-check-input" type="checkbox" id="my-drive-select-all" title="Select all visible items" aria-label="Select all visible items">
 {% include "partials/explorer-selection.html" %}
                     </th>
-                    <th scope="col" class="text-center">GDrive</th>
+                    <th scope="col" class="text-center boreal-report-hide">GDrive</th>
                     <th scope="col"><a class="text-body text-decoration-none d-block text-center" href="{{ type_sort_url }}" title="Sort by type">Type {% if sort == "type" %}<i class="bi {% if direction == "desc" %}bi-sort-down-alt{% else %}bi-sort-down{% endif %}"></i>{% endif %}</a><input class="form-control form-control-sm mt-1" form="my-drive-filter-form" name="type_filter" value="{{ type_filter }}" placeholder="Type" aria-label="Filter by type"></th>
                     <th scope="col"><a class="text-body text-decoration-none d-block" href="{{ name_sort_url }}">Name {% if sort == "name" %}<i class="bi {% if direction == "desc" %}bi-sort-alpha-down-alt{% else %}bi-sort-alpha-down{% endif %}"></i>{% endif %}</a><input class="form-control form-control-sm mt-1" form="my-drive-filter-form" name="q" value="{{ search }}" placeholder="Search name" aria-label="Filter by name"></th>
                     <th scope="col"><a class="text-body text-decoration-none d-block" href="{{ size_sort_url }}">Size {% if sort == "size" %}<i class="bi {% if direction == "desc" %}bi-sort-numeric-down-alt{% else %}bi-sort-numeric-down{% endif %}"></i>{% endif %}</a><input class="form-control form-control-sm mt-1" form="my-drive-filter-form" name="size_filter" value="{{ size_filter }}" placeholder=">5GB" aria-label="Filter by size expression" title="Examples: >5GB, <=250MB, =0B"></th>
@@ -238,10 +238,10 @@
             <tbody>
                 {% for row in rows %}
                 <tr class="{% if row.is_deleted %}table-secondary opacity-75{% endif %}" data-is-directory="{% if row.is_directory %}true{% else %}false{% endif %}" data-size-bytes="{{ row.size_bytes }}" data-permission-count="{{ row.permission_count }}">
-                    <td class="text-center">
+                    <td class="text-center boreal-report-hide">
                         <input class="form-check-input my-drive-item-select" type="checkbox" value="{{ row.item_id }}" data-is-deleted="{% if row.is_deleted %}true{% else %}false{% endif %}" aria-label="Select {{ row.name }} for tag editing">
                     </td>
-                    <td class="text-center">
+                    <td class="text-center boreal-report-hide">
                         <a href="{{ row.drive_url }}" target="_blank" rel="noopener noreferrer" title="Open in Google Drive" aria-label="Open {{ row.name }} in Google Drive">
                             <svg class="boreal-google-drive-icon" viewBox="0 0 87.3 78" aria-hidden="true">
                                 <path fill="#0066da" d="m6.6 66.9 3.8 6.6c.8 1.4 2 2.5 3.4 3.3L27.4 53H.2c0 1.6.4 3.2 1.2 4.6z"/>
@@ -258,7 +258,7 @@
                             <i class="bi bi-download" aria-hidden="true"></i>
                         </button>{% endif %}
                     </td>
-                    <td class="text-center small"><i class="bi {{ row.type_icon }} fs-6 text-primary" title="{{ row.mime_type }}" aria-label="{{ row.mime_type }}"></i></td>
+                    <td class="text-center small">{% if print_view %}<span>{{ row.mime_type }}</span>{% else %}<i class="bi {{ row.type_icon }} fs-6 text-primary" title="{{ row.mime_type }}" aria-label="{{ row.mime_type }}"></i>{% endif %}</td>
                     <th scope="row" class="boreal-name-cell small">
                         <a href="{{ row.name_url }}" {% if row.name_new_tab %}target="_blank" rel="noopener noreferrer"{% endif %} class="text-decoration-none boreal-name-link" title="{% if row.is_directory %}Browse folder in BOREAL{% else %}Open in Google Drive{% endif %}">
                             {{ row.name }}

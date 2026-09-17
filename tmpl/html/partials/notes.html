@@ -1,5 +1,11 @@
 <style>
 .boreal-col-notes{width:260px} [data-note-kind]{min-width:180px;vertical-align:top}.boreal-notes-list{max-height:200px;overflow:auto;overflow-wrap:anywhere}.boreal-note{display:flex;align-items:flex-start;gap:.4rem;margin-bottom:.5rem}.boreal-note-content{min-width:0;flex:1}.boreal-note-content p:last-child{margin-bottom:0}.boreal-note-content img{max-width:100%}.boreal-note-content pre{white-space:pre-wrap}.boreal-note-dialog{width:min(640px,95vw);max-height:90vh;overflow:auto;border:1px solid var(--bs-border-color);border-radius:.5rem;background:var(--bs-body-bg);color:var(--bs-body-color);padding:1.5rem}.boreal-note-dialog::backdrop{background:#0007}@media print{.boreal-notes-list{max-height:none;overflow:visible}.boreal-note-control{display:none!important}}
+/* Expand the report preview as well as the printed page. Block layout lets long notes paginate. */
+body.boreal-print-report .boreal-notes-list { max-height: none; overflow: visible; }
+body.boreal-print-report .boreal-note { display: block; }
+body.boreal-print-report .boreal-note-content { overflow-wrap: anywhere; }
+body.boreal-print-report .boreal-note-content pre { white-space: pre-wrap; overflow: visible; }
+body.boreal-print-report .boreal-note-content table { width: 100%; table-layout: fixed; }
 </style>
 <dialog id="boreal-note-dialog" class="boreal-note-dialog" aria-labelledby="boreal-note-title">
 <form id="boreal-note-form">

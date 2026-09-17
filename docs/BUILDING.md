@@ -6,14 +6,44 @@ per-user Rust toolchain and may ask before changing your shell startup file.
 
 ## Linux build environment
 
-The Linux setup script supports Debian and Ubuntu systems with `apt`. It uses
-`sudo` to install native build tools, `jq`, and cross-compilers for enabled
-Linux and Windows targets. Rust is installed for the current user under
-`~/.cargo` and `~/.rustup`.
+The Linux setup script detects Debian/Ubuntu (`apt-get`) and RHEL-family
+systems (`dnf`), including Rocky Linux, AlmaLinux, CentOS Stream, and Fedora.
+Use a regular account with `sudo`; RHEL-family systems need DNF (RHEL/Rocky 8+).
+It installs native C/C++ build tools, `pkg-config`, `jq`, Git, and Rust under
+the current user's `~/.cargo` and `~/.rustup`.
+
+Only Linux and Windows targets enabled in `metadata.json` receive additional
+Rust targets and cross-compilers. macOS targets are handled on macOS. The
+script locates `metadata.json` relative to itself, so it can run from another
+working directory.
 
 ```bash
 ./tools/setup-build-linux.sh
 ```
+
+To prepare only the native build environment:
+
+```bash
+./tools/setup-build-linux.sh --native-only
+```
+
+This option does not edit `metadata.json`. The release script still builds
+the targets enabled there. Both scripts select the native C compiler for a
+matching host architecture, including ARM hosts.
+
+Optional cross-compilers on Rocky/RHEL may require EPEL and CRB/PowerTools
+(CodeReady Builder on RHEL). Setup uses your enabled repositories; it reports
+missing packages with recovery instructions. Follow the official
+[Rocky repository instructions](https://wiki.rockylinux.org/rocky/repo/) or
+[EPEL getting-started instructions](https://docs.fedoraproject.org/en-US/epel/getting-started/)
+for your distribution before enabling additional targets.
+
+Windows uses `gcc-mingw-w64-x86-64` on Debian/Ubuntu and `mingw64-gcc` on
+RPM-based systems. Linux cross-builds need a complete userspace toolchain:
+GCC, matching target libc headers, startup objects, and libraries. Some EPEL
+cross-GCC packages contain only the compiler. Setup compiles and links a small
+C program to detect missing sysroots before declaring success. Supply a
+complete toolchain, disable the unavailable target, or use `--native-only`.
 
 If the script updates `~/.bashrc`, open a new terminal or reload it:
 

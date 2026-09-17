@@ -294,33 +294,81 @@
             position: static;
         }
 
-        body.boreal-print-report .boreal-github-table {
+        /* Reports use page-relative columns, independent of explorer widths. */
+        body.boreal-print-report main,
+        body.boreal-print-report .boreal-print-expand,
+        body.boreal-print-report .boreal-explorer-card,
+        body.boreal-print-report form.d-contents { display: block !important; }
+
+        body.boreal-print-report table[data-column-widths] {
             width: 100% !important;
             min-width: 0 !important;
+            max-width: 100% !important;
             table-layout: fixed;
+            font-size: 9pt;
         }
-
-        body.boreal-print-report .boreal-github-repository { width: 50%; }
-        body.boreal-print-report .boreal-github-owner { width: 12%; }
-        body.boreal-print-report .boreal-github-visibility { width: 7%; }
-        body.boreal-print-report .boreal-github-size { width: 7%; }
-        body.boreal-print-report .boreal-github-access { width: 7%; }
-        body.boreal-print-report .boreal-github-language { width: 8%; }
-        body.boreal-print-report .boreal-github-pushed { width: 9%; }
-        body.boreal-print-report .boreal-github-table td {
+        body.boreal-print-report table[data-column-widths] :is(th, td) {
+            min-width: 0 !important;
+            padding: .3rem;
+            vertical-align: top;
+            white-space: normal !important;
+            overflow: visible;
             overflow-wrap: anywhere;
         }
-        body.boreal-print-report .boreal-github-table td.text-nowrap {
+        body.boreal-print-report table[data-column-widths] thead { display: table-header-group; }
+        body.boreal-print-report table[data-column-widths] thead th { position: static !important; }
+        body.boreal-print-report table[data-column-widths] thead :is(input, select),
+        body.boreal-print-report table[data-column-widths] tbody button { display: none !important; }
+        body.boreal-print-report table[data-column-widths] thead :is(th, a, button) { font-size: 9pt; }
+        body.boreal-print-report table[data-column-widths] :is(.badge, .text-nowrap) {
+            max-width: 100%;
             white-space: normal !important;
+            overflow-wrap: anywhere;
+        }
+        body.boreal-print-report .boreal-name-cell .boreal-name-link {
+            display: block;
+            max-width: none;
+            overflow: visible;
+            text-overflow: clip;
+            white-space: normal;
+            overflow-wrap: anywhere;
         }
 
-        body.boreal-print-report .boreal-keeper-table { width: 100%; table-layout: fixed; font-size: 9pt; }
-        body.boreal-print-report .boreal-keeper-table td { overflow-wrap: anywhere; white-space: normal !important; }
-        body.boreal-print-report .boreal-keeper-table thead,
-        body.boreal-print-report .boreal-keeper-table thead th { position: static !important; }
-        body.boreal-print-report .boreal-keeper-table tr { break-inside: avoid; }
-        body.boreal-print-report .boreal-keeper-table th:last-child { width: 30%; }
-        body.boreal-print-report .boreal-keeper-table .badge { white-space: normal; max-width: 100%; }
+        body.boreal-print-report [data-column-widths="my-drive"] .boreal-col-type { width: 5%; }
+        body.boreal-print-report [data-column-widths="my-drive"] .boreal-col-name { width: 28%; }
+        body.boreal-print-report [data-column-widths="my-drive"] .boreal-col-size { width: 7%; }
+        body.boreal-print-report [data-column-widths="my-drive"] .boreal-col-modified { width: 10%; }
+        body.boreal-print-report [data-column-widths="my-drive"] .boreal-col-owner { width: 12%; }
+        body.boreal-print-report [data-column-widths="my-drive"] .boreal-col-permissions { width: 18%; }
+        body.boreal-print-report [data-column-widths="my-drive"] .boreal-col-notes { width: 20%; }
+
+        body.boreal-print-report .boreal-shared-name { width: 24%; }
+        body.boreal-print-report .boreal-shared-tags { width: 8%; }
+        body.boreal-print-report .boreal-shared-count { width: 5%; }
+        body.boreal-print-report .boreal-shared-size { width: 8%; }
+        body.boreal-print-report .boreal-shared-drive-table .boreal-col-modified { width: 10%; }
+        body.boreal-print-report .boreal-shared-managers { width: 12%; }
+        body.boreal-print-report .boreal-shared-permissions { width: 14%; }
+        body.boreal-print-report .boreal-shared-drive-table .boreal-col-notes { width: 14%; }
+
+        body.boreal-print-report .boreal-github-repository { width: 30%; }
+        body.boreal-print-report .boreal-github-owner { width: 12%; }
+        body.boreal-print-report .boreal-github-visibility { width: 6%; }
+        body.boreal-print-report .boreal-github-size { width: 6%; }
+        body.boreal-print-report .boreal-github-access { width: 7%; }
+        body.boreal-print-report .boreal-github-table .boreal-col-notes { width: 22%; }
+        body.boreal-print-report .boreal-github-language { width: 7%; }
+        body.boreal-print-report .boreal-github-pushed { width: 10%; }
+
+        body.boreal-print-report .boreal-keeper-link-column { width: 5%; min-width: 0; }
+        body.boreal-print-report .boreal-keeper-table th:nth-child(3) { width: 18%; }
+        body.boreal-print-report .boreal-keeper-table th:nth-child(4) { width: 7%; }
+        body.boreal-print-report .boreal-keeper-table th:nth-child(5) { width: 12%; }
+        body.boreal-print-report .boreal-keeper-table th:nth-child(6) { width: 10%; }
+        body.boreal-print-report .boreal-keeper-table th:nth-child(7) { width: 6%; }
+        body.boreal-print-report .boreal-keeper-table th:nth-child(8) { width: 6%; }
+        body.boreal-print-report .boreal-keeper-table th:nth-child(9) { width: 16%; }
+        body.boreal-print-report .boreal-keeper-table th:last-child { width: 20%; }
 
         @page {
             size: legal landscape;

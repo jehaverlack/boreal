@@ -20,8 +20,8 @@
     "aarch64-unknown-linux-gnu": false,
     "armv7-unknown-linux-gnueabihf": false,
     "x86_64-pc-windows-gnu": false,
-    "x86_64-apple-darwin": false,
-    "aarch64-apple-darwin": false
+    "x86_64-apple-darwin": true,
+    "aarch64-apple-darwin": true
   },
   "META_MAPS": {
     "*.md": {
