@@ -197,9 +197,6 @@
         <button id="my-drive-remove-tag-button" class="btn btn-sm btn-outline-danger" type="submit" formaction="{{ tag_remove_action }}" disabled>
             <i class="bi bi-tag-fill me-1"></i>Remove
         </button>
-        <button id="my-drive-update-metadata-button" class="btn btn-sm btn-outline-primary" type="submit" formaction="/metadata/update-selected" disabled>
-            <i class="bi bi-arrow-clockwise me-1"></i>Update metadata
-        </button>
         {% if active_page == "my-drive" || active_page == "shared-with-me" || active_page == "shared-drives" %}
         <button id="my-drive-migrate-button" formnovalidate class="btn btn-sm btn-outline-success" type="submit" formaction="/migrations/new" disabled>
             <i class="bi bi-arrow-right-circle me-1"></i>Migrate
@@ -327,7 +324,6 @@
         const visibleRows = Array.from(document.querySelectorAll("tbody tr[data-size-bytes]"));
         const applyButton = document.getElementById("my-drive-apply-tag-button");
         const removeButton = document.getElementById("my-drive-remove-tag-button");
-        const updateMetadataButton = document.getElementById("my-drive-update-metadata-button");
         const migrateButton = document.getElementById("my-drive-migrate-button");
         const selectionCount = document.getElementById("my-drive-selection-count");
         const selectedItemIds = document.getElementById("my-drive-selected-item-ids");
@@ -336,6 +332,11 @@
             return;
         }
 
+        let allMatchingSelected = false;
+        document.addEventListener('boreal:selection-changed', event => {
+            allMatchingSelected = event.detail.allMatching;
+            updateSelectAll();
+        });
         function updateSelectAll() {
             const selectedCheckboxes = itemCheckboxes.filter((checkbox) => checkbox.checked);
             const selected = selectedCheckboxes.length;
@@ -344,8 +345,6 @@
             selectAll.indeterminate = selected > 0 && selected < itemCheckboxes.length;
             applyButton.disabled = selected === 0;
             removeButton.disabled = selected === 0;
-            updateMetadataButton.disabled = selected === 0 || includesDeleted;
-            updateMetadataButton.title = includesDeleted ? "Deleted items can be tagged but cannot be refreshed" : "";
             if (migrateButton) {
                 migrateButton.disabled = selected === 0;
                 migrateButton.title = includesDeleted ? "Deleted items cannot be migrated" : "";
@@ -356,6 +355,19 @@
                 .map((checkbox) => checkbox.value)
                 .join(",");
 
+            if (allMatchingSelected) {
+                document.getElementById("explorer-summary-heading").textContent = "Selected items";
+                for (const field of ["items", "files", "folders", "size", "permissions"]) {
+                    const source = document.getElementById(`explorer-filtered-summary-${field}`);
+                    const destination = document.getElementById(`explorer-summary-${field}`);
+                    destination.textContent = source.textContent;
+                    if (field === "size") {
+                        destination.dataset.sizeBytes = source.dataset.sizeBytes;
+                        destination.title = source.title;
+                    }
+                }
+                return;
+            }
             const summaryRows = selected > 0
                 ? selectedCheckboxes.map((checkbox) => checkbox.closest("tr"))
                 : visibleRows;

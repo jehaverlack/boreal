@@ -110,6 +110,7 @@ th:has([data-explorer-all-matches]) { width: 136px; min-width: 136px; text-align
         });
     });
     function selectionChanged() {
+        document.dispatchEvent(new CustomEvent('boreal:selection-changed', {detail:{allMatching}}));
         const selected = boxes().filter(box => box.checked);
         const pageSelected = selected.length > 0 && selected.length === boxes().length;
         matchCheckboxes.forEach(checkbox => {
@@ -138,7 +139,7 @@ th:has([data-explorer-all-matches]) { width: 136px; min-width: 136px; text-align
         if (resultsStale || busy()) { selectionChanged(); showError('Refresh saved results before selecting all matching entries.'); return; }
         allMatching = checkbox.checked;
         selectionChanged(); clearError();
-        status.textContent = allMatching ? `All ${pager.dataset.total} filtered entries selected.` : 'Current page selected.';
+        status.textContent = '';
     }));
     clear.addEventListener('click', () => {
         allMatching = false;

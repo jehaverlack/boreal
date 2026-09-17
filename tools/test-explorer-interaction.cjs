@@ -15,9 +15,9 @@ const html = `<!doctype html><html><head><style>body {font:16px/1.5 sans-serif} 
 <form id="filter" method="get"><input name="q"><button id="export" formaction="/keeper/export.xlsx">Export</button><button id="print" formtarget="_blank">Print</button></form>
 <form data-explorer-tags action="/my-drive/tags" method="post">
 <input id="my-drive-selected-item-ids" name="selected_item_ids" type="hidden"><select name="tag" required><option value="review" data-color="#ffdd00">Review</option></select>
-<input name="tag_filter" value="filtered-tag"><input name="owner_identity_tag_filter" value="owner-tag">${migrateButton}<button id="my-drive-update-metadata-button">Metadata</button><button id="my-drive-apply-tag-button">Apply</button><button id="my-drive-remove-tag-button" formaction="/my-drive/tags/remove">Remove</button><span id="my-drive-selection-count"></span>${["heading","items","files","folders","size","permissions"].map(id=>`<span id="explorer-summary-${id}"></span>`).join('')}
+<input name="tag_filter" value="filtered-tag"><input name="owner_identity_tag_filter" value="owner-tag">${migrateButton}<button id="my-drive-apply-tag-button">Apply</button><button id="my-drive-remove-tag-button" formaction="/my-drive/tags/remove">Remove</button><span id="my-drive-selection-count"></span>${["heading","items","files","folders","size","permissions"].map(id=>`<span id="explorer-summary-${id}"></span>`).join('')}
 <table data-column-widths="my-drive"><thead><tr><th><input type="checkbox" id="my-drive-select-all">${headerSelection}</th><th>Tags</th><th>Permissions</th></tr></thead><tbody>${['one','two'].map(id => `<tr data-size-bytes="10" data-is-directory="false" data-permission-count="1"><td><input class="my-drive-item-select" type="checkbox" value="${id}"></td><td><span data-explorer-tags-cell></span></td><td><div class="boreal-permissions-scroll" tabindex="0">${'<div>Permission identity</div>'.repeat(30)}</div></td></tr>`).join('')}</tbody></table>
-</form></main><div style="height:2000px"></div>
+</form>${Object.entries({items:'60',files:'40',folders:'20',size:'1.2 TB',permissions:'1234'}).map(([key,value])=>`<span id="explorer-filtered-summary-${key}" data-size-bytes="1200000000000" title="1200000000000 bytes">${value}</span>`).join('')}</main><div style="height:2000px"></div>
 <script>
 localStorage.removeItem('boreal.explorer.pageSize');
 localStorage.setItem('boreal.columnWidths.v1:' + location.pathname + ':my-drive:', JSON.stringify([36,200,200]));
@@ -53,8 +53,11 @@ window.fetch = (url, options = {}) => {
  assert(headerBounds.width >= 136 && labelBounds.right <= headerBounds.right && labelBounds.left >= headerBounds.left, 'all matches fits inside restored narrow selection column');
  assert(!document.getElementById('my-drive-migrate-button').disabled, 'real Drive selection enables migration');
  allMatches.click();
+ for(const field of ['items','files','folders','size','permissions']) assert(document.getElementById('explorer-summary-'+field).textContent===document.getElementById('explorer-filtered-summary-'+field).textContent,'all matches summary '+field);
+ assert(status.textContent==='', 'no redundant all matches message');
  assert(allMatches.checked && document.getElementById('my-drive-selection-count').textContent === '60 selected (all matches)', 'all matches updates selection count');
  allMatches.click();
+ assert(document.getElementById('explorer-summary-items').textContent==='2','page summary restored');
  assert(boxes.every(box=>box.checked) && !allMatches.checked, 'unchecking all matches keeps current page selected');
  allMatches.click();
  select(false,true);
