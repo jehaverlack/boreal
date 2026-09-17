@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex flex-column h-100 overflow-hidden">
+<div class="d-flex justify-content-between mb-2"><h1 class="h3">Drive inventory history</h1><a class="btn btn-outline-primary" href="{{ explorer_url }}">Current explorer</a></div>
+<p class="small text-body-secondary">Previously indexed items remain here even after they are removed, unshared, or inaccessible. “No longer seen” means absent from the latest index; it does not prove deletion from Google Drive. This view searches all folders, including historical paths.</p>
+<form method="get" class="d-flex gap-2 mb-3"><input type="hidden" name="scope" value="{{ query.scope }}"><input class="form-control" name="q" value="{{ query.q }}" placeholder="Search names, full paths, owners, or item IDs" aria-label="Search inventory history"><select name="state" class="form-select w-auto" aria-label="Availability"><option value="removed" {% if query.state != "all" %}selected{% endif %}>No longer seen</option><option value="all" {% if query.state == "all" %}selected{% endif %}>All retained items</option></select><button class="btn btn-primary">Search</button></form>
+{% include "partials/explorer-pagination.html" %}
+<div class="overflow-auto flex-grow-1" style="min-height:0">
+<table class="table align-top"><thead><tr><th>Item and last known path</th><th>Status</th><th>Last seen (UTC)</th><th>Marked unavailable (UTC)</th></tr></thead><tbody>
+{% for record in records %}<tr><td><a href="/drive-history?scope={{ query.scope }}&state=all&item={{ record.item_id }}">{{ record.name }}</a><div class="small font-monospace" style="overflow-wrap:anywhere">{{ record.path }}</div><div class="small">{{ record.owner }}</div><details class="small"><summary>Last known metadata</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{ record.metadata }}</pre></details></td><td>{% if record.removed %}<span class="badge text-bg-secondary">No longer seen</span>{% else %}<span class="badge text-bg-success">Current</span>{% endif %}</td><td>{{ record.last_seen }}</td><td>{{ record.removed_at }}</td></tr>{% endfor %}
+{% if records.is_empty() %}<tr><td colspan="4" class="text-body-secondary text-center p-4">No retained records match this search.</td></tr>{% endif %}
+</tbody></table>
+{% if query.item.len() > 0 %}<h2 class="h5">Prior metadata versions</h2><p class="small text-body-secondary">Earlier metadata is saved before changes starting with this upgrade. Versions overwritten before history tracking began cannot be reconstructed from this database.</p>{% for version in versions %}<details class="card card-body mb-2"><summary>Saved before change at {{ version.recorded_at }} UTC</summary><pre class="small mt-2" style="white-space:pre-wrap;overflow-wrap:anywhere">{{ version.metadata }}</pre></details>{% endfor %}{% if versions.is_empty() %}<p>No prior versions recorded for this item yet.</p>{% endif %}{% endif %}
+</div></div>
+<script>
+(()=>{const pager=document.getElementById('explorer-pagination'),size=document.getElementById('explorer-page-size');if(!pager)return;size.value=pager.dataset.size;const go=(page,n)=>{const url=new URL(location.href);url.searchParams.set('page',page);url.searchParams.set('page_size',n);location.assign(url)};size.onchange=()=>go(1,size.value);pager.querySelectorAll('[data-page-step]').forEach(button=>{const page=Number(pager.dataset.page)+Number(button.dataset.pageStep);button.disabled=page<1||page>Number(pager.dataset.pages);button.onclick=()=>go(page,size.value)})})();
+</script>
+{% endblock %}

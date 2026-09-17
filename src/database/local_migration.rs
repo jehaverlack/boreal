@@ -83,12 +83,6 @@ pub fn create(database: &Database, ids: &[i64]) -> Result<i64, DatabaseError> {
         }
         top.push(entry);
     }
-    let mut names = HashSet::new();
-    for entry in &top {
-        if !names.insert(entry.name.clone()) {
-            return Err(format!("Multiple selected items are named '{}'. Migrate them separately or select their parent folders.", entry.name).into());
-        }
-    }
     tx.execute("INSERT INTO migration_jobs(source_scope,source_kind,operation_kind) VALUES('local-files','local-files','drive-copy')", [])?;
     let job = tx.last_insert_rowid();
     for source in &top {

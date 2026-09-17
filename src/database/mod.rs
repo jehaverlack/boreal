@@ -1,4 +1,5 @@
 pub mod directory;
+pub mod drive_history;
 pub mod github;
 pub mod inventory;
 pub mod keeper;
@@ -532,7 +533,7 @@ mod tests {
             })
             .expect("migration count should be readable");
 
-        assert_eq!(migration_count, 42,);
+        assert_eq!(migration_count, 43,);
 
         let safe_to_delete_scope_count: i64 = connection
             .query_row(
@@ -1397,9 +1398,21 @@ mod tests {
         assert_eq!(entries.len(), 3);
         assert!(entries.iter().all(|e| !e.relative_path.contains("folderX") && !e.relative_path.ends_with("link")));
         assert!(local_migration::create(&db, &[id("folder%/link")]).is_err());
-        assert!(
+        let conflicts =
             local_migration::create(&db, &[id("folder%/file.txt"), id("folderX/file.txt")])
-                .is_err()
+                .unwrap();
+        let revised =
+            migration::revise_selection(&db, conflicts, &[id("folderX/file.txt").to_string()])
+                .unwrap();
+        assert_eq!(
+            migration::get(&db, revised).unwrap().unwrap().files_total,
+            1
+        );
+        assert_eq!(
+            local_migration::entries(&db, revised, &id("folder%/file.txt").to_string())
+                .unwrap()
+                .len(),
+            1
         );
         assert!(migration::set_local_destination(&db, job, "/tmp/destination").is_err());
         migration::set_destination(
@@ -1671,6 +1684,161 @@ mod tests {
         assert_eq!(associated[0].owner_principal_id, principal_id);
         assert_eq!(associated[0].owner_display_name, "Jamie Smith");
         fs::remove_dir_all(root).expect("temporary database directory should be removable");
+    }
+
+    #[test]
+    fn shared_with_me_retains_missing_items_permissions_paths_and_metadata_versions() {
+        let root = temporary_directory();
+        let db = Database::initialize(&runtime(&root)).unwrap();
+        let scope = inventory::SHARED_WITH_ME_SCOPE;
+        let mut item=DriveItem{id:"retained".into(),name:"Report.txt".into(),path:"Old folder/Report.txt".into(),is_dir:false,size:42,mime_type:"text/plain".into(),mod_time:"2026-09-01T00:00:00Z".into(),metadata:BTreeMap::from([("owner".into(),"owner@example.org".into()),("permissions".into(),r#"[{"id":"reader","type":"user","role":"reader","emailAddress":"reader@example.org"}]"#.into())])};
+        let scan = db.start_scan_run("shared-with-me").unwrap();
+        inventory::synchronize_drive(&db, scope, scan, &[item.clone()], true).unwrap();
+        let scan = db.start_scan_run("shared-with-me").unwrap();
+        inventory::synchronize_drive(&db, scope, scan, &[], true).unwrap();
+        let (records, total) =
+            drive_history::list(&db, scope, "Old folder", true, "", 0, 25).unwrap();
+        assert_eq!(total, 1);
+        assert!(records[0].removed);
+        assert_eq!(records[0].path, "Old folder/Report.txt");
+        let c = db.connect().unwrap();
+        assert_eq!(
+            c.query_row(
+                "SELECT COUNT(*) FROM drive_permissions WHERE item_id='retained'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert!(
+            c.execute("DELETE FROM drive_items WHERE item_id='retained'", [])
+                .is_err()
+        );
+        item.path = "New folder/Renamed.txt".into();
+        item.name = "Renamed.txt".into();
+        item.size = 99;
+        item.metadata.insert("permissions".into(), "[]".into());
+        let scan = db.start_scan_run("shared-with-me").unwrap();
+        inventory::synchronize_drive(&db, scope, scan, &[item.clone()], true).unwrap();
+        assert_eq!(
+            drive_history::list(&db, scope, "", true, "", 0, 25)
+                .unwrap()
+                .1,
+            0
+        );
+        let (versions, _) = drive_history::versions(&db, scope, "retained", 0, 25).unwrap();
+        assert!(
+            versions
+                .iter()
+                .any(|v| v.metadata.contains("Old folder/Report.txt")
+                    && v.metadata.contains("reader@example.org"))
+        );
+        assert!(versions.iter().any(|v| {
+            serde_json::from_str::<serde_json::Value>(&v.metadata).unwrap()["is_deleted"] == 1
+        }));
+        assert!(c.execute("DELETE FROM drive_item_history", []).is_err());
+        let count = versions.len();
+        item.metadata
+            .insert("permissions".into(), "invalid json".into());
+        item.name = "bad update".into();
+        let scan = db.start_scan_run("shared-with-me").unwrap();
+        assert!(inventory::synchronize_drive(&db, scope, scan, &[item], true).is_err());
+        assert_eq!(
+            drive_history::versions(&db, scope, "retained", 0, 25)
+                .unwrap()
+                .1,
+            count
+        );
+        assert_eq!(
+            drive_history::list(&db, scope, "", false, "retained", 0, 25)
+                .unwrap()
+                .0[0]
+                .name,
+            "Renamed.txt"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn revised_migration_keeps_original_selection_filters_and_destination() {
+        let root = temporary_directory();
+        let db = Database::initialize(&runtime(&root)).unwrap();
+        let c = db.connect().unwrap();
+        let scan = db.start_scan_run("shared-with-me").unwrap();
+        for (id, path, bytes) in [
+            ("a", "Folder A/Same.txt", 42),
+            ("b", "Folder B/Same.txt", 99),
+            ("c", "Other.txt", 8),
+        ] {
+            c.execute("INSERT INTO drive_items(remote_name,item_id,name,relative_path,parent_path,is_directory,size_bytes,mime_type,last_seen_scan_id) VALUES('shared-with-me',?1,?2,?3,?4,0,?5,'text/plain',?6)",params![id,path.rsplit('/').next().unwrap(),path,path.rsplit_once('/').map(|v|v.0),bytes,scan]).unwrap();
+        }
+        let job = migration::create(
+            &db,
+            "shared-with-me",
+            "shared-with-me",
+            &["a".into(), "b".into(), "c".into()],
+            "drive-copy",
+        )
+        .unwrap();
+        migration::save_selection_url(&db, job, "/shared-with-me?tag=needs-review&q=Same&page=2")
+            .unwrap();
+        migration::set_destination(
+            &db,
+            job,
+            "https://drive.google.com/drive/folders/destination",
+            "",
+            "My Drive",
+            "destination",
+            "Uploads",
+        )
+        .unwrap();
+        assert!(migration::revise_selection(&db, job, &[]).is_err());
+        assert!(migration::revise_selection(&db, job, &["c".into()]).is_err());
+        assert!(
+            migration::revise_selection(&db, job, &["a".into(), "b".into(), "c".into()]).is_err()
+        );
+        let revised = migration::revise_selection(&db, job, &["b".into()]).unwrap();
+        let new = migration::get(&db, revised).unwrap().unwrap();
+        let old = migration::get(&db, job).unwrap().unwrap();
+        assert_eq!(old.sources.len(), 3);
+        assert!(!old.archived_at.is_empty());
+        assert!(migration::cancel(&db, job).is_err());
+        assert!(migration::begin_copy(&db, job).is_err());
+        assert_eq!(new.revised_from, job);
+        assert_eq!(new.selection_url, old.selection_url);
+        assert_eq!(new.destination_folder_id, "destination");
+        assert_eq!(new.bytes_total, 50);
+        assert_eq!(new.files_total, 2);
+        assert_eq!(new.status, "ready");
+        assert!(migration::revise_selection(&db, job, &["b".into()]).is_err());
+        migration::begin_copy(&db, revised).unwrap();
+        assert!(migration::revise_selection(&db, revised, &["a".into()]).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn persons_metadata_age_uses_successful_imports_and_manual_updates() {
+        let root = temporary_directory();
+        let db = Database::initialize(&runtime(&root)).unwrap();
+        let c = db.connect().unwrap();
+        assert!(directory::summary(&db).unwrap().completed_at.is_empty());
+        c.execute("INSERT INTO principals(principal_type,display_name,updated_at) VALUES('person','Example','2026-09-01 12:00:00')",[]).unwrap();
+        assert_eq!(
+            directory::summary(&db).unwrap().completed_at,
+            "2026-09-01 12:00:00"
+        );
+        directory::import_csv(
+            &db,
+            "test.csv",
+            b"Display Name,Email\nImported,imported@example.org\n",
+        )
+        .unwrap();
+        let latest = directory::summary(&db).unwrap().completed_at;
+        assert!(latest > "2026-09-01 12:00:00".to_string());
+        directory::record_linked_sheet_failure(&db, "bad source", "failed").unwrap();
+        assert_eq!(directory::summary(&db).unwrap().completed_at, latest);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2364,6 +2532,19 @@ mod tests {
         )
         .expect("missing folder should be recorded");
         assert_eq!(summary.deleted_items, 2);
+        let last_size: i64 = database
+            .connect()
+            .unwrap()
+            .query_row(
+                "SELECT cumulative_size_bytes FROM drive_items WHERE item_id='missing-folder'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            last_size, 10,
+            "unavailable folders retain their last indexed size"
+        );
         let visible = inventory::list_my_drive_directory(
             &database, None, "", "", "", "", "", "", false, "", "", "", false, "name", false,
         )

@@ -219,6 +219,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "local_file_migrations",
         sql: include_str!("migrations/0042_local_file_migrations.sql"),
     },
+    Migration {
+        version: 43,
+        name: "drive_retention_and_selection",
+        sql: include_str!("migrations/0043_drive_retention_and_selection.sql"),
+    },
 ];
 
 pub fn apply(connection: &mut Connection) -> Result<(), DatabaseError> {

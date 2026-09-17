@@ -58,9 +58,10 @@ Reviewed against the v1.2.3 source on 2026-09-15. Checked items indicate impleme
 
 ### Next steps after Local Files performance and migration
 
-- [ ] Investigate Shared with Me metadata updates that appear to lose prior items. Preserve all previously indexed records, including items that are removed, unshared, or inaccessible. Distinguish their historical status from the current explorer view; test updates and history visibility without deleting old metadata.
-- [ ] Make migration name-collision errors actionable: return to an editable selection while retaining its filters and selected items, highlight all items sharing a conflicting top-level destination name, and let users revise the selection before retrying.
-- [ ] Review why the current duplicate tool does not expose those migration conflicts. Distinguish filename collisions from matching file contents, and show full source paths so users can resolve same-name selections.
+- [x] Preserve previously indexed Drive records, including items removed, unshared, or inaccessible. Add a flat history view across historical paths and save prior metadata and permissions before changes; retain current items as the default explorer view.
+- [x] Make migration name-collision errors actionable: edit the saved selection, highlight every conflicting top-level name, and save a revised plan with its destination and original explorer filters. Archive the original plan for reference.
+- [x] Explain why duplicate candidates differ from migration conflicts. Drive duplicate filtering matches name, kind, MIME type, and size; migration conflicts require only equal top-level names. The selection editor shows full paths and sizes for resolution.
+- [x] Show Persons metadata age on the dashboard using the latest successful import or manual person-record update; failed imports do not advance it.
 
 ### Follow-up review
 

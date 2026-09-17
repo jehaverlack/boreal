@@ -52,6 +52,7 @@ BOREAL is an audit and decision-support tool. It is not a Google Drive replaceme
 - Drive objects are keyed by Google Drive item ID within an inventory scope, not by display name or path.
 - Synchronization is idempotent: an item seen again is updated rather than duplicated.
 - Items missing from a completed scope scan are soft-deleted, retaining their last metadata and deletion timestamp.
+- Drive inventory records cannot be hard-deleted by application SQL. Changes archive the previous metadata and permissions in `drive_item_history` within the update transaction. Unchanged observations do not create versions; versions overwritten before this upgrade cannot be reconstructed.
 - Shared Drives missing from discovery are retained and marked inaccessible rather than removed.
 - Scan and directory-import runs retain timestamps, counts, status, and error information.
 - Significant metadata activity and failures are written to the current daily log.
@@ -204,7 +205,7 @@ Folder sizes are the sum of indexed descendant file bytes. They exclude hidden/c
 
 Folder `size_bytes` values are computed once during the scan and persisted on each folder record. Index updates also save parent paths, checksum duplicate counts, and the inventory summary in the same transaction. Folder browsing uses the `(root_path, parent_path, is_directory, name, id)` index rather than examining every path in the root. Page loads read stored totals, reuse their first count query for the row fetch, and run database/rendering work off the async request thread. Broad full-tree substring searches still examine the matching root's inventory.
 
-**Migrate** creates a local-to-Google Drive plan from the current selection or all filtered matches. The plan saves a fixed list of indexed files and folders; overlapping parent/child selections are included once, and symlink descendants and excluded entries are omitted. Selected symlinks and duplicate top-level destination names produce selection errors. The wizard accepts My Drive or Shared Drive folder URLs, validates access using the write-authorized Google account, and requires a separate Start Migration action before copying.
+**Migrate** creates a local-to-Google Drive plan from the current selection or all filtered matches. The plan saves a fixed list of indexed files and folders; overlapping parent/child selections are included once, and symlink descendants and excluded entries are omitted. Selected symlinks produce selection errors. Duplicate top-level destination names are highlighted in the wizard's selection editor, which shows full source paths and lets users uncheck unwanted items. Saving creates a revised plan with the original destination, source snapshots, and explorer filters, and archives the old plan. Only unstarted plans can be edited. The wizard accepts My Drive or Shared Drive folder URLs, validates access using the write-authorized Google account, and requires a separate Start Migration action before copying.
 
 Local uploads use a NUL-separated Rclone file list (`--files-from0`) to handle unusual filenames and prevent unindexed files from entering the copy. Empty indexed folders are preserved. Missing sources, changed file types, and symlink substitutions are checked before copying; missing sources are checked again before completion. Current contents of saved paths are uploaded, while counts and sizes remain indexing estimates. Resume copies changed files without deleting source or destination-only files; newly added paths require a new plan. This path requires a managed Rclone version supporting `--files-from0` (verified with 1.75.0). See [Rclone file-list filtering](https://rclone.org/filtering/#files-from0-read-nul-separated-list-of-source-file-names).
 
@@ -252,7 +253,9 @@ Each scope is synchronized independently:
 5. Mark previously active items missing from the completed scan as deleted.
 6. Complete the scan run with files, folders, permissions, bytes, and deletion counts.
 
-Deleted rows remain queryable through the Explorer’s “Include deleted items” option. A later scan that sees an item again clears its deleted state.
+Unavailable rows remain queryable through the Explorer’s “Include unavailable / removed items” option. The “History / unavailable items” link opens a paginated, flat view across all paths, so moved or missing parent folders cannot hide previously indexed children. “No longer seen” means absent from the latest index and does not establish remote deletion. Each item's history displays metadata saved before changes, including prior paths and permissions. A later scan that sees an item again clears its deleted state. Current items remain the default explorer view.
+
+Migration filename conflicts are checked across the complete saved selection, independently of the explorer's duplicate filter. Drive duplicate candidates match name, kind, MIME type, and size; a migration rejects equal top-level names even when sizes or contents differ. Both Drive and Local Files plans use the same selection editor. Plans created before explorer URL capture was introduced still support selection editing, but their original filters cannot be recovered.
 
 Shared Drive discovery retains Drives that are no longer returned, setting `is_accessible = false`. The Shared Drives page hides these by default and offers “Show inaccessible Shared Drives” to browse their historical inventory. A targeted future per-Drive update must not mark unselected Drives inaccessible; discovery and inventory selection must remain separate operations.
 
@@ -294,6 +297,8 @@ Directory data may be:
 - Added or edited manually.
 
 The expected import fields are `name`, `email`, `organization`, `type`, `status`, `departure_date`, and `notes`. Email matching is case-insensitive. Re-import updates matching principals. For imported organization data, the source row is authoritative for the principal’s organization rather than additive.
+
+The dashboard's Persons card displays metadata age from the latest successful directory import or principal-record update. Failed imports leave this timestamp unchanged. Before any import or person record exists, it displays “Not updated.”
 
 Identity tags can be used independently for owner and permission filtering. Explorer identity pills indicate known identities, show assigned tag colors, and use a dashed amber border for identities missing from the directory. Clicking an unknown identity opens the add-directory-entry workflow with the email prefilled.
 

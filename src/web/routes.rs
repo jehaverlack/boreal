@@ -341,6 +341,10 @@ pub struct MigrationView {
     pub allows_my_drive_destination: bool,
     pub allows_google_destination: bool,
     pub local_source: bool,
+    pub can_edit_selection: bool,
+    pub name_conflicts: usize,
+    pub selection_url: String,
+    pub revised_from: i64,
     pub sources: Vec<MigrationSourceView>,
 }
 
@@ -356,6 +360,7 @@ pub struct MigrationSourceView {
     pub status: String,
     pub error_message: String,
     pub drive_url: String,
+    pub conflicting_name: bool,
 }
 
 #[allow(dead_code)]
@@ -1575,6 +1580,8 @@ struct SelectedMetadataUpdateForm {
 #[derive(serde::Deserialize)]
 struct NewMigrationForm {
     #[serde(default)]
+    source_url: String,
+    #[serde(default)]
     selected_item_ids: String,
     #[serde(default)]
     inventory_scope: String,
@@ -1744,6 +1751,11 @@ pub fn router() -> Router<Arc<AppState>> {
             post(create_shared_drive_download_migration),
         )
         .route("/migrations/{migration_id}", get(migration_wizard))
+        .route(
+            "/migrations/{migration_id}/selection",
+            post(revise_migration_selection),
+        )
+        .route("/drive-history", get(drive_history_page))
         .route("/migrations/{migration_id}/cancel", post(cancel_migration))
         .route(
             "/migrations/{migration_id}/archive",
@@ -3371,6 +3383,8 @@ fn create_migration_plan(
         operation_kind,
     )
     .map_err(|error| error.to_string())?;
+    let url = validated_selection_url(&form.source_url, &form.inventory_scope);
+    database::migration::save_selection_url(database, id, &url).map_err(|e| e.to_string())?;
     log::info!(
         "Migration plan created: migration_id={id}, source_kind={source_kind}, sources={}",
         item_ids.len()
@@ -3414,6 +3428,195 @@ async fn create_shared_drive_download_migration(
     let id = database::migration::create_shared_drive_download(&database, &drive_id)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     Ok(Redirect::to(&format!("/migrations/{id}")))
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+struct DriveHistoryQuery {
+    scope: String,
+    q: String,
+    state: String,
+    item: String,
+    #[serde(flatten)]
+    pagination: PageQuery,
+}
+
+#[derive(Template)]
+#[template(path = "drive-history.html", config = "askama.toml")]
+struct DriveHistoryTemplate {
+    navigation: Navigation,
+    title: &'static str,
+    active_page: &'static str,
+    alerts: Vec<AlertItem>,
+    status_items: Vec<StatusItem>,
+    poll_rclone: bool,
+    query: DriveHistoryQuery,
+    records: Vec<database::drive_history::Record>,
+    versions: Vec<database::drive_history::Version>,
+    pagination: PageView,
+    explorer_url: String,
+}
+
+async fn drive_history_page(
+    State(state): State<Arc<AppState>>,
+    Query(mut query): Query<DriveHistoryQuery>,
+) -> Result<Html<String>, StatusCode> {
+    tokio::task::spawn_blocking(move || {
+        if query.scope.is_empty() {
+            query.scope = database::inventory::SHARED_WITH_ME_SCOPE.into();
+        }
+        let explorer_url = drive_scope_explorer_url(&query.scope).ok_or(StatusCode::BAD_REQUEST)?;
+        let database = state
+            .database()
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        let size = query.pagination.size();
+        let (mut records, total) = database::drive_history::list(
+            &database,
+            &query.scope,
+            &query.q,
+            query.state != "all" && query.item.is_empty(),
+            &query.item,
+            query.pagination.page.saturating_sub(1).saturating_mul(size),
+            size,
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let (mut versions, version_total) = if query.item.is_empty() {
+            (vec![], 0)
+        } else {
+            database::drive_history::versions(
+                &database,
+                &query.scope,
+                &query.item,
+                query.pagination.page.saturating_sub(1).saturating_mul(size),
+                size,
+            )
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        };
+        if !query.item.is_empty() && records.is_empty() {
+            records = database::drive_history::list(
+                &database,
+                &query.scope,
+                "",
+                false,
+                &query.item,
+                0,
+                1,
+            )
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .0;
+        }
+        for record in &mut records {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&record.metadata) {
+                record.metadata = serde_json::to_string_pretty(&value).unwrap_or_default();
+            }
+        }
+        for version in &mut versions {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&version.metadata) {
+                version.metadata = serde_json::to_string_pretty(&value).unwrap_or_default();
+            }
+        }
+        let pagination = query.pagination.view(if query.item.is_empty() {
+            total
+        } else {
+            version_total
+        });
+        let rclone_state = state.rclone_state();
+        let google_client_state = state.google_client_state();
+        let google_remotes_state = state.google_remotes_state();
+        let metadata_state = state.metadata_state();
+        render_template(&DriveHistoryTemplate {
+            navigation: navigation(&state),
+            title: "Drive history - BOREAL",
+            active_page: match query.scope.as_str() {
+                database::inventory::MY_DRIVE_SCOPE => "my-drive",
+                database::inventory::SHARED_WITH_ME_SCOPE => "shared-with-me",
+                _ => "shared-drives",
+            },
+            alerts: build_alerts(
+                &rclone_state,
+                &google_client_state,
+                bookmark_reminder_visible(&state),
+            ),
+            status_items: build_status_items(
+                &state,
+                &rclone_state,
+                &google_client_state,
+                &google_remotes_state,
+                &metadata_state,
+                configured_remote_count(&state.runtime, &rclone_state),
+                authenticated_google_email(&state),
+                &state.update_state(),
+            ),
+            poll_rclone: should_poll_ui(&rclone_state, &google_remotes_state, &metadata_state),
+            query,
+            records,
+            versions,
+            pagination,
+            explorer_url,
+        })
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+}
+
+fn drive_scope_explorer_url(scope: &str) -> Option<String> {
+    match scope {
+        database::inventory::MY_DRIVE_SCOPE => Some("/my-drive".into()),
+        database::inventory::SHARED_WITH_ME_SCOPE => Some("/shared-with-me".into()),
+        _ => scope
+            .strip_prefix(database::inventory::SHARED_DRIVE_SCOPE_PREFIX)
+            .filter(|id| {
+                !id.is_empty()
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            })
+            .map(|id| format!("/shared-drives?drive={id}")),
+    }
+}
+
+fn validated_selection_url(url: &str, scope: &str) -> String {
+    let base = if scope == "local-files" {
+        "/local-files".to_string()
+    } else {
+        drive_scope_explorer_url(scope).unwrap_or_else(|| "/my-drive".into())
+    };
+    if url.len() <= 16000
+        && !url.contains(['\r', '\n', '\\'])
+        && url.split('?').next() == base.split('?').next()
+    {
+        url.to_string()
+    } else {
+        base
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ReviseSelectionForm {
+    remove_item_ids: String,
+}
+
+async fn revise_migration_selection(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Form(form): Form<ReviseSelectionForm>,
+) -> Result<Response<Body>, StatusCode> {
+    let database = state
+        .database()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let removed = serde_json::from_str::<Vec<String>>(&form.remove_item_ids)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let result = tokio::task::spawn_blocking(move || {
+        database::migration::revise_selection(&database, id, &removed)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    match result {
+        Ok(new_id) => Ok(Redirect::to(&format!("/migrations/{new_id}")).into_response()),
+        Err(error) => {
+            render_migration_wizard(&state, id, error.to_string()).map(IntoResponse::into_response)
+        }
+    }
 }
 
 async fn migration_wizard(
@@ -3701,10 +3904,13 @@ fn render_migration_wizard(
 }
 
 fn migration_view(job: database::migration::MigrationJob) -> MigrationView {
-    let can_cancel = job.started_at.is_empty() && matches!(job.status.as_str(), "draft" | "ready");
+    let can_cancel = job.started_at.is_empty()
+        && job.archived_at.is_empty()
+        && matches!(job.status.as_str(), "draft" | "ready");
     let can_archive =
         !matches!(job.status.as_str(), "preflight" | "running") && job.archived_at.is_empty();
-    let can_start = job.status == "ready" && job.started_at.is_empty();
+    let can_start =
+        job.status == "ready" && job.started_at.is_empty() && job.archived_at.is_empty();
     let can_resume = matches!(job.status.as_str(), "interrupted" | "error" | "copied")
         && job.archived_at.is_empty();
     let running = matches!(job.status.as_str(), "preflight" | "running");
@@ -3714,10 +3920,19 @@ fn migration_view(job: database::migration::MigrationJob) -> MigrationView {
     );
     let allows_google_destination = true;
     let local_source = job.source_kind == "local-files";
+    let mut names = HashMap::new();
+    for source in &job.sources {
+        *names.entry(source.name.clone()).or_insert(0usize) += 1;
+    }
+    let name_conflicts = job.sources.iter().filter(|s| names[&s.name] > 1).count();
+    let can_edit_selection = job.started_at.is_empty()
+        && job.archived_at.is_empty()
+        && matches!(job.status.as_str(), "draft" | "ready");
     let sources = job
         .sources
         .into_iter()
         .map(|source| MigrationSourceView {
+            conflicting_name: names[&source.name] > 1,
             drive_url: if local_source {
                 String::new()
             } else if source.is_directory {
@@ -3792,6 +4007,10 @@ fn migration_view(job: database::migration::MigrationJob) -> MigrationView {
         allows_my_drive_destination,
         allows_google_destination,
         local_source,
+        can_edit_selection,
+        name_conflicts,
+        selection_url: job.selection_url,
+        revised_from: job.revised_from,
         sources,
     }
 }
@@ -4817,9 +5036,9 @@ fn render_drive_explorer(
     filter_tags.push(no_tags_filter_pill(&query.tag));
     filter_tags.push(TagFilterPill {
         slug: database::inventory::DELETED_TAG_FILTER.to_string(),
-        name: "Deleted".to_string(),
+        name: "No longer seen".to_string(),
         description:
-            "Items no longer present in Google Drive but retained in BOREAL's local inventory."
+            "Items missing from the latest index, including removed, unshared, or inaccessible items. Their records remain in BOREAL."
                 .to_string(),
         color: "#6c757d".to_string(),
         text_color: "#ffffff",
@@ -6108,7 +6327,14 @@ async fn create_local_migration(
                 })
                 .collect::<Result<Vec<_>, _>>()?
         };
-        database::local_migration::create(&database, &ids).map_err(|e| e.to_string())
+        let id = database::local_migration::create(&database, &ids).map_err(|e| e.to_string())?;
+        database::migration::save_selection_url(
+            &database,
+            id,
+            &validated_selection_url(&form.source_url, "local-files"),
+        )
+        .map_err(|e| e.to_string())?;
+        Ok::<_, String>(id)
     })
     .await
     .map_err(|_| {
@@ -6128,6 +6354,8 @@ async fn create_local_migration(
 
 #[derive(serde::Deserialize)]
 struct LocalMigrationForm {
+    #[serde(default)]
+    source_url: String,
     #[serde(default)]
     background: bool,
     #[serde(default)]
@@ -9133,6 +9361,8 @@ mod tests {
             id: 1,
             source_kind: "local-files".into(),
             source_scope: "local-files".into(),
+            selection_url: String::new(),
+            revised_from: 0,
             operation_kind: "drive-copy".into(),
             status: "draft".into(),
             phase: "Select destination".into(),
@@ -9168,6 +9398,40 @@ mod tests {
                 error_message: String::new(),
             }],
         };
+        let mut conflict_job = job.clone();
+        conflict_job.selection_url = "/local-files?tag=needs-review&name=Report".into();
+        for (id, name, path) in [
+            ("8", "Annual Report.pdf", "/other/Annual Report.pdf"),
+            ("9", "Other.txt", "/other/Other.txt"),
+        ] {
+            let mut source = job.sources[0].clone();
+            source.item_id = id.into();
+            source.name = name.into();
+            source.relative_path = path.into();
+            source.bytes_total = 99;
+            conflict_job.sources.push(source);
+        }
+        let conflict_view = migration_view(conflict_job);
+        assert_eq!(conflict_view.name_conflicts, 2);
+        assert!(conflict_view.can_edit_selection);
+        assert!(
+            conflict_view.sources[0].conflicting_name && conflict_view.sources[1].conflicting_name
+        );
+        assert!(!conflict_view.sources[2].conflicting_name);
+        let conflict_wizard = MigrationWizardTemplate {
+            navigation: Navigation::from_settings(&InventorySettings::default()),
+            title: "Migration - BOREAL",
+            active_page: "migrations",
+            alerts: vec![],
+            status_items: vec![],
+            poll_rclone: false,
+            migration: conflict_view,
+            error: String::new(),
+        }
+        .render()
+        .unwrap();
+        assert!(conflict_wizard.contains("/other/Annual Report.pdf"));
+        assert!(conflict_wizard.contains("filename conflicts"));
         let view = migration_view(job);
         assert!(view.local_source && view.allows_my_drive_destination);
         assert!(view.sources[0].drive_url.is_empty());
@@ -9199,6 +9463,11 @@ mod tests {
             std::fs::write(
                 std::path::Path::new(&directory).join("local-migration.html"),
                 wizard,
+            )
+            .unwrap();
+            std::fs::write(
+                std::path::Path::new(&directory).join("migration-conflicts.html"),
+                conflict_wizard,
             )
             .unwrap();
         }

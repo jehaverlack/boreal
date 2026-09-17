@@ -1635,13 +1635,13 @@ pub fn mark_drive_item_missing(
     }
     transaction.execute(
         "UPDATE drive_items SET cumulative_size_bytes = 0
-         WHERE remote_name = ?1 AND is_directory = 1",
+         WHERE remote_name = ?1 AND is_directory = 1 AND is_deleted = 0",
         [inventory_scope],
     )?;
     for (folder_path, size) in folder_sizes {
         transaction.execute(
             "UPDATE drive_items SET cumulative_size_bytes = ?3
-             WHERE remote_name = ?1 AND relative_path = ?2 AND is_directory = 1",
+             WHERE remote_name = ?1 AND relative_path = ?2 AND is_directory = 1 AND is_deleted = 0",
             params![inventory_scope, folder_path, size as i64],
         )?;
     }
@@ -1790,8 +1790,8 @@ fn synchronize_drive_inner(
         transaction.execute(
             "UPDATE drive_items
              SET cumulative_size_bytes = ?3
-             WHERE remote_name = ?1 AND relative_path = ?2 AND is_directory = 1",
-            params![remote, folder_path, size as i64],
+             WHERE remote_name = ?1 AND relative_path = ?2 AND is_directory = 1 AND last_seen_scan_id = ?4",
+            params![remote, folder_path, size as i64, scan_id],
         )?;
     }
     if authoritative {
